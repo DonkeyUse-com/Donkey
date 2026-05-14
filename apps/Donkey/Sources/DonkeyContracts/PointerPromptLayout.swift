@@ -8,7 +8,7 @@ public enum PointerPromptLayout {
     public static let pointerVisualSize = CGSize(width: 24, height: 24)
     public static let pointerTipUnitPoint = CGPoint(x: 0.16914, y: 0.05641)
     public static let pointerStrokeWidth: CGFloat = 1.6
-    public static let pointerDistanceFromCursor: CGFloat = 32
+    public static let pointerDistanceFromCursor: CGFloat = 48
     public static let pointerDiagonalComponent = pointerDistanceFromCursor / CGFloat(2).squareRoot()
     public static let pointerComposerSpacing: CGFloat = 16
     public static let composerSize = CGSize(width: 350, height: 142)

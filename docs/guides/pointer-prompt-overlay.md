@@ -31,7 +31,7 @@ This is a visual UI capability. It does not capture the screen, send input, call
 - Composer controls should emit typed `PointerPromptIntent` values instead of reaching into runtime, AI, or controller code.
 - Pointer colors load from JSON into `PointerPromptTheme`; views must not hard-code product colors.
 - The active composer should use a normal system-window corner radius, expose a top-left close control, and keep controls/content areas interactive while only border regions drag the window. Transparent active overlay space must pass clicks through to windows underneath.
-- The agent pointer should remain close to native cursor size, use the mirrored SVG cursor silhouette from the Noun Project pointer asset, point in the same up-left direction as the native macOS cursor, and keep its tip 32px from the real pointer on an equal x/y diagonal.
+- The agent pointer should remain close to native cursor size, use the mirrored SVG cursor silhouette from the Noun Project pointer asset, point in the same up-left direction as the native macOS cursor, and keep its tip 48px from the real pointer on an equal x/y diagonal.
 - Placement is one of `bottomRight`, `bottomLeft`, `topLeft`, or `topRight`.
 - The controller must clamp visible pointer/composer bounds to `NSScreen.visibleFrame` before applying the panel frame, because inactive mode uses a larger transparent panel than its visible pointer.
 - Diagonal placement changes should route through a side placement first, so bottom-right overflow can animate to left and then top-left.
