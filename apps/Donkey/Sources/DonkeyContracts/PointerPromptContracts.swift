@@ -47,9 +47,14 @@ public struct PointerPromptTheme: Equatable, Sendable {
     }
 
     public static let defaultBlue = PointerPromptTheme(
-        accent: PointerPromptColor(red: 0.05, green: 0.43, blue: 0.85, alpha: 1),
+        accent: PointerPromptColor(
+            red: 13.0 / 255.0,
+            green: 108.0 / 255.0,
+            blue: 216.0 / 255.0,
+            alpha: 1
+        ),
         fill: PointerPromptColor(red: 0.88, green: 0.94, blue: 1.0, alpha: 1),
-        pointerFill: PointerPromptColor(red: 0.82, green: 0.93, blue: 1.0, alpha: 1),
+        pointerFill: .white,
         activeShadow: PointerPromptColor(red: 0.0, green: 0.14, blue: 0.32, alpha: 0.26)
     )
 

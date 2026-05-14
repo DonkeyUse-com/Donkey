@@ -21,8 +21,8 @@ public struct PointerPromptStageView: View {
 
     public var body: some View {
         promptContent
-            .padding(.horizontal, 8)
-            .padding(.vertical, 10)
+            .padding(.horizontal, PointerPromptLayout.stageHorizontalPadding)
+            .padding(.vertical, PointerPromptLayout.stageVerticalPadding)
             .background(Color.clear)
             .accessibilityElement(children: .contain)
     }
@@ -30,14 +30,14 @@ public struct PointerPromptStageView: View {
     @ViewBuilder
     private var promptContent: some View {
         if placement.placesContentOnLeft {
-            HStack(alignment: .bottom, spacing: 16) {
-                composer
+            HStack(alignment: .center, spacing: PointerPromptLayout.pointerComposerSpacing) {
+                activeComposer
                 pointer
             }
         } else {
-            HStack(alignment: .bottom, spacing: 16) {
+            HStack(alignment: .center, spacing: PointerPromptLayout.pointerComposerSpacing) {
                 pointer
-                composer
+                activeComposer
             }
         }
     }
@@ -48,8 +48,10 @@ public struct PointerPromptStageView: View {
             theme: state.theme,
             isActive: state.isActive
         )
-        .frame(width: 58, height: 68)
-        .offset(y: placement.placesContentAbovePointer ? 20 : -22)
+        .frame(
+            width: PointerPromptLayout.pointerSlotSize.width,
+            height: PointerPromptLayout.pointerSlotSize.height
+        )
     }
 
     private var composer: some View {
@@ -62,11 +64,24 @@ public struct PointerPromptStageView: View {
             voiceInput: {
                 intentSink?.handle(.voiceInputRequested)
             },
+            dismiss: {
+                intentSink?.handle(.dismissed)
+            },
             submit: {
                 intentSink?.handle(.messageSubmitted(text: messageText))
             }
         )
-        .frame(width: 350, height: 142)
+        .frame(
+            width: PointerPromptLayout.composerSize.width,
+            height: PointerPromptLayout.composerSize.height
+        )
+    }
+
+    private var activeComposer: some View {
+        composer
+            .opacity(state.isActive ? 1 : 0)
+            .allowsHitTesting(state.isActive)
+            .accessibilityHidden(!state.isActive)
     }
 }
 
@@ -75,21 +90,27 @@ private struct PointerPromptComposer: View {
     @Binding var messageText: String
     let addContext: @MainActor () -> Void
     let voiceInput: @MainActor () -> Void
+    let dismiss: @MainActor () -> Void
     let submit: @MainActor () -> Void
     @FocusState private var isFocused: Bool
 
     var body: some View {
         VStack(spacing: 13) {
-            TextField(state.promptText, text: $messageText)
-                .textFieldStyle(.plain)
-                .font(.system(size: 26, weight: .semibold, design: .rounded))
-                .foregroundStyle(Color(promptColor: state.theme.accent))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .focused($isFocused)
-                .onSubmit(submit)
-                .accessibilityLabel("Message for Donkey")
-                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            HStack(spacing: 12) {
+                ComposerCloseButton(action: dismiss)
+
+                TextField(state.promptText, text: $messageText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 26, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Color(promptColor: state.theme.accent))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .focused($isFocused)
+                    .onSubmit(submit)
+                    .accessibilityLabel("Message for Donkey")
+                    .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
 
             HStack(spacing: 10) {
                 ComposerIconButton(
@@ -117,18 +138,18 @@ private struct PointerPromptComposer: View {
                 )
             }
         }
-        .padding(.leading, 24)
+        .padding(.leading, 14)
         .padding(.trailing, 18)
-        .padding(.top, 24)
+        .padding(.top, 16)
         .padding(.bottom, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
-            RoundedRectangle(cornerRadius: 38, style: .continuous)
+            RoundedRectangle(cornerRadius: PointerPromptLayout.composerCornerRadius, style: .continuous)
                 .fill(Color(promptColor: state.theme.fill))
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 38, style: .continuous)
-                .stroke(Color(promptColor: state.theme.accent), lineWidth: 2.4)
+            RoundedRectangle(cornerRadius: PointerPromptLayout.composerCornerRadius, style: .continuous)
+                .stroke(Color(promptColor: state.theme.accent), lineWidth: 1.4)
         }
         .shadow(
             color: Color(promptColor: state.theme.accent).opacity(state.isActive ? 0.13 : 0.08),
@@ -136,18 +157,47 @@ private struct PointerPromptComposer: View {
             x: 0,
             y: state.isActive ? 5 : 3
         )
-        .onAppear(perform: focusIfActive)
+        .onAppear(perform: syncFocusWithActiveState)
         .onChange(of: state.isActive) { _, _ in
-            focusIfActive()
+            syncFocusWithActiveState()
         }
     }
 
-    private func focusIfActive() {
-        guard state.isActive else { return }
+    private func syncFocusWithActiveState() {
+        guard state.isActive else {
+            isFocused = false
+            return
+        }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             isFocused = true
         }
+    }
+}
+
+private struct ComposerCloseButton: View {
+    let action: @MainActor () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(Color.white)
+                .frame(
+                    width: PointerPromptLayout.closeButtonSize,
+                    height: PointerPromptLayout.closeButtonSize
+                )
+                .background {
+                    Circle()
+                        .fill(Color.red)
+                }
+                .overlay {
+                    Circle()
+                        .stroke(Color.black.opacity(0.16), lineWidth: 0.5)
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Close prompt")
     }
 }
 
@@ -239,37 +289,45 @@ private struct AgentPointerView: View {
     let isActive: Bool
 
     var body: some View {
-        ZStack(alignment: .bottom) {
+        ZStack(alignment: shapeAlignment) {
             if isActive {
                 Ellipse()
                     .fill(Color(promptColor: theme.activeShadow))
-                    .frame(width: 42, height: 13)
-                    .blur(radius: 4)
-                    .offset(y: 2)
+                    .frame(width: 17, height: 5)
+                    .blur(radius: 2)
+                    .offset(y: 11)
             }
 
             AgentPointerShape()
                 .fill(Color(promptColor: theme.pointerFill))
                 .overlay {
                     AgentPointerShape()
-                        .stroke(Color(promptColor: theme.accent), lineWidth: 2.3)
+                        .stroke(
+                            Color(promptColor: theme.accent),
+                            style: StrokeStyle(
+                                lineWidth: PointerPromptLayout.pointerStrokeWidth,
+                                lineCap: .round,
+                                lineJoin: .round
+                            )
+                        )
                 }
                 .shadow(
-                    color: Color(promptColor: theme.accent).opacity(isActive ? 0.18 : 0.08),
-                    radius: isActive ? 8 : 4,
+                    color: Color(promptColor: theme.accent).opacity(isActive ? 0.12 : 0),
+                    radius: isActive ? 3 : 0,
                     x: 0,
-                    y: isActive ? 4 : 2
+                    y: isActive ? 2 : 0
                 )
-                .frame(width: 48, height: 58)
-                .rotationEffect(rotation)
-                .scaleEffect(x: placement.placesContentOnLeft ? -1 : 1, y: 1)
-                .offset(y: -7)
+                .frame(
+                    width: PointerPromptLayout.pointerVisualSize.width,
+                    height: PointerPromptLayout.pointerVisualSize.height
+                )
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: shapeAlignment)
         .accessibilityHidden(true)
     }
 
-    private var rotation: Angle {
-        placement.placesContentAbovePointer ? .degrees(18) : .degrees(-14)
+    private var shapeAlignment: Alignment {
+        placement.placesContentOnLeft ? .leading : .trailing
     }
 }
 
@@ -279,16 +337,41 @@ private struct AgentPointerShape: Shape {
         let w = rect.width
         let h = rect.height
 
-        path.move(to: CGPoint(x: w * 0.12, y: h * 0.04))
-        path.addLine(to: CGPoint(x: w * 0.86, y: h * 0.55))
-        path.addLine(to: CGPoint(x: w * 0.52, y: h * 0.62))
-        path.addLine(to: CGPoint(x: w * 0.68, y: h * 0.95))
-        path.addLine(to: CGPoint(x: w * 0.49, y: h * 1.0))
-        path.addLine(to: CGPoint(x: w * 0.34, y: h * 0.69))
-        path.addLine(to: CGPoint(x: w * 0.12, y: h * 0.88))
+        path.move(to: svgPoint(x: 83.086, y: 5.6406, width: w, height: h))
+        path.addLine(to: svgPoint(x: 10.453, y: 34.6836, width: w, height: h))
+        path.addCurve(
+            to: svgPoint(x: 11.13269, y: 51.0276, width: w, height: h),
+            control1: svgPoint(x: 2.8514, y: 37.7227, width: w, height: h),
+            control2: svgPoint(x: 3.3085, y: 48.6326, width: w, height: h)
+        )
+        path.addLine(to: svgPoint(x: 35.69469, y: 58.5471, width: w, height: h))
+        path.addCurve(
+            to: svgPoint(x: 41.44859, y: 64.301, width: w, height: h),
+            control1: svgPoint(x: 38.44859, y: 59.39085, width: w, height: h),
+            control2: svgPoint(x: 40.60489, y: 61.5471, width: w, height: h)
+        )
+        path.addLine(to: svgPoint(x: 48.96809, y: 88.863, width: w, height: h))
+        path.addCurve(
+            to: svgPoint(x: 65.31209, y: 89.54269, width: w, height: h),
+            control1: svgPoint(x: 51.36649, y: 96.6911, width: w, height: h),
+            control2: svgPoint(x: 62.27309, y: 97.1442, width: w, height: h)
+        )
+        path.addLine(to: svgPoint(x: 94.35509, y: 16.90969, width: w, height: h))
+        path.addCurve(
+            to: svgPoint(x: 83.08209, y: 5.63669, width: w, height: h),
+            control1: svgPoint(x: 97.18709, y: 9.83159, width: w, height: h),
+            control2: svgPoint(x: 90.15979, y: 2.80769, width: w, height: h)
+        )
         path.closeSubpath()
 
         return path
+    }
+
+    private func svgPoint(x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat) -> CGPoint {
+        CGPoint(
+            x: (100 - x) / 100 * width,
+            y: y / 100 * height
+        )
     }
 }
 

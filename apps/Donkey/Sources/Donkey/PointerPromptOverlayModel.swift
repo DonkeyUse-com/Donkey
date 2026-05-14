@@ -16,17 +16,16 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
     init(
         runtimeProvider: any RuntimeStatusProviding = OffTheShelfRunLoopBoundary(),
         aiProvider: any AIHarnessSnapshotProviding = AIHarnessBoundary(),
-        theme: PointerPromptTheme = PointerPromptOverlayModel.configuredTheme()
+        theme: PointerPromptTheme = PointerPromptOverlayModel.bundledTheme()
     ) {
         self.runtimeProvider = runtimeProvider
         self.aiProvider = aiProvider
 
-        let runtimeSnapshot = runtimeProvider.snapshot()
         let aiSnapshot = aiProvider.snapshot()
         promptState = PointerPromptState(
             promptText: aiSnapshot.suggestedPromptText,
             isPrimaryActionEnabled: true,
-            leadingSignalLevel: runtimeSnapshot.isReady ? .ready : .idle,
+            leadingSignalLevel: .idle,
             isActive: false,
             theme: theme
         )
@@ -58,15 +57,6 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         }
     }
 
-    private static func configuredTheme() -> PointerPromptTheme {
-        guard let hexColor = ProcessInfo.processInfo.environment["DONKEY_POINTER_ACCENT"],
-              let color = PointerPromptColor(hexRGB: hexColor) else {
-            return bundledTheme()
-        }
-
-        return .accent(color)
-    }
-
     private static func bundledTheme() -> PointerPromptTheme {
         guard let themeURL = Bundle.module.url(forResource: "theme", withExtension: "json"),
               let themeData = try? Data(contentsOf: themeURL),
@@ -76,15 +66,5 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         }
 
         return theme
-    }
-}
-
-private extension PointerPromptColor {
-    init?(hexRGB: String) {
-        guard let color = PointerPromptColor(cssString: hexRGB) else {
-            return nil
-        }
-
-        self = color
     }
 }

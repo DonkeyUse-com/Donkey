@@ -4,10 +4,15 @@
 
 Donkey supports a floating macOS pointer prompt overlay:
 
-- command-click anywhere to activate the agent pointer and focus the prompt composer
-- shows a cursor-style agent pointer and rounded ChatGPT-style `Make this so` composer
-- includes a text input area plus room for controls such as add context, voice, and send
-- follows the user mouse at bottom right by default while active
+- shows a small inactive agent pointer that follows the user pointer immediately when Donkey starts
+- command-click anywhere to activate and focus the prompt composer at the current pointer location
+- shows a native-cursor-sized agent arrowhead and rounded ChatGPT-style `Make this so` composer
+- shows the text input, add context, voice, send controls, and active pointer shadow only while active
+- keeps the pointer and composer pinned where activation happened until the user closes or drags the composer
+- closes the active composer with a top-left close button and returns to the inactive following pointer
+- supports dragging the active composer by its border areas
+- lets normal clicks pass through the inactive pointer-only overlay and transparent active overlay space
+- follows the user mouse at a 45-degree bottom-right diagonal by default
 - stays fully inside the current screen visible frame
 - flips to the left, top, or top-left side when the default position would leave the screen
 - animates side changes along an invisible box around the user pointer
@@ -25,10 +30,12 @@ This is a visual UI capability. It does not capture the screen, send input, call
 - Treat the composer like a ChatGPT input box: one surface can contain typed text, submission, and adjacent controls.
 - Composer controls should emit typed `PointerPromptIntent` values instead of reaching into runtime, AI, or controller code.
 - Pointer colors load from JSON into `PointerPromptTheme`; views must not hard-code product colors.
+- The active composer should use a normal system-window corner radius, expose a top-left close control, and keep controls/content areas interactive while only border regions drag the window. Transparent active overlay space must pass clicks through to windows underneath.
+- The agent pointer should remain close to native cursor size, use the mirrored SVG cursor silhouette from the Noun Project pointer asset, point in the same up-left direction as the native macOS cursor, and keep its tip 32px from the real pointer on an equal x/y diagonal.
 - Placement is one of `bottomRight`, `bottomLeft`, `topLeft`, or `topRight`.
-- The controller must clamp the final panel frame to `NSScreen.visibleFrame` before applying it.
+- The controller must clamp visible pointer/composer bounds to `NSScreen.visibleFrame` before applying the panel frame, because inactive mode uses a larger transparent panel than its visible pointer.
 - Diagonal placement changes should route through a side placement first, so bottom-right overflow can animate to left and then top-left.
-- Command-click handling belongs in `PointerPromptOverlayController`, not the SwiftUI view.
+- Launch positioning and command-click focus handling belong in `PointerPromptOverlayController`, not the SwiftUI view.
 - Keep the overlay non-invasive: no capture loop, input execution, Accessibility prompt, or LLM call in this feature.
 
 ## Verification
@@ -40,13 +47,9 @@ swift build
 swift run Donkey
 ```
 
-Command-click anywhere and confirm the composer appears with keyboard focus. Type a message, confirm the send control enables, and move the mouse near the bottom-right screen edge to confirm the prompt moves left, then top-left if needed, without clipping off screen.
+Launch Donkey and confirm only the small agent pointer appears and follows the main pointer. Command-click anywhere to show the composer with keyboard focus, then move the mouse and confirm the active pointer and composer stay pinned. Click through transparent overlay space into another desktop window, drag the composer from border areas, close it with the top-left close button, and confirm the inactive pointer resumes following the main pointer. Type a message, confirm the send control enables, and activate near the bottom-right screen edge to confirm the prompt chooses a non-clipping placement.
 
-To verify color customization, edit `apps/Donkey/Sources/Donkey/Resources/theme.json`, rebuild, and run Donkey. For one-off local runs, the accent can also be overridden:
-
-```sh
-DONKEY_POINTER_ACCENT=FF375F swift run Donkey
-```
+To verify color customization, edit `apps/Donkey/Sources/Donkey/Resources/theme.json`, rebuild, and run Donkey.
 
 ## Source Entry Points
 

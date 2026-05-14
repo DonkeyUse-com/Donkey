@@ -2,7 +2,7 @@
 
 SwiftUI macOS app for the production pointer prompt UI.
 
-This slice renders a floating screenshot-style pointer and ChatGPT-style `Make this so` composer. Command-click anywhere to activate Donkey, show the agent pointer, and focus the prompt input. The composer includes a text area plus room for controls such as add context, voice, and send. The overlay follows the mouse at the bottom right by default, flips around an invisible cursor-centered box near screen edges, and clamps itself inside the visible screen.
+This slice renders a floating native-cursor-sized agent arrowhead and ChatGPT-style `Make this so` composer. Donkey starts in an inactive pointer-only state that follows the main pointer. Command-click anywhere to show and focus the composer at the current pointer location, where the pointer and composer stay pinned until dismissed or dragged. The composer includes a top-left close button, a text area, and controls such as add context, voice, and send; the blue pointer shadow appears only while active. The overlay follows the mouse on a 45-degree bottom-right diagonal by default, flips around an invisible cursor-centered box near screen edges, and clamps itself inside the visible screen.
 
 It does not request Accessibility, Screen Recording, model access, capture-loop, or input-control permissions.
 
@@ -17,9 +17,3 @@ swift run Donkey
 ```
 
 Customize the pointer colors in [Sources/Donkey/Resources/theme.json](Sources/Donkey/Resources/theme.json). The app supports `#RRGGBB` and `rgba(r, g, b, a)` color strings.
-
-For one-off local runs, the accent can also be overridden with a six-digit hex value:
-
-```sh
-DONKEY_POINTER_ACCENT=0A84FF swift run Donkey
-```
