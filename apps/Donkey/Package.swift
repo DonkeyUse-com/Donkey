@@ -40,6 +40,9 @@ let package = Package(
                 "DonkeyContracts",
                 "DonkeyRuntime",
                 "DonkeyUI"
+            ],
+            resources: [
+                .copy("Resources/theme.json")
             ]
         )
     ]

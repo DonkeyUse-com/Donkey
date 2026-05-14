@@ -16,7 +16,9 @@ swift build
 swift run Donkey
 ```
 
-Customize the pointer accent color with a six-digit hex value:
+Customize the pointer colors in [Sources/Donkey/Resources/theme.json](Sources/Donkey/Resources/theme.json). The app supports `#RRGGBB` and `rgba(r, g, b, a)` color strings.
+
+For one-off local runs, the accent can also be overridden with a six-digit hex value:
 
 ```sh
 DONKEY_POINTER_ACCENT=0A84FF swift run Donkey

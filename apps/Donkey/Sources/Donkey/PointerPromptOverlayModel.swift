@@ -61,25 +61,30 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
     private static func configuredTheme() -> PointerPromptTheme {
         guard let hexColor = ProcessInfo.processInfo.environment["DONKEY_POINTER_ACCENT"],
               let color = PointerPromptColor(hexRGB: hexColor) else {
-            return .defaultBlue
+            return bundledTheme()
         }
 
         return .accent(color)
+    }
+
+    private static func bundledTheme() -> PointerPromptTheme {
+        guard let themeURL = Bundle.module.url(forResource: "theme", withExtension: "json"),
+              let themeData = try? Data(contentsOf: themeURL),
+              let themeConfig = try? JSONDecoder().decode(PointerPromptThemeConfig.self, from: themeData),
+              let theme = PointerPromptTheme.fromConfig(themeConfig) else {
+            return .defaultBlue
+        }
+
+        return theme
     }
 }
 
 private extension PointerPromptColor {
     init?(hexRGB: String) {
-        let trimmed = hexRGB.trimmingCharacters(in: CharacterSet(charactersIn: "# "))
-        guard trimmed.count == 6, let value = Int(trimmed, radix: 16) else {
+        guard let color = PointerPromptColor(cssString: hexRGB) else {
             return nil
         }
 
-        self.init(
-            red: Double((value >> 16) & 0xFF) / 255.0,
-            green: Double((value >> 8) & 0xFF) / 255.0,
-            blue: Double(value & 0xFF) / 255.0,
-            alpha: 1
-        )
+        self = color
     }
 }

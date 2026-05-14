@@ -12,7 +12,7 @@ Donkey supports a floating macOS pointer prompt overlay:
 - flips to the left, top, or top-left side when the default position would leave the screen
 - animates side changes along an invisible box around the user pointer
 - renders a shadow underneath the agent pointer when active
-- supports accent-color customization through `DONKEY_POINTER_ACCENT`
+- supports user-accessible theme customization through `apps/Donkey/Sources/Donkey/Resources/theme.json`
 - keeps runtime and AI harness behavior behind explicit integration boundaries
 
 This is a visual UI capability. It does not capture the screen, send input, call models, or require Accessibility permission.
@@ -24,7 +24,7 @@ This is a visual UI capability. It does not capture the screen, send input, call
 - Product state stays in `PointerPromptOverlayModel`.
 - Treat the composer like a ChatGPT input box: one surface can contain typed text, submission, and adjacent controls.
 - Composer controls should emit typed `PointerPromptIntent` values instead of reaching into runtime, AI, or controller code.
-- Pointer colors live in `PointerPromptTheme`; views must not hard-code product colors.
+- Pointer colors load from JSON into `PointerPromptTheme`; views must not hard-code product colors.
 - Placement is one of `bottomRight`, `bottomLeft`, `topLeft`, or `topRight`.
 - The controller must clamp the final panel frame to `NSScreen.visibleFrame` before applying it.
 - Diagonal placement changes should route through a side placement first, so bottom-right overflow can animate to left and then top-left.
@@ -42,7 +42,7 @@ swift run Donkey
 
 Command-click anywhere and confirm the composer appears with keyboard focus. Type a message, confirm the send control enables, and move the mouse near the bottom-right screen edge to confirm the prompt moves left, then top-left if needed, without clipping off screen.
 
-To verify color customization:
+To verify color customization, edit `apps/Donkey/Sources/Donkey/Resources/theme.json`, rebuild, and run Donkey. For one-off local runs, the accent can also be overridden:
 
 ```sh
 DONKEY_POINTER_ACCENT=FF375F swift run Donkey

@@ -53,6 +53,20 @@ public struct PointerPromptTheme: Equatable, Sendable {
         activeShadow: PointerPromptColor(red: 0.0, green: 0.14, blue: 0.32, alpha: 0.26)
     )
 
+    public static func fromConfig(_ config: PointerPromptThemeConfig) -> PointerPromptTheme? {
+        guard let accent = PointerPromptColor(cssString: config.accent) else {
+            return nil
+        }
+
+        let baseTheme = PointerPromptTheme.accent(accent)
+        return PointerPromptTheme(
+            accent: accent,
+            fill: PointerPromptColor(cssString: config.fill) ?? baseTheme.fill,
+            pointerFill: PointerPromptColor(cssString: config.pointerFill) ?? baseTheme.pointerFill,
+            activeShadow: PointerPromptColor(cssString: config.activeShadow) ?? baseTheme.activeShadow
+        )
+    }
+
     public static func accent(_ accent: PointerPromptColor) -> PointerPromptTheme {
         PointerPromptTheme(
             accent: accent,
@@ -65,6 +79,25 @@ public struct PointerPromptTheme: Equatable, Sendable {
                 alpha: 0.26
             )
         )
+    }
+}
+
+public struct PointerPromptThemeConfig: Codable, Equatable, Sendable {
+    public var accent: String
+    public var fill: String?
+    public var pointerFill: String?
+    public var activeShadow: String?
+
+    public init(
+        accent: String,
+        fill: String? = nil,
+        pointerFill: String? = nil,
+        activeShadow: String? = nil
+    ) {
+        self.accent = accent
+        self.fill = fill
+        self.pointerFill = pointerFill
+        self.activeShadow = activeShadow
     }
 }
 
@@ -82,6 +115,47 @@ public struct PointerPromptColor: Equatable, Sendable {
     }
 
     public static let white = PointerPromptColor(red: 1, green: 1, blue: 1, alpha: 1)
+
+    public init?(cssString: String?) {
+        guard let cssString else { return nil }
+
+        let trimmed = cssString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.lowercased().hasPrefix("rgba("), trimmed.hasSuffix(")") {
+            let rawValues = trimmed
+                .dropFirst(5)
+                .dropLast()
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+            guard rawValues.count == 4,
+                  let red = Double(rawValues[0]),
+                  let green = Double(rawValues[1]),
+                  let blue = Double(rawValues[2]),
+                  let alpha = Double(rawValues[3]) else {
+                return nil
+            }
+
+            self.init(
+                red: red / 255.0,
+                green: green / 255.0,
+                blue: blue / 255.0,
+                alpha: alpha
+            )
+            return
+        }
+
+        let hex = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        guard hex.count == 6, let value = Int(hex, radix: 16) else {
+            return nil
+        }
+
+        self.init(
+            red: Double((value >> 16) & 0xFF) / 255.0,
+            green: Double((value >> 8) & 0xFF) / 255.0,
+            blue: Double(value & 0xFF) / 255.0,
+            alpha: 1
+        )
+    }
 
     public func mixed(
         with other: PointerPromptColor,
