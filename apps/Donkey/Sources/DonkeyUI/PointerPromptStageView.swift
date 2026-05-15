@@ -1,3 +1,4 @@
+import AppKit
 import DonkeyContracts
 import SwiftUI
 
@@ -95,72 +96,80 @@ private struct PointerPromptComposer: View {
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        VStack(spacing: 13) {
-            HStack(spacing: 12) {
-                ComposerCloseButton(action: dismiss)
-
+        ZStack(alignment: .topLeading) {
+            VStack(alignment: .leading, spacing: 12) {
                 TextField(state.promptText, text: $messageText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 26, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color(promptColor: state.theme.accent))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 13))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
                     .focused($isFocused)
                     .onSubmit(submit)
                     .accessibilityLabel("Message for Donkey")
-                    .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                    .frame(maxWidth: .infinity)
+                    .padding(.leading, closeButtonContentClearance)
+
+                Divider()
+
+                HStack(spacing: 10) {
+                    ComposerToolbarButton(
+                        systemName: "plus",
+                        title: "Add",
+                        action: addContext
+                    )
+
+                    ComposerToolbarButton(
+                        systemName: "waveform",
+                        title: "Voice",
+                        action: voiceInput
+                    )
+
+                    Spacer(minLength: 12)
+
+                    ComposerToolbarButton(
+                        systemName: "arrow.up",
+                        title: "Send",
+                        isProminent: true,
+                        isDisabled: isSubmitDisabled,
+                        action: submit
+                    )
+                }
             }
-            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .padding(16)
 
-            HStack(spacing: 10) {
-                ComposerIconButton(
-                    systemName: "plus",
-                    label: "Add context",
-                    theme: state.theme,
-                    action: addContext
-                )
-
-                ComposerSignalButton(
-                    level: state.leadingSignalLevel,
-                    theme: state.theme,
-                    action: voiceInput
-                )
-
-                Spacer(minLength: 12)
-
-                ComposerIconButton(
-                    systemName: "arrow.up",
-                    label: "Send message",
-                    theme: state.theme,
-                    isProminent: true,
-                    isDisabled: messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                    action: submit
-                )
-            }
+            ComposerCloseButton(action: dismiss)
+                .padding(.leading, PointerPromptLayout.closeButtonInset)
+                .padding(.top, PointerPromptLayout.closeButtonInset)
         }
-        .padding(.leading, 14)
-        .padding(.trailing, 18)
-        .padding(.top, 16)
-        .padding(.bottom, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
             RoundedRectangle(cornerRadius: PointerPromptLayout.composerCornerRadius, style: .continuous)
-                .fill(Color(promptColor: state.theme.fill))
+                .fill(Color(nsColor: .windowBackgroundColor))
         }
         .overlay {
             RoundedRectangle(cornerRadius: PointerPromptLayout.composerCornerRadius, style: .continuous)
-                .stroke(Color(promptColor: state.theme.accent), lineWidth: 1.4)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
         }
         .shadow(
-            color: Color(promptColor: state.theme.accent).opacity(state.isActive ? 0.13 : 0.08),
-            radius: state.isActive ? 12 : 8,
+            color: Color.black.opacity(state.isActive ? 0.16 : 0.08),
+            radius: state.isActive ? 14 : 8,
             x: 0,
-            y: state.isActive ? 5 : 3
+            y: state.isActive ? 6 : 3
         )
+        .controlSize(.regular)
         .onAppear(perform: syncFocusWithActiveState)
         .onChange(of: state.isActive) { _, _ in
             syncFocusWithActiveState()
         }
+    }
+
+    private var isSubmitDisabled: Bool {
+        !state.isPrimaryActionEnabled ||
+            messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var closeButtonContentClearance: CGFloat {
+        PointerPromptLayout.closeButtonInset +
+            PointerPromptLayout.closeButtonSize
     }
 
     private func syncFocusWithActiveState() {
@@ -180,99 +189,42 @@ private struct ComposerCloseButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "xmark.circle.fill")
-                .font(.system(size: PointerPromptLayout.closeButtonSize, weight: .regular))
-                .symbolRenderingMode(.palette)
-                .foregroundStyle(Color.white, Color.red)
-                .frame(
-                    width: PointerPromptLayout.closeButtonSize,
-                    height: PointerPromptLayout.closeButtonSize
-                )
+            ZStack {
+                Circle()
+                    .fill(Color(nsColor: .systemRed))
+                    .overlay {
+                        Circle()
+                            .stroke(Color.black.opacity(0.18), lineWidth: 0.5)
+                    }
+
+                Image(systemName: "xmark")
+                    .font(.system(size: 6, weight: .bold))
+                    .foregroundStyle(Color.black.opacity(0.58))
+            }
+            .frame(
+                width: PointerPromptLayout.closeButtonSize,
+                height: PointerPromptLayout.closeButtonSize
+            )
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.plain)
+        .contentShape(Circle())
         .accessibilityLabel("Close prompt")
     }
 }
 
-private struct ComposerIconButton: View {
+private struct ComposerToolbarButton: View {
     let systemName: String
-    let label: String
-    let theme: PointerPromptTheme
+    let title: String
     var isProminent = false
     var isDisabled = false
     let action: @MainActor () -> Void
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: isProminent ? 17 : 16, weight: .semibold))
-                .foregroundStyle(foregroundColor)
-                .frame(width: 34, height: 34)
-                .background {
-                    Circle()
-                        .fill(backgroundColor)
-                }
-                .overlay {
-                    Circle()
-                        .stroke(borderColor, lineWidth: isProminent ? 0 : 1.4)
-                }
+            Label(title, systemImage: systemName)
         }
-        .buttonStyle(.borderless)
         .disabled(isDisabled)
-        .opacity(isDisabled ? 0.38 : 1)
-        .accessibilityLabel(label)
-    }
-
-    private var foregroundColor: Color {
-        isProminent ? Color(promptColor: theme.fill) : Color(promptColor: theme.accent)
-    }
-
-    private var backgroundColor: Color {
-        isProminent ? Color(promptColor: theme.accent) : Color.white.opacity(0.32)
-    }
-
-    private var borderColor: Color {
-        Color(promptColor: theme.accent).opacity(0.38)
-    }
-}
-
-private struct ComposerSignalButton: View {
-    let level: SignalLevel
-    let theme: PointerPromptTheme
-    let action: @MainActor () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(alignment: .center, spacing: 5) {
-                ForEach(Array(barHeights.enumerated()), id: \.offset) { _, height in
-                    Capsule()
-                        .fill(Color(promptColor: theme.accent).opacity(level == .idle ? 0.38 : 0.66))
-                        .frame(width: 4.5, height: height)
-                }
-            }
-            .frame(width: 44, height: 34)
-            .background {
-                Capsule()
-                    .fill(Color.white.opacity(0.32))
-            }
-            .overlay {
-                Capsule()
-                    .stroke(Color(promptColor: theme.accent).opacity(0.28), lineWidth: 1.4)
-            }
-        }
-        .buttonStyle(.borderless)
-        .accessibilityLabel("Voice input")
-    }
-
-    private var barHeights: [CGFloat] {
-        switch level {
-        case .idle:
-            [7, 18, 10]
-        case .ready:
-            [8, 24, 15]
-        case .thinking:
-            [17, 26, 21]
-        }
+        .accessibilityLabel(title)
     }
 }
 

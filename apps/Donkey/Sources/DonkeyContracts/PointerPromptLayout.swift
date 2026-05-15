@@ -14,6 +14,6 @@ public enum PointerPromptLayout {
     public static let composerSize = CGSize(width: 350, height: 142)
     public static let composerCornerRadius: CGFloat = 12
     public static let composerDragBorderThickness: CGFloat = 14
-    public static let closeButtonSize: CGFloat = 20
+    public static let closeButtonSize: CGFloat = 12
     public static let closeButtonInset: CGFloat = 12
 }
