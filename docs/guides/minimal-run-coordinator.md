@@ -28,6 +28,12 @@ Donkey also supports the first action-engine guardrail boundary. `ActionEngineGu
 
 Donkey also supports reflex latency reports and a synthetic replay benchmark. `ReflexLatencyReportBuilder` summarizes reflex traces into p50/p95/p99 latency, capture/perception/controller rates, dropped frames, stale actions, and worst traces. `ReflexReplayBenchmark` can generate deterministic dry-run traces for capture-only, controller-only, or end-to-end dry-run report modes. The installed debug entrypoint can print a CLI-friendly dry-run latency report with `--dry-run-latency-report`.
 
+Donkey also supports slow-path planner hint contracts. `StructuredPlannerHint` carries a goal, policy, priorities, regions of interest, preferred and avoided semantic actions, confidence, expiry, and source trace/frame/state/model-call ids. Planner hints are advisory only; they are validated for unknown actions, unsafe actions, stale state references, low-confidence replacement, and expiry before selection. `PlannerHintSelector` chooses the latest valid hint, and the reflex loop remains able to run without any planner hint.
+
+Donkey also supports the first AI harness model registry and router boundary. `AIModelRegistry` stores model roles, providers, literal model ids, endpoints, capabilities, timeouts, prompt versions, eval status, docs URLs, and rollback ids as registry data. `AIModelRouter` routes slow-path jobs by job type, risk, privacy mode, latency tolerance, capabilities, and failed-model history. Literal provider model ids should stay in registry entries, not planner/controller logic.
+
+Donkey also supports the first provider-neutral planner-hint adapter boundary using OpenAI's Responses API. `OpenAIPlannerHintAdapter` reads `OPENAI_API_KEY` from the environment, routes through the model registry, sends a structured-output Responses request with `store: false`, decodes a strict planner-hint JSON response, and records a model-call trace with role, provider, model id, prompt version, schema id, latency, timeout, validation status, and source trace/state ids. Missing credentials, cancellation, timeout, rate limit, invalid output, and provider outage return traceable failures without stopping the reflex loop. Official OpenAI docs were rechecked on May 16, 2026 for the Responses API, `text.format` JSON schema structured outputs, `store: false`, and current model registry default guidance.
+
 Donkey also supports a local run artifact store for durable trace data. Installed app runs are stored under `~/Library/Application Support/Donkey/Runs/<run-id>/`; tests and development tools may pass an explicit base directory override. Each prepared run creates:
 
 ```text
@@ -49,7 +55,7 @@ Donkey supports a runtime-level manual target context capture service that wires
 
 The installed executable also supports a developer-only launch-argument entrypoint for manual verification. `--list-window-candidates` prints the current candidate-list labels and durable `windowID` values. `--manual-capture` runs one manual capture, optionally with `--window-id <id>`, `--run-id <safe-id>`, and `--trace-id <safe-id>`, then prints the run folder and artifact paths. These commands are non-interactive and exit before showing the pointer prompt overlay.
 
-This is a coordination, in-memory reflex trace, hot-loop contract, deterministic dry-run skeleton, bounded target-window frame-source, cheap metadata perception, deterministic controller, action-engine guardrail, latency-report, target-metadata, single-screenshot artifact, read-only Accessibility snapshot, and manual capture orchestration foundation only. It does not run real vision models or OCR, call LLMs, execute OS input, perform Accessibility actions, provide a manual capture UI, persist high-volume reflex traces to disk, or provide continuous streaming capture yet.
+This is a coordination, in-memory reflex trace, hot-loop contract, deterministic dry-run skeleton, bounded target-window frame-source, cheap metadata perception, deterministic controller, action-engine guardrail, latency-report, planner-hint contract, model-registry/router, provider-neutral AI adapter, target-metadata, single-screenshot artifact, read-only Accessibility snapshot, and manual capture orchestration foundation only. It does not run real vision models or OCR, execute OS input, perform Accessibility actions, provide a manual capture UI, persist high-volume reflex traces to disk, provide continuous streaming capture, or make model calls required for reflex ticks.
 
 ## Technical Guidelines
 
@@ -77,6 +83,10 @@ This is a coordination, in-memory reflex trace, hot-loop contract, deterministic
 - Keep live OS input disabled until a later smoke slice explicitly wires a real backend. The guardrail boundary may project dry-run commands and release held state, but should not synthesize OS events.
 - Use monotonic timestamps for latency math. Wall-clock timestamps are for human labels and trace correlation only.
 - Use latency reports for any p50/p95/p99 claim. Reports should include dropped frames, stale actions, tick rates, and worst traces.
+- Treat planner hints as validated, expiring advice. Controllers may use the latest valid hint, but planner output must never become direct input.
+- Keep model selection in `AIModelRegistry` data. Do not scatter provider model ids through planner code.
+- Keep privacy-sensitive Responses API calls configured with `store: false` unless an explicit later policy changes that default.
+- Treat provider failures as sidecar failures. Missing credentials, timeout, rate limit, invalid output, or outage should leave the controller running on local state and existing valid hints.
 - Keep reflex trace retention bounded. The current in-memory store is for recent status and tests, not high-volume replay persistence.
 - Use sampled or summarized reflex events until a measured disk trace sink exists.
 
@@ -88,7 +98,7 @@ From `apps/Donkey/`:
 swift test
 ```
 
-The runtime tests should cover lifecycle ordering, abort and timeout safety, latest-session queue drops, tool permission denial, event-store ordering, context compaction, reflex trace latency math, bounded in-memory reflex trace retention, reflex event publication, hot-loop contract Codable round trips, coordinate conversion, stale-signal marking, deterministic dry-run trace publication, queue-depth-1 dropped-frame counting, bounded target-window frame capture, target-frame safety and overlap refusal, target-frame no-artifact/no-encoding metadata, cheap perception signal projection, controller confidence/staleness fallback, controller p95 replay timing under 20ms, action-engine permission/focus/rate/hold/release guardrails, latency report percentiles and replay benchmark formatting, artifact path validation, trace folder layout, JSONL event persistence, summary updates, deterministic window resolver behavior through fixture providers, candidate-list label snapshots, screenshot artifact metadata, bounded Accessibility serialization, missing Accessibility trust partial events, unsafe target refusal, overlap-sensitive capture refusal, manual capture event ordering through persisted coordinator events, and debug launch-argument parsing/formatting.
+The runtime tests should cover lifecycle ordering, abort and timeout safety, latest-session queue drops, tool permission denial, event-store ordering, context compaction, reflex trace latency math, bounded in-memory reflex trace retention, reflex event publication, hot-loop contract Codable round trips, coordinate conversion, stale-signal marking, deterministic dry-run trace publication, queue-depth-1 dropped-frame counting, bounded target-window frame capture, target-frame safety and overlap refusal, target-frame no-artifact/no-encoding metadata, cheap perception signal projection, controller confidence/staleness fallback, controller p95 replay timing under 20ms, action-engine permission/focus/rate/hold/release guardrails, latency report percentiles and replay benchmark formatting, planner hint validation/expiry/latest-selection, model registry routing, OpenAI Responses request shaping and failure handling, artifact path validation, trace folder layout, JSONL event persistence, summary updates, deterministic window resolver behavior through fixture providers, candidate-list label snapshots, screenshot artifact metadata, bounded Accessibility serialization, missing Accessibility trust partial events, unsafe target refusal, overlap-sensitive capture refusal, manual capture event ordering through persisted coordinator events, and debug launch-argument parsing/formatting.
 
 Manual smoke commands:
 
@@ -108,6 +118,7 @@ Remaining live verification is environment-dependent. On May 16, 2026, iPhone Mi
 
 - Runtime contracts live in `apps/Donkey/Sources/DonkeyContracts/RunLoopContracts.swift`.
 - Hot-loop contracts live in `apps/Donkey/Sources/DonkeyContracts/HotLoopContracts.swift`.
+- Planner hint contracts live in `apps/Donkey/Sources/DonkeyContracts/PlannerHintContracts.swift`.
 - Window target contracts live in `apps/Donkey/Sources/DonkeyContracts/WindowTargetContracts.swift`.
 - Runtime coordination lives in `apps/Donkey/Sources/DonkeyRuntime/`.
 - The deterministic dry-run reflex skeleton lives in `apps/Donkey/Sources/DonkeyRuntime/DryRunReflexLoop.swift`.
@@ -115,6 +126,8 @@ Remaining live verification is environment-dependent. On May 16, 2026, iPhone Mi
 - Cheap perception, world-state projection, deterministic controller policy, and dry-run action projection live in `apps/Donkey/Sources/DonkeyRuntime/CheapPerceptionAndController.swift`.
 - Action-engine guardrails live in `apps/Donkey/Sources/DonkeyRuntime/ActionEngineGuardrails.swift`.
 - Reflex latency reports and synthetic replay benchmarks live in `apps/Donkey/Sources/DonkeyRuntime/ReflexLatencyReport.swift`.
+- AI model registry and routing live in `apps/Donkey/Sources/DonkeyAI/AIModelRegistry.swift`.
+- The first OpenAI Responses planner-hint adapter lives in `apps/Donkey/Sources/DonkeyAI/OpenAIPlannerHintAdapter.swift`.
 - Recent reflex trace retention lives in `apps/Donkey/Sources/DonkeyRuntime/InMemoryReflexTraceStore.swift`.
 - macOS window resolution lives in `apps/Donkey/Sources/DonkeyRuntime/MacWindowResolver.swift`.
 - Target-window screenshot capture lives in `apps/Donkey/Sources/DonkeyRuntime/WindowScreenshotCaptureService.swift`.

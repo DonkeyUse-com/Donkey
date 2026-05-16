@@ -483,7 +483,7 @@ public struct HotLoopWorldState: Codable, Equatable, Sendable {
     }
 }
 
-public enum HotLoopActionKind: String, Codable, Equatable, Sendable {
+public enum HotLoopActionKind: String, CaseIterable, Codable, Equatable, Hashable, Sendable {
     case observe
     case wait
     case tapTarget
