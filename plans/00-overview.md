@@ -74,6 +74,7 @@ Every frame should use local, bounded-cost logic:
 - [18-macos-accessibility.md](18-macos-accessibility.md): macOS Accessibility tree/action backend
 - [19-ai-harness.md](19-ai-harness.md): slow-path memory, LLM/VLM connection, model routing, and update plan
 - [20-off-the-shelf-run-loop.md](20-off-the-shelf-run-loop.md): off-the-shelf perception, deterministic control, and low-latency runtime stack
+- [22-manual-target-context-capture.md](22-manual-target-context-capture.md): manual screenshot, Accessibility tree, and trace artifact capture for one run
 
 ## System Priorities
 

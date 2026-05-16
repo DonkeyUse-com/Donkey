@@ -4,8 +4,6 @@ import SwiftUI
 
 @MainActor
 final class PointerPromptOverlayController {
-    static let contentSize = PointerPromptLayout.contentSize
-
     private let model: PointerPromptOverlayModel
     private let fixedPlacement: PointerPromptPlacement = .bottomRight
     private let activationShortcut: PointerPromptActivationShortcut
@@ -33,20 +31,38 @@ final class PointerPromptOverlayController {
     }
 
     func show() {
-        let rootView = PointerPromptOverlayRootView(model: model)
         let initialContentSize = currentContentSize
-        let hostingView = NSHostingView(rootView: rootView)
-        hostingView.frame = CGRect(origin: .zero, size: initialContentSize)
+        let hostingView = makeHostingView(size: initialContentSize)
+        let panel = makePanel(size: initialContentSize, hostingView: hostingView)
+
+        self.panel = panel
+        startActivationMonitoring()
+        positionAtCurrentMouseLocation()
+        panel.orderFrontRegardless()
+        startTimer()
+    }
+
+    private func makeHostingView(size: CGSize) -> NSHostingView<PointerPromptOverlayRootView> {
+        let hostingView = NSHostingView(rootView: PointerPromptOverlayRootView(model: model))
+        hostingView.frame = CGRect(origin: .zero, size: size)
         hostingView.autoresizingMask = [.width, .height]
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
 
+        return hostingView
+    }
+
+    private func makePanel(
+        size: CGSize,
+        hostingView: NSHostingView<PointerPromptOverlayRootView>
+    ) -> PointerPromptPanel {
         let panel = PointerPromptPanel(
-            contentRect: CGRect(origin: .zero, size: initialContentSize),
+            contentRect: CGRect(origin: .zero, size: size),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
+
         panel.title = "Donkey"
         panel.contentView = hostingView
         panel.backgroundColor = .clear
@@ -67,11 +83,7 @@ final class PointerPromptOverlayController {
             .stationary
         ]
 
-        self.panel = panel
-        startActivationMonitoring()
-        positionAtCurrentMouseLocation()
-        panel.orderFrontRegardless()
-        startTimer()
+        return panel
     }
 
     func stop() {

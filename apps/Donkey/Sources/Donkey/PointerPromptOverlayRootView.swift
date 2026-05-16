@@ -15,14 +15,15 @@ struct PointerPromptOverlayRootView: View {
             intentSink: model
         )
         .frame(
-            width: PointerPromptLayout.contentSize(
-                inputTextHeight: model.inputTextHeight,
-                isExpanded: model.isInputExpanded
-            ).width,
-            height: PointerPromptLayout.contentSize(
-                inputTextHeight: model.inputTextHeight,
-                isExpanded: model.isInputExpanded
-            ).height
+            width: contentSize.width,
+            height: contentSize.height
+        )
+    }
+
+    private var contentSize: CGSize {
+        PointerPromptLayout.contentSize(
+            inputTextHeight: model.inputTextHeight,
+            isExpanded: model.isInputExpanded
         )
     }
 }

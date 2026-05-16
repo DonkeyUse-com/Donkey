@@ -1,6 +1,5 @@
 import DonkeyAI
 import DonkeyContracts
-import DonkeyRuntime
 import Foundation
 import SwiftUI
 
@@ -12,17 +11,10 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
     @Published var inputTextHeight = PointerPromptLayout.composerInputTextMinimumHeight
     @Published var isInputExpanded = false
 
-    private let runtimeProvider: any RuntimeStatusProviding
-    private let aiProvider: any AIHarnessSnapshotProviding
-
     init(
-        runtimeProvider: any RuntimeStatusProviding = OffTheShelfRunLoopBoundary(),
         aiProvider: any AIHarnessSnapshotProviding = AIHarnessBoundary(),
         theme: PointerPromptTheme = PointerPromptOverlayModel.bundledTheme()
     ) {
-        self.runtimeProvider = runtimeProvider
-        self.aiProvider = aiProvider
-
         let aiSnapshot = aiProvider.snapshot()
         promptState = PointerPromptState(
             promptText: aiSnapshot.suggestedPromptText,
