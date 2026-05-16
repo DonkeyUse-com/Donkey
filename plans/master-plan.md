@@ -49,8 +49,8 @@ The hot path must continue to work with the AI harness disabled.
 
 ## Supported Boundary
 
-- Runtime shell: minimal run coordination, ordered events, bounded context assembly, local run artifacts, manual target context capture, in-memory reflex trace retention, and latency reports are supported.
-- Reflex hot path: typed frame/world-state/action contracts, deterministic dry-run loop, bounded target-window frame source, cheap metadata perception, deterministic controller, metadata-only local-navigation dry-run action selection, and dry-run action projection are supported. Live OS input is not supported.
+- Runtime shell: minimal run coordination, ordered events, bounded context assembly, local run artifacts, manual target context capture, in-memory reflex trace retention, and stage-split latency reports are supported.
+- Reflex hot path: typed frame/world-state/action contracts, deterministic dry-run loop, bounded target-window frame source, cheap metadata perception, swappable world-state projection, deterministic controller, loop-integrated metadata-only local-navigation dry-run action selection, optional caller-supplied browser-tab metadata, and dry-run action projection are supported. Live OS input is not supported.
 - Safety boundary: action-engine command contracts, permission/focus/rate/hold/release guardrails, and replayable command traces are supported before live input.
 - Slow AI boundary: structured planner hints, validation/expiry/latest-valid selection, model registry/router, an OpenAI Responses structured-output adapter, source-linked memory, and replay/eval scaffolding are supported as optional sidecar pieces. The hot loop still runs without AI output.
 - Source of truth: detailed supported behavior lives in `docs/guides/minimal-run-coordinator.md`; historical implementation details should be found with search in `docs/`, `plans/`, and git history, not duplicated here.
@@ -68,27 +68,20 @@ The hot path must continue to work with the AI harness disabled.
 
 ## Active Queue
 
-1. Finish fast local navigation dry-run closeout.
-   - Wire local-navigation metadata projection into the dry-run reflex loop instead of testing it only as a standalone projector/controller.
-   - Add browser-tab metadata where available and keep window metadata as the no-remote-model fallback.
-   - Add a swappable local perception adapter for fast inference experiments, but keep navigation working without remote models or chat LLMs.
-   - Measure metadata read, crop/resize/normalize if used, inference if used, world-state update, controller decision, and action projection separately with p50/p95/p99 latency.
-   - Keep the reflex queue latest-frame/latest-state-wins with queue depth 1, stale-result dropping, and no PNG/JPEG encode/decode in the hot path.
-
-2. Integrate slow planner beside the dry-run loop.
+1. Integrate slow planner beside the dry-run loop.
    - Trigger planner calls on scene change, low confidence, repeated failure, goal completion, or user instruction.
    - Build compact snapshots from world state, trace summaries, optional screenshots, and memory.
    - Publish only validated hints to the controller.
    - Prove planner latency does not move p95 reflex latency.
 
-3. Enable guarded live-action smoke only after dry-run closeout.
+2. Enable guarded live-action smoke only after dry-run closeout.
    - Use fast local navigation as the first target behavior.
    - Run end-to-end dry-run with input disabled and latency report passing.
    - Enable live input only with explicit policy allowance and focus guard.
    - Verify abort and timeout release held input.
    - Record trace evidence for every action.
 
-4. Close out the primary plans.
+3. Close out the primary plans.
    - Update supported behavior guides in `docs/guides/`.
    - Move `plans/20-off-the-shelf-run-loop.md` to `plans/done/` when the reflex loop acceptance criteria are supported.
    - Move `plans/19-ai-harness.md` to `plans/done/` when the AI harness acceptance criteria are supported.
@@ -97,9 +90,9 @@ The hot path must continue to work with the AI harness disabled.
 
 ## What Should Be Done Next
 
-Start with active task 1: finish fast local navigation dry-run closeout.
+Start with active task 1: integrate the slow planner beside the dry-run loop.
 
-This is the right next slice because the first metadata-only local-navigation projector and controller can now choose traceable dry-run focus actions with the AI harness disabled. It still needs loop integration, browser-tab metadata where available, and measured local-navigation latency before guarded live input is considered.
+This is the right next slice because the metadata-only local-navigation path now runs through the dry-run loop with browser-tab metadata when available, no remote-model dependency, queue depth 1, no hot-path image encoding, and stage-split latency traces. The next gap is proving optional planner calls can publish validated hints without moving reflex p95 latency.
 
 ## Closeout Criteria
 

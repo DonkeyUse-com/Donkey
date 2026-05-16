@@ -50,6 +50,52 @@ public struct LocalNavigationCandidate: Codable, Equatable, Sendable {
     }
 }
 
+public struct LocalNavigationBrowserTabMetadata: Codable, Equatable, Sendable {
+    public var id: String
+    public var appName: String?
+    public var bundleIdentifier: String?
+    public var title: String?
+    public var url: String?
+    public var windowID: UInt32?
+    public var bounds: HotLoopRect?
+    public var isActive: Bool
+    public var isFrontmost: Bool
+    public var isFocused: Bool
+    public var safetyStatus: WindowTargetSafetyStatus
+    public var confidence: Double
+    public var metadata: [String: String]
+
+    public init(
+        id: String,
+        appName: String? = nil,
+        bundleIdentifier: String? = nil,
+        title: String? = nil,
+        url: String? = nil,
+        windowID: UInt32? = nil,
+        bounds: HotLoopRect? = nil,
+        isActive: Bool = false,
+        isFrontmost: Bool = false,
+        isFocused: Bool = false,
+        safetyStatus: WindowTargetSafetyStatus = .allowed,
+        confidence: Double = 0.8,
+        metadata: [String: String] = [:]
+    ) {
+        self.id = id
+        self.appName = appName
+        self.bundleIdentifier = bundleIdentifier
+        self.title = title
+        self.url = url
+        self.windowID = windowID
+        self.bounds = bounds
+        self.isActive = isActive
+        self.isFrontmost = isFrontmost
+        self.isFocused = isFocused
+        self.safetyStatus = safetyStatus
+        self.confidence = min(max(confidence, 0), 1)
+        self.metadata = metadata
+    }
+}
+
 public struct LocalNavigationWorldState: Codable, Equatable, Sendable {
     public var id: String
     public var traceID: String
@@ -114,14 +160,26 @@ public struct LocalNavigationWorldState: Codable, Equatable, Sendable {
                     kind: candidate.kind == .browserTab ? .switchTab : .focusWindow,
                     targetBounds: candidate.bounds,
                     confidence: candidate.confidence,
-                    sourceSignalID: "signal-\(id)"
+                    sourceSignalID: "signal-\(id)",
+                    metadata: candidate.metadata.merging([
+                        "localNavigation.candidateID": candidate.id,
+                        "localNavigation.candidateKind": candidate.kind.rawValue,
+                        "localNavigation.isFrontmost": String(candidate.isFrontmost),
+                        "localNavigation.isFocused": String(candidate.isFocused),
+                        "localNavigation.safetyStatus": candidate.safetyStatus.rawValue,
+                        "localNavigation.appName": candidate.appName ?? "",
+                        "localNavigation.bundleIdentifier": candidate.bundleIdentifier ?? "",
+                        "localNavigation.title": candidate.title ?? ""
+                    ]) { current, _ in current }
                 )
             },
             confidence: confidence,
             metadata: metadata.merging([
                 "localNavigation.candidateCount": String(candidates.count),
                 "localNavigation.focusedCandidateID": focusedCandidateID ?? "",
-                "localNavigation.frontmostCandidateID": frontmostCandidateID ?? ""
+                "localNavigation.frontmostCandidateID": frontmostCandidateID ?? "",
+                "localNavigation.requestedBundleIdentifier": requestedBundleIdentifier ?? "",
+                "localNavigation.requestedTitleContains": requestedTitleContains ?? ""
             ]) { current, _ in current }
         )
     }

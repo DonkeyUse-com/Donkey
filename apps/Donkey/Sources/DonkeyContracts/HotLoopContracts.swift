@@ -246,6 +246,7 @@ public enum HotLoopFrameSourceKind: String, Codable, Equatable, Sendable {
     case synthetic
     case recorded
     case targetWindow
+    case localNavigationMetadata
 }
 
 public struct HotLoopFrame: Codable, Equatable, Sendable {
@@ -384,19 +385,22 @@ public struct HotLoopActionAffordance: Codable, Equatable, Sendable {
     public var targetBounds: HotLoopRect?
     public var confidence: Double
     public var sourceSignalID: String
+    public var metadata: [String: String]
 
     public init(
         id: String,
         kind: HotLoopActionKind,
         targetBounds: HotLoopRect? = nil,
         confidence: Double,
-        sourceSignalID: String
+        sourceSignalID: String,
+        metadata: [String: String] = [:]
     ) {
         self.id = id
         self.kind = kind
         self.targetBounds = targetBounds
         self.confidence = confidence
         self.sourceSignalID = sourceSignalID
+        self.metadata = metadata
     }
 }
 

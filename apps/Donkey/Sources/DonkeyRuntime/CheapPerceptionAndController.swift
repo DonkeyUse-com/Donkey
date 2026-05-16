@@ -90,7 +90,7 @@ public struct CheapPerceptionAdapter: DryRunPerceptionAdapting {
     }
 }
 
-public struct HotLoopWorldStateProjector: Sendable {
+public struct HotLoopWorldStateProjector: DryRunWorldStateProjecting {
     public var staleSignalThresholdMS: Double
 
     public init(staleSignalThresholdMS: Double = 250) {
@@ -101,7 +101,7 @@ public struct HotLoopWorldStateProjector: Sendable {
         frame: HotLoopFrame,
         signals: [HotLoopPerceptionSignal],
         observedAt: RunTraceTimestamp
-    ) -> HotLoopWorldState {
+    ) async -> HotLoopWorldState {
         HotLoopWorldState.build(
             id: "state-\(frame.id)",
             frame: frame,

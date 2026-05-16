@@ -15,15 +15,20 @@ public struct LocalNavigationMetadataProjector: Sendable {
         observedAt: RunTraceTimestamp,
         sourceCapturedAt: RunTraceTimestamp,
         requestedBundleIdentifier: String? = nil,
-        requestedTitleContains: String? = nil
+        requestedTitleContains: String? = nil,
+        browserTabs: [LocalNavigationBrowserTabMetadata] = []
     ) -> LocalNavigationWorldState {
         let sourceAgeMS = sourceCapturedAt.milliseconds(until: observedAt)
-        let candidates = snapshot.candidates.map { labeled in
+        let windowCandidates = snapshot.candidates.map { labeled in
             candidate(
                 labeled: labeled,
                 sourceAgeMS: sourceAgeMS
             )
         }
+        let tabCandidates = browserTabs.map { tab in
+            candidate(tab: tab, sourceAgeMS: sourceAgeMS)
+        }
+        let candidates = windowCandidates + tabCandidates
         let usableCandidates = candidates.filter { $0.safetyStatus == .allowed }
         let confidence = usableCandidates.isEmpty
             ? 0
@@ -44,6 +49,9 @@ public struct LocalNavigationMetadataProjector: Sendable {
             metadata: [
                 "projector": "local-navigation-metadata-projector",
                 "rawPixelsExposed": "false",
+                "browserTabMetadataAvailable": String(!browserTabs.isEmpty),
+                "browserTabCandidateCount": String(browserTabs.count),
+                "windowCandidateCount": String(windowCandidates.count),
                 "sourceAgeMS": sourceAgeMS.map { String($0) } ?? "unknown",
                 "stale": String((sourceAgeMS ?? Double.greatestFiniteMagnitude) > staleSourceThresholdMS)
             ]
@@ -80,6 +88,31 @@ public struct LocalNavigationMetadataProjector: Sendable {
                 "isVisible": String(window.isVisible),
                 "isOnScreen": String(window.isOnScreen)
             ]
+        )
+    }
+
+    private func candidate(
+        tab: LocalNavigationBrowserTabMetadata,
+        sourceAgeMS: Double?
+    ) -> LocalNavigationCandidate {
+        LocalNavigationCandidate(
+            id: "browser-tab-\(tab.id)",
+            kind: .browserTab,
+            appName: tab.appName,
+            bundleIdentifier: tab.bundleIdentifier,
+            title: tab.title,
+            bounds: tab.bounds,
+            isFrontmost: tab.isFrontmost,
+            isFocused: tab.isFocused || tab.isActive,
+            safetyStatus: tab.safetyStatus,
+            confidence: tab.safetyStatus == .allowed ? min(max(tab.confidence, 0), 1) : 0,
+            sourceAgeMS: sourceAgeMS,
+            metadata: tab.metadata.merging([
+                "browserTabID": tab.id,
+                "browserTabURL": tab.url ?? "",
+                "browserTabWindowID": tab.windowID.map(String.init) ?? "",
+                "browserTabActive": String(tab.isActive)
+            ]) { current, _ in current }
         )
     }
 

@@ -38,7 +38,7 @@ struct CheapPerceptionAndControllerTests {
         let frame = fixtureFrame()
         let signals = await CheapPerceptionAdapter().perceive(frame: frame)
 
-        let state = HotLoopWorldStateProjector(staleSignalThresholdMS: 250).project(
+        let state = await HotLoopWorldStateProjector(staleSignalThresholdMS: 250).project(
             frame: frame,
             signals: signals,
             observedAt: timestamp(12)

@@ -36,8 +36,12 @@ public struct ReflexLatencyReport: Codable, Equatable, Sendable {
     public var traceCount: Int
     public var softwareLoopMS: ReflexLatencyPercentiles
     public var captureMS: ReflexLatencyPercentiles
+    public var preprocessMS: ReflexLatencyPercentiles
+    public var modelInferenceMS: ReflexLatencyPercentiles
     public var perceptionMS: ReflexLatencyPercentiles
+    public var stateUpdateMS: ReflexLatencyPercentiles
     public var decisionMS: ReflexLatencyPercentiles
+    public var actionProjectionMS: ReflexLatencyPercentiles
     public var inputMS: ReflexLatencyPercentiles
     public var captureFPS: Double?
     public var perceptionFPS: Double?
@@ -52,8 +56,12 @@ public struct ReflexLatencyReport: Codable, Equatable, Sendable {
         traceCount: Int,
         softwareLoopMS: ReflexLatencyPercentiles,
         captureMS: ReflexLatencyPercentiles,
+        preprocessMS: ReflexLatencyPercentiles = ReflexLatencyPercentiles(),
+        modelInferenceMS: ReflexLatencyPercentiles = ReflexLatencyPercentiles(),
         perceptionMS: ReflexLatencyPercentiles,
+        stateUpdateMS: ReflexLatencyPercentiles = ReflexLatencyPercentiles(),
         decisionMS: ReflexLatencyPercentiles,
+        actionProjectionMS: ReflexLatencyPercentiles = ReflexLatencyPercentiles(),
         inputMS: ReflexLatencyPercentiles,
         captureFPS: Double? = nil,
         perceptionFPS: Double? = nil,
@@ -67,8 +75,12 @@ public struct ReflexLatencyReport: Codable, Equatable, Sendable {
         self.traceCount = traceCount
         self.softwareLoopMS = softwareLoopMS
         self.captureMS = captureMS
+        self.preprocessMS = preprocessMS
+        self.modelInferenceMS = modelInferenceMS
         self.perceptionMS = perceptionMS
+        self.stateUpdateMS = stateUpdateMS
         self.decisionMS = decisionMS
+        self.actionProjectionMS = actionProjectionMS
         self.inputMS = inputMS
         self.captureFPS = captureFPS
         self.perceptionFPS = perceptionFPS
@@ -108,8 +120,12 @@ public enum ReflexLatencyReportBuilder {
             traceCount: traces.count,
             softwareLoopMS: percentiles(traces.compactMap(\.latencyBreakdown.softwareLoopMS)),
             captureMS: percentiles(traces.compactMap(\.latencyBreakdown.captureMS)),
+            preprocessMS: percentiles(traces.compactMap(\.latencyBreakdown.preprocessMS)),
+            modelInferenceMS: percentiles(traces.compactMap(\.latencyBreakdown.modelInferenceMS)),
             perceptionMS: percentiles(traces.compactMap(\.latencyBreakdown.perceptionMS)),
+            stateUpdateMS: percentiles(traces.compactMap(\.latencyBreakdown.stateUpdateMS)),
             decisionMS: percentiles(traces.compactMap(\.latencyBreakdown.decisionMS)),
+            actionProjectionMS: percentiles(traces.compactMap(\.latencyBreakdown.actionProjectionMS)),
             inputMS: percentiles(traces.compactMap(\.latencyBreakdown.inputMS)),
             captureFPS: rate(
                 count: traces.count,
@@ -206,8 +222,12 @@ public enum ReflexLatencyReportFormatter {
             "traceCount=\(report.traceCount)",
             "softwareLoopMS=\(format(report.softwareLoopMS))",
             "captureMS=\(format(report.captureMS))",
+            "preprocessMS=\(format(report.preprocessMS))",
+            "modelInferenceMS=\(format(report.modelInferenceMS))",
             "perceptionMS=\(format(report.perceptionMS))",
+            "stateUpdateMS=\(format(report.stateUpdateMS))",
             "decisionMS=\(format(report.decisionMS))",
+            "actionProjectionMS=\(format(report.actionProjectionMS))",
             "inputMS=\(format(report.inputMS))",
             "captureFPS=\(format(report.captureFPS))",
             "perceptionFPS=\(format(report.perceptionFPS))",

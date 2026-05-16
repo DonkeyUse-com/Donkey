@@ -26,8 +26,12 @@ struct ReflexLatencyReportTests {
         #expect(report.softwareLoopMS.p95 == 30)
         #expect(report.softwareLoopMS.p99 == 30)
         #expect(report.captureMS.p50 == 1)
+        #expect(report.preprocessMS.p50 == 1)
+        #expect(report.modelInferenceMS.p50 == 3)
         #expect(report.perceptionMS.p50 == 2)
+        #expect(report.stateUpdateMS.p50 == 1)
         #expect(report.decisionMS.p50 == 1)
+        #expect(report.actionProjectionMS.p50 == 1)
         #expect(report.inputMS.p50 == 1)
         #expect(isClose(report.captureFPS, to: 100))
         #expect(isClose(report.perceptionFPS, to: 100))
@@ -111,11 +115,19 @@ struct ReflexLatencyReportTests {
             timestamps: ReflexTraceTimeline(
                 captureStart: timestamp(baseMS),
                 captureEnd: timestamp(baseMS + 1),
+                preprocessStart: timestamp(baseMS + 1),
+                preprocessEnd: timestamp(baseMS + 2),
+                modelStart: timestamp(baseMS + 2),
+                modelEnd: timestamp(baseMS + 5),
                 perceptionStart: timestamp(baseMS + 1),
                 perceptionEnd: timestamp(baseMS + 3),
+                stateUpdateStart: timestamp(baseMS + 3),
+                stateUpdateEnd: timestamp(baseMS + 4),
                 statePublished: timestamp(baseMS + 3),
                 controllerStart: timestamp(baseMS + 3),
                 controllerEnd: timestamp(baseMS + 4),
+                actionProjectionStart: timestamp(baseMS + 4),
+                actionProjectionEnd: timestamp(baseMS + 5),
                 actionEnqueued: timestamp(baseMS + softwareLoopMS),
                 inputExecuted: timestamp(baseMS + softwareLoopMS + 1)
             ),

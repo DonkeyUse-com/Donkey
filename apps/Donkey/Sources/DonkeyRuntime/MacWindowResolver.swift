@@ -49,7 +49,7 @@ protocol MacWindowMetadataProviding {
     func focusedWindowIdentifier() -> UInt32?
 }
 
-public final class MacWindowResolver {
+public final class MacWindowResolver: @unchecked Sendable {
     private let provider: any MacWindowMetadataProviding
 
     public convenience init() {

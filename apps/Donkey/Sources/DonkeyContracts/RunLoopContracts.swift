@@ -315,9 +315,13 @@ public struct ReflexTraceTimeline: Codable, Equatable, Sendable {
     public var modelEnd: RunTraceTimestamp?
     public var perceptionStart: RunTraceTimestamp?
     public var perceptionEnd: RunTraceTimestamp?
+    public var stateUpdateStart: RunTraceTimestamp?
+    public var stateUpdateEnd: RunTraceTimestamp?
     public var statePublished: RunTraceTimestamp?
     public var controllerStart: RunTraceTimestamp?
     public var controllerEnd: RunTraceTimestamp?
+    public var actionProjectionStart: RunTraceTimestamp?
+    public var actionProjectionEnd: RunTraceTimestamp?
     public var actionEnqueued: RunTraceTimestamp?
     public var inputExecuted: RunTraceTimestamp?
 
@@ -330,9 +334,13 @@ public struct ReflexTraceTimeline: Codable, Equatable, Sendable {
         modelEnd: RunTraceTimestamp? = nil,
         perceptionStart: RunTraceTimestamp? = nil,
         perceptionEnd: RunTraceTimestamp? = nil,
+        stateUpdateStart: RunTraceTimestamp? = nil,
+        stateUpdateEnd: RunTraceTimestamp? = nil,
         statePublished: RunTraceTimestamp? = nil,
         controllerStart: RunTraceTimestamp? = nil,
         controllerEnd: RunTraceTimestamp? = nil,
+        actionProjectionStart: RunTraceTimestamp? = nil,
+        actionProjectionEnd: RunTraceTimestamp? = nil,
         actionEnqueued: RunTraceTimestamp? = nil,
         inputExecuted: RunTraceTimestamp? = nil
     ) {
@@ -344,9 +352,13 @@ public struct ReflexTraceTimeline: Codable, Equatable, Sendable {
         self.modelEnd = modelEnd
         self.perceptionStart = perceptionStart
         self.perceptionEnd = perceptionEnd
+        self.stateUpdateStart = stateUpdateStart
+        self.stateUpdateEnd = stateUpdateEnd
         self.statePublished = statePublished
         self.controllerStart = controllerStart
         self.controllerEnd = controllerEnd
+        self.actionProjectionStart = actionProjectionStart
+        self.actionProjectionEnd = actionProjectionEnd
         self.actionEnqueued = actionEnqueued
         self.inputExecuted = inputExecuted
     }
@@ -357,7 +369,9 @@ public struct ReflexTraceTimeline: Codable, Equatable, Sendable {
             preprocessMS: milliseconds(from: preprocessStart, to: preprocessEnd),
             modelInferenceMS: milliseconds(from: modelStart, to: modelEnd),
             perceptionMS: milliseconds(from: perceptionStart, to: perceptionEnd),
+            stateUpdateMS: milliseconds(from: stateUpdateStart, to: stateUpdateEnd),
             decisionMS: milliseconds(from: controllerStart, to: controllerEnd),
+            actionProjectionMS: milliseconds(from: actionProjectionStart, to: actionProjectionEnd),
             inputMS: milliseconds(from: actionEnqueued, to: inputExecuted),
             softwareLoopMS: milliseconds(from: captureEnd, to: inputExecuted),
             frameAgeMS: milliseconds(from: captureEnd, to: controllerStart),
@@ -379,7 +393,9 @@ public struct ReflexLatencyBreakdown: Codable, Equatable, Sendable {
     public var preprocessMS: Double?
     public var modelInferenceMS: Double?
     public var perceptionMS: Double?
+    public var stateUpdateMS: Double?
     public var decisionMS: Double?
+    public var actionProjectionMS: Double?
     public var inputMS: Double?
     public var softwareLoopMS: Double?
     public var frameAgeMS: Double?
@@ -390,7 +406,9 @@ public struct ReflexLatencyBreakdown: Codable, Equatable, Sendable {
         preprocessMS: Double? = nil,
         modelInferenceMS: Double? = nil,
         perceptionMS: Double? = nil,
+        stateUpdateMS: Double? = nil,
         decisionMS: Double? = nil,
+        actionProjectionMS: Double? = nil,
         inputMS: Double? = nil,
         softwareLoopMS: Double? = nil,
         frameAgeMS: Double? = nil,
@@ -400,7 +418,9 @@ public struct ReflexLatencyBreakdown: Codable, Equatable, Sendable {
         self.preprocessMS = preprocessMS
         self.modelInferenceMS = modelInferenceMS
         self.perceptionMS = perceptionMS
+        self.stateUpdateMS = stateUpdateMS
         self.decisionMS = decisionMS
+        self.actionProjectionMS = actionProjectionMS
         self.inputMS = inputMS
         self.softwareLoopMS = softwareLoopMS
         self.frameAgeMS = frameAgeMS
