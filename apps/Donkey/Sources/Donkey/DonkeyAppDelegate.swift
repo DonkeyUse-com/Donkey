@@ -5,6 +5,8 @@ final class DonkeyAppDelegate: NSObject, NSApplicationDelegate {
     private var overlayController: PointerPromptOverlayController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+
         let model = PointerPromptOverlayModel()
         let controller = PointerPromptOverlayController(model: model)
         overlayController = controller

@@ -2,24 +2,37 @@ import CoreGraphics
 import Foundation
 
 public struct PointerPromptState: Equatable, Sendable {
+    public static let defaultVoiceWaveformLevels: [Double] = [
+        0.12,
+        0.2,
+        0.34,
+        0.5,
+        0.34,
+        0.2,
+        0.12
+    ]
+
     public var promptText: String
     public var isPrimaryActionEnabled: Bool
     public var leadingSignalLevel: SignalLevel
     public var isActive: Bool
     public var theme: PointerPromptTheme
+    public var voiceWaveformLevels: [Double]
 
     public init(
         promptText: String,
         isPrimaryActionEnabled: Bool = true,
         leadingSignalLevel: SignalLevel = .idle,
         isActive: Bool = false,
-        theme: PointerPromptTheme = .defaultBlue
+        theme: PointerPromptTheme = .defaultBlue,
+        voiceWaveformLevels: [Double] = PointerPromptState.defaultVoiceWaveformLevels
     ) {
         self.promptText = promptText
         self.isPrimaryActionEnabled = isPrimaryActionEnabled
         self.leadingSignalLevel = leadingSignalLevel
         self.isActive = isActive
         self.theme = theme
+        self.voiceWaveformLevels = voiceWaveformLevels
     }
 
     public static let productionDefault = PointerPromptState(

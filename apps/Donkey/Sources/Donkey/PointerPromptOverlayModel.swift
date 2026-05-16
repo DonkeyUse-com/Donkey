@@ -38,6 +38,13 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         promptState.leadingSignalLevel = .ready
     }
 
+    func updateVoiceWaveformLevels(_ levels: [Double]) {
+        let normalizedLevels = levels.map { min(max($0, 0), 1) }
+        guard promptState.voiceWaveformLevels != normalizedLevels else { return }
+
+        promptState.voiceWaveformLevels = normalizedLevels
+    }
+
     func handle(_ intent: PointerPromptIntent) {
         switch intent {
         case .addContextRequested:

@@ -9,6 +9,7 @@ final class PointerPromptOverlayController {
     private let model: PointerPromptOverlayModel
     private let fixedPlacement: PointerPromptPlacement = .bottomRight
     private let activationShortcut: PointerPromptActivationShortcut
+    private let microphoneWaveformMeter = MicrophoneWaveformMeter()
 
     private var panel: NSPanel?
     private var timer: Timer?
@@ -26,6 +27,9 @@ final class PointerPromptOverlayController {
     ) {
         self.model = model
         self.activationShortcut = activationShortcut
+        microphoneWaveformMeter.onLevelsChanged = { [weak model] levels in
+            model?.updateVoiceWaveformLevels(levels)
+        }
     }
 
     func show() {
@@ -74,6 +78,7 @@ final class PointerPromptOverlayController {
         timer?.invalidate()
         timer = nil
         stopActivationMonitoring()
+        microphoneWaveformMeter.stop()
         panel?.close()
         panel = nil
     }
@@ -126,6 +131,11 @@ final class PointerPromptOverlayController {
         case .flagsChanged:
             handleModifierFlagsChanged(modifierFlags)
         case .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            if type != .keyDown, dismissActivePromptIfClickIsOutside() {
+                resetActivationTapSequence()
+                return
+            }
+
             resetActivationTapSequence()
         default:
             break
@@ -237,9 +247,11 @@ final class PointerPromptOverlayController {
 
     private func activateAtCurrentMouseLocation() {
         guard !model.promptState.isActive else {
-            NSApp.activate(ignoringOtherApps: true)
-            panel?.makeKeyAndOrderFront(nil)
+            if let panel {
+                activateForKeyboardInput(panel)
+            }
             focusComposerTextInput()
+            microphoneWaveformMeter.start()
             return
         }
 
@@ -259,10 +271,10 @@ final class PointerPromptOverlayController {
         guard let panel else { return }
 
         model.activate()
+        microphoneWaveformMeter.start()
         tick(mouseLocation: mouseLocation)
 
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
+        activateForKeyboardInput(panel)
         focusComposerTextInput()
     }
 
@@ -279,6 +291,10 @@ final class PointerPromptOverlayController {
 
     private func tick(mouseLocation explicitMouseLocation: CGPoint? = nil) {
         guard let panel else { return }
+
+        if !model.promptState.isActive {
+            microphoneWaveformMeter.stop()
+        }
 
         activateVoiceInputIfNeeded()
         updateMouseEventPassthrough(for: panel)
@@ -390,46 +406,15 @@ final class PointerPromptOverlayController {
         guard model.promptState.isActive else { return [] }
 
         let composerFrame = composerFrame(for: fixedPlacement)
-        let inputFrame = composerInputFrame(in: composerFrame)
-        let closeControlFrame = CGRect(
-            x: composerFrame.minX + PointerPromptLayout.closeButtonInset,
-            y: composerFrame.maxY -
-                PointerPromptLayout.closeButtonInset -
-                PointerPromptLayout.closeButtonSize,
-            width: PointerPromptLayout.closeControlWidth,
-            height: PointerPromptLayout.closeButtonSize
-        ).insetBy(dx: -6, dy: -6)
-
+        let inputSurfaceFrame = composerInputSurfaceFrame(in: composerFrame)
+        let closeButtonFrame = composerCloseButtonFrame(in: composerFrame).insetBy(dx: -3, dy: -3)
         var regions = [
-            CGRect(
-                x: closeControlFrame.maxX,
-                y: inputFrame.maxY,
-                width: composerFrame.maxX - closeControlFrame.maxX,
-                height: composerFrame.maxY - inputFrame.maxY
-            ),
+            inputSurfaceFrame,
             CGRect(
                 x: composerFrame.minX,
-                y: inputFrame.maxY,
-                width: closeControlFrame.minX - composerFrame.minX,
-                height: composerFrame.maxY - inputFrame.maxY
-            ),
-            CGRect(
-                x: composerFrame.minX,
-                y: inputFrame.minY,
-                width: inputFrame.minX - composerFrame.minX,
-                height: inputFrame.height
-            ),
-            CGRect(
-                x: inputFrame.maxX,
-                y: inputFrame.minY,
-                width: composerFrame.maxX - inputFrame.maxX,
-                height: inputFrame.height
-            ),
-            CGRect(
-                x: composerFrame.minX,
-                y: composerFrame.minY,
-                width: composerFrame.width,
-                height: inputFrame.minY - composerFrame.minY
+                y: inputSurfaceFrame.maxY,
+                width: max(0, closeButtonFrame.minX - composerFrame.minX),
+                height: max(0, composerFrame.maxY - inputSurfaceFrame.maxY)
             )
         ]
 
@@ -450,9 +435,12 @@ final class PointerPromptOverlayController {
 
         return CGRect(
             x: x,
-            y: currentContentSize.height - composerTopFromPanelTop - currentComposerHeight,
+            y: currentContentSize.height -
+                composerTopFromPanelTop -
+                PointerPromptLayout.externalCloseButtonOutsideMargin -
+                currentComposerHeight,
             width: PointerPromptLayout.composerWidth,
-            height: currentComposerHeight
+            height: currentComposerHeight + PointerPromptLayout.externalCloseButtonOutsideMargin
         )
     }
 
@@ -460,16 +448,51 @@ final class PointerPromptOverlayController {
         stageVerticalInset + PointerPromptLayout.stageVerticalPadding
     }
 
-    private func composerInputFrame(in composerFrame: CGRect) -> CGRect {
-        let inputHeight = PointerPromptLayout.composerInputHeight(
-            inputTextHeight: model.inputTextHeight
+    private func composerInputSurfaceFrame(in composerFrame: CGRect) -> CGRect {
+        return CGRect(
+            x: composerFrame.minX,
+            y: composerFrame.minY,
+            width: PointerPromptLayout.composerInputSurfaceWidth,
+            height: PointerPromptLayout.composerInputHeight(inputTextHeight: model.inputTextHeight)
         )
+    }
+
+    private func composerCloseButtonFrame(in composerFrame: CGRect) -> CGRect {
+        CGRect(
+            x: composerFrame.maxX - PointerPromptLayout.externalCloseButtonSize,
+            y: composerFrame.maxY - PointerPromptLayout.externalCloseButtonSize,
+            width: PointerPromptLayout.externalCloseButtonSize,
+            height: PointerPromptLayout.externalCloseButtonSize
+        )
+    }
+
+    private func composerTextInputFrame(in inputSurfaceFrame: CGRect) -> CGRect {
+        if PointerPromptLayout.isComposerInputExpanded(inputTextHeight: model.inputTextHeight) {
+            return CGRect(
+                x: inputSurfaceFrame.minX +
+                    PointerPromptLayout.composerExpandedTextHorizontalPadding,
+                y: inputSurfaceFrame.maxY -
+                    PointerPromptLayout.composerExpandedTextTopPadding -
+                    model.inputTextHeight,
+                width: inputSurfaceFrame.width -
+                    PointerPromptLayout.composerExpandedTextHorizontalPadding * 2,
+                height: model.inputTextHeight
+            )
+        }
+
+        let waveformAndSpacingWidth: CGFloat = 54 + 12
+        let x = inputSurfaceFrame.minX + PointerPromptLayout.composerInputLeadingContentPadding
+        let width = inputSurfaceFrame.width -
+            PointerPromptLayout.composerInputLeadingContentPadding -
+            PointerPromptLayout.composerInputTrailingContentPadding -
+            waveformAndSpacingWidth
+        let height = model.inputTextHeight
 
         return CGRect(
-            x: composerFrame.minX + PointerPromptLayout.composerInputHorizontalPadding,
-            y: composerFrame.minY + PointerPromptLayout.composerBottomPadding,
-            width: composerFrame.width - PointerPromptLayout.composerInputHorizontalPadding * 2,
-            height: inputHeight
+            x: x,
+            y: inputSurfaceFrame.midY - height / 2,
+            width: width,
+            height: height
         )
     }
 
@@ -486,6 +509,22 @@ final class PointerPromptOverlayController {
 
         let mouseLocationInPanel = panel.convertPoint(fromScreen: NSEvent.mouseLocation)
         panel.ignoresMouseEvents = !composerFrame(for: fixedPlacement).contains(mouseLocationInPanel)
+    }
+
+    private func dismissActivePromptIfClickIsOutside() -> Bool {
+        guard model.promptState.isActive,
+              let panel else {
+            return false
+        }
+
+        let mouseLocationInPanel = panel.convertPoint(fromScreen: NSEvent.mouseLocation)
+        guard !composerFrame(for: fixedPlacement).contains(mouseLocationInPanel) else {
+            return false
+        }
+
+        model.handle(.dismissed)
+        microphoneWaveformMeter.stop()
+        return true
     }
 
     private var currentContentSize: CGSize {
@@ -518,8 +557,7 @@ final class PointerPromptOverlayController {
     private func focusComposerTextInput(attempt: Int = 0) {
         guard let panel else { return }
 
-        panel.ignoresMouseEvents = false
-        panel.makeKeyAndOrderFront(nil)
+        activateForKeyboardInput(panel)
 
         guard let textView = firstComposerTextView(in: panel.contentView) else {
             guard attempt < 8 else { return }
@@ -532,6 +570,24 @@ final class PointerPromptOverlayController {
 
         panel.makeFirstResponder(textView)
         textView.window?.makeFirstResponder(textView)
+
+        guard attempt < 8,
+              (!NSApp.isActive ||
+               !panel.isKeyWindow ||
+               !isComposerTextInputFocused(in: panel)) else {
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.025) {
+            self.focusComposerTextInput(attempt: attempt + 1)
+        }
+    }
+
+    private func activateForKeyboardInput(_ panel: NSPanel) {
+        panel.ignoresMouseEvents = false
+        NSApp.activate(ignoringOtherApps: true)
+        panel.orderFrontRegardless()
+        panel.makeKeyAndOrderFront(nil)
     }
 
     private func firstComposerTextView(in view: NSView?) -> NSTextView? {

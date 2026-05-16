@@ -2,9 +2,9 @@
 
 SwiftUI macOS app for the production pointer prompt UI.
 
-This slice renders a floating native-cursor-sized agent arrowhead and ChatGPT-style `Make this so` composer. Donkey starts in an inactive pointer-only state that follows the main pointer. Command-click anywhere to show and focus the composer at the current pointer location, where the pointer and composer stay pinned until dismissed or dragged. The composer includes a top-left close button, a text area, and controls such as add context, voice, and send; the blue pointer shadow appears only while active. The overlay follows the mouse on a 45-degree bottom-right diagonal by default, flips around an invisible cursor-centered box near screen edges, and clamps itself inside the visible screen.
+This slice renders a floating native-cursor-sized agent arrowhead and compact prompt modal with a live voice waveform. Donkey starts in an inactive pointer-only state that follows the main pointer. Double-tap Command and release to show and focus the prompt modal at the current pointer location, where the pointer and modal stay pinned while live microphone levels drive the waveform. The prompt starts as a wide pill, expands into a rounded rectangle for multiline text, and moves the waveform into a bottom toolbar that matches the input background. Clicking outside the modal dismisses it, and a small gray circular x button at the top-right outside corner closes it directly. The overlay follows the mouse on a 45-degree bottom-right diagonal by default.
 
-It does not request Accessibility, Screen Recording, model access, capture-loop, or input-control permissions.
+It requests microphone permission for local waveform visualization. It does not request Accessibility, Screen Recording, model access, screen capture-loop, or input-control permissions.
 
 Guides:
 

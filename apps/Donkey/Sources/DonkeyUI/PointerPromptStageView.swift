@@ -63,9 +63,6 @@ public struct PointerPromptStageView: View {
             state: state,
             messageText: $messageText,
             inputTextHeight: inputTextHeight,
-            voiceInput: {
-                intentSink?.handle(.voiceInputRequested)
-            },
             dismiss: {
                 intentSink?.handle(.dismissed)
             },
@@ -94,63 +91,236 @@ private struct PointerPromptComposer: View {
     let state: PointerPromptState
     @Binding var messageText: String
     let inputTextHeight: CGFloat
-    let voiceInput: @MainActor () -> Void
     let dismiss: @MainActor () -> Void
     let submit: @MainActor () -> Void
     let inputTextHeightChanged: @MainActor (CGFloat) -> Void
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            HStack(spacing: 12) {
-                ComposerMultilineTextInput(
-                    text: $messageText,
-                    placeholder: state.promptText,
-                    isActive: state.isActive,
-                    textHeightChanged: inputTextHeightChanged,
-                    submit: submit
-                )
-                    .frame(maxWidth: .infinity)
-                    .frame(height: inputTextHeight)
+        ZStack(alignment: .topTrailing) {
+            promptSurface
 
-                ComposerVoiceButton(action: voiceInput)
-            }
-            .frame(height: PointerPromptLayout.composerInputHeight(inputTextHeight: inputTextHeight))
-            .padding(.leading, PointerPromptLayout.composerInputLeadingContentPadding)
-            .padding(.trailing, PointerPromptLayout.composerInputTrailingContentPadding)
-            .background {
-                Capsule(style: .continuous)
-                    .fill(Color(red: 0.13, green: 0.13, blue: 0.13))
-                    .overlay {
-                        Capsule(style: .continuous)
-                            .stroke(Color.white.opacity(0.07), lineWidth: 1)
-                    }
-            }
-            .padding(.horizontal, PointerPromptLayout.composerInputHorizontalPadding)
-            .padding(.top, PointerPromptLayout.composerTitlebarHeight)
-            .padding(.bottom, PointerPromptLayout.composerBottomPadding)
-
-            ComposerCloseControl(close: dismiss)
+            ComposerExternalCloseButton(action: dismiss)
                 .offset(
-                    x: PointerPromptLayout.closeButtonInset,
-                    y: PointerPromptLayout.closeButtonInset
+                    x: 0,
+                    y: -PointerPromptLayout.externalCloseButtonSize -
+                        PointerPromptLayout.externalCloseButtonGap
                 )
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(
+            width: PointerPromptLayout.composerInputSurfaceWidth,
+            height: PointerPromptLayout.composerInputHeight(inputTextHeight: inputTextHeight),
+            alignment: .topLeading
+        )
+        .padding(.top, PointerPromptLayout.externalCloseButtonSize + PointerPromptLayout.externalCloseButtonGap)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private var promptSurface: some View {
+        if isExpanded {
+            expandedPromptSurface
+        } else {
+            promptCapsule
+        }
+    }
+
+    private var promptCapsule: some View {
+        HStack(spacing: 12) {
+            textInput
+
+            VoiceWaveformView(levels: state.voiceWaveformLevels)
+                .frame(width: 54, height: 28)
+        }
+        .padding(.leading, PointerPromptLayout.composerInputLeadingContentPadding)
+        .padding(.trailing, PointerPromptLayout.composerInputTrailingContentPadding)
+        .frame(
+            width: PointerPromptLayout.composerInputSurfaceWidth,
+            height: PointerPromptLayout.composerInputHeight(inputTextHeight: inputTextHeight)
+        )
         .background {
-            RoundedRectangle(cornerRadius: PointerPromptLayout.composerCornerRadius, style: .continuous)
-                .fill(Color(red: 0.08, green: 0.085, blue: 0.085))
+            Capsule(style: .continuous)
+                .fill(Color.black)
         }
         .overlay {
-            RoundedRectangle(cornerRadius: PointerPromptLayout.composerCornerRadius, style: .continuous)
-                .stroke(Color.white.opacity(0.09), lineWidth: 1)
+            Capsule(style: .continuous)
+                .stroke(Color.white.opacity(0.34), lineWidth: 1)
         }
         .shadow(
-            color: Color.black.opacity(state.isActive ? 0.16 : 0.08),
-            radius: state.isActive ? 14 : 8,
+            color: Color.black.opacity(state.isActive ? 0.2 : 0.08),
+            radius: state.isActive ? 12 : 6,
             x: 0,
-            y: state.isActive ? 6 : 3
+            y: state.isActive ? 5 : 2
         )
-        .controlSize(.regular)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var expandedPromptSurface: some View {
+        VStack(spacing: 0) {
+            textInput
+                .padding(.top, PointerPromptLayout.composerExpandedTextTopPadding)
+                .padding(.horizontal, PointerPromptLayout.composerExpandedTextHorizontalPadding)
+                .frame(
+                    width: PointerPromptLayout.composerInputSurfaceWidth,
+                    height: expandedTextAreaHeight,
+                    alignment: .top
+                )
+
+            promptToolbar
+        }
+        .frame(
+            width: PointerPromptLayout.composerInputSurfaceWidth,
+            height: PointerPromptLayout.composerInputHeight(inputTextHeight: inputTextHeight)
+        )
+        .background {
+            RoundedRectangle(
+                cornerRadius: PointerPromptLayout.composerCornerRadius,
+                style: .continuous
+            )
+            .fill(Color.black)
+        }
+        .overlay {
+            RoundedRectangle(
+                cornerRadius: PointerPromptLayout.composerCornerRadius,
+                style: .continuous
+            )
+            .stroke(Color.white.opacity(0.28), lineWidth: 1)
+        }
+        .shadow(
+            color: Color.black.opacity(state.isActive ? 0.2 : 0.08),
+            radius: state.isActive ? 12 : 6,
+            x: 0,
+            y: state.isActive ? 5 : 2
+        )
+        .accessibilityElement(children: .contain)
+    }
+
+    private var promptToolbar: some View {
+        HStack {
+            toolbarIcon(systemName: "plus")
+
+            HStack(spacing: 8) {
+                Image(systemName: "hand.raised")
+                    .font(.system(size: 15, weight: .medium))
+
+                Text("Default permissions")
+                    .font(.system(size: 14, weight: .medium))
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundStyle(Color.white.opacity(0.6))
+
+            Spacer(minLength: 0)
+
+            VoiceWaveformView(levels: state.voiceWaveformLevels)
+                .frame(width: 54, height: 28)
+        }
+        .padding(.horizontal, PointerPromptLayout.composerExpandedTextHorizontalPadding)
+        .frame(
+            width: PointerPromptLayout.composerInputSurfaceWidth,
+            height: PointerPromptLayout.composerExpandedToolbarHeight
+        )
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 1)
+        }
+    }
+
+    private func toolbarIcon(systemName: String) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 18, weight: .regular))
+            .foregroundStyle(Color.white.opacity(0.62))
+            .frame(width: 24, height: 24)
+    }
+
+    private var textInput: some View {
+        ComposerMultilineTextInput(
+            text: $messageText,
+            placeholder: state.promptText,
+            isActive: state.isActive,
+            textHeightChanged: inputTextHeightChanged,
+            submit: submit
+        )
+        .frame(maxWidth: .infinity)
+        .frame(height: inputTextHeight)
+    }
+
+    private var expandedSurfaceHeight: CGFloat {
+        PointerPromptLayout.composerInputHeight(inputTextHeight: inputTextHeight)
+    }
+
+    private var expandedTextAreaHeight: CGFloat {
+        max(
+            inputTextHeight + PointerPromptLayout.composerExpandedTextTopPadding,
+            expandedSurfaceHeight - PointerPromptLayout.composerExpandedToolbarHeight
+        )
+    }
+
+    private var isExpanded: Bool {
+        messageText.contains("\n") ||
+            PointerPromptLayout.isComposerInputExpanded(inputTextHeight: inputTextHeight)
+    }
+}
+
+private struct ComposerExternalCloseButton: View {
+    let action: @MainActor () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Color.white.opacity(0.82))
+                .frame(
+                    width: PointerPromptLayout.externalCloseButtonSize,
+                    height: PointerPromptLayout.externalCloseButtonSize
+                )
+                .background {
+                    Circle()
+                        .fill(Color.white.opacity(isHovered ? 0.28 : 0.2))
+                }
+        }
+        .buttonStyle(.plain)
+        .frame(
+            width: PointerPromptLayout.externalCloseButtonSize,
+            height: PointerPromptLayout.externalCloseButtonSize
+        )
+        .contentShape(Circle())
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .accessibilityLabel("Close prompt")
+    }
+}
+
+private struct VoiceWaveformView: View {
+    let levels: [Double]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(Array(displayLevels.enumerated()), id: \.offset) { _, level in
+                Capsule(style: .continuous)
+                    .fill(Color.white)
+                    .frame(
+                        width: 4,
+                        height: barHeight(for: level)
+                    )
+            }
+        }
+        .animation(.linear(duration: 0.08), value: displayLevels)
+    }
+
+    private var displayLevels: [Double] {
+        let clampedLevels = levels.map { min(max($0, 0), 1) }
+        guard clampedLevels.count >= 7 else {
+            return PointerPromptState.defaultVoiceWaveformLevels
+        }
+
+        return Array(clampedLevels.suffix(7))
+    }
+
+    private func barHeight(for level: Double) -> CGFloat {
+        5 + CGFloat(level) * 24
     }
 }
 
@@ -340,92 +510,6 @@ private final class ComposerTextView: NSTextView {
             .font: font ?? NSFont.systemFont(ofSize: 16)
         ]
         (placeholder as NSString).draw(at: .zero, withAttributes: attributes)
-    }
-}
-
-private struct ComposerCloseControl: View {
-    let close: @MainActor () -> Void
-
-    var body: some View {
-        ComposerTrafficLight(
-            color: Color.white.opacity(0.34),
-            hoverColor: Color(nsColor: .systemRed),
-            accessibilityLabel: "Close prompt",
-            action: close
-        )
-    }
-}
-
-private struct ComposerTrafficLight: View {
-    let color: Color
-    var hoverColor: Color?
-    var accessibilityLabel: String?
-    var action: (@MainActor () -> Void)?
-    @State private var isHovered = false
-
-    @ViewBuilder
-    var body: some View {
-        if let action {
-            Button(action: action) {
-                trafficLight
-            }
-            .buttonStyle(.plain)
-            .frame(
-                width: PointerPromptLayout.closeButtonSize,
-                height: PointerPromptLayout.closeButtonSize
-            )
-            .contentShape(Circle())
-            .onHover { isHovered = $0 }
-            .accessibilityLabel(accessibilityLabel ?? "Window control")
-        } else {
-            trafficLight
-                .accessibilityHidden(true)
-        }
-    }
-
-    private var trafficLight: some View {
-        ZStack {
-            Circle()
-                .fill(isHovered ? hoverColor ?? color : color)
-                .overlay {
-                    Circle()
-                        .stroke(Color.black.opacity(0.18), lineWidth: 0.5)
-                }
-
-            if action != nil {
-                Image(systemName: "xmark")
-                    .font(.system(size: 6, weight: .bold))
-                    .foregroundStyle(Color.black.opacity(0.58))
-                    .opacity(isHovered ? 1 : 0)
-            }
-        }
-        .animation(.easeOut(duration: 0.12), value: isHovered)
-        .frame(
-            width: PointerPromptLayout.closeButtonSize,
-            height: PointerPromptLayout.closeButtonSize
-        )
-    }
-}
-
-private struct ComposerVoiceButton: View {
-    let action: @MainActor () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "waveform")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Color.black)
-                .frame(
-                    width: PointerPromptLayout.composerInputVoiceButtonSize,
-                    height: PointerPromptLayout.composerInputVoiceButtonSize
-                )
-                .background {
-                    Circle()
-                        .fill(Color.white)
-                }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Voice input")
     }
 }
 
