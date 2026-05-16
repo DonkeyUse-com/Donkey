@@ -95,26 +95,20 @@ Current boundaries:
 
 ### Screenshot Capture
 
-- Start with one manual screenshot per run.
-- Capture the explicitly selected target window, not the whole desktop by default.
-- Prefer a true window-scoped capture path when available so overlapping windows do not contaminate the artifact.
-- If the first implementation must use a bounds crop, validate that the selected target is frontmost/focused immediately before capture, record the capture method as overlap-sensitive, and safety-stop when another visible window appears to cover the target bounds.
-- Store screenshots under the prepared run folder:
+Supported as the third vertical slice. `WindowScreenshotCaptureService` creates one read-only screenshot artifact after a run folder has been prepared. It resolves a target from explicit `windowID` or focused/frontmost fallback, refuses blocked or review-required safety surfaces, captures the selected window with ScreenCaptureKit desktop-independent window capture, writes PNG bytes through the local artifact store, and records flattened target/capture metadata.
+
+Screenshots are stored under the prepared run folder:
 
 ```text
 <run-folder>/screenshots/<artifact-id>.png
 ```
 
-- Write sidecar metadata:
-  - artifact id
-  - run id
-  - trace id
-  - monotonic and wall-clock timestamps
-  - target/window metadata
-  - coordinate space
-  - image size
-  - capture method
-  - occlusion/overlap validation result when available
+Current boundaries:
+
+- The production path uses true window capture, so overlapping windows do not contaminate the artifact.
+- Bounds-crop fallback behavior is represented by an overlap-sensitive capturer abstraction and tests, but no production bounds-crop backend is installed.
+- Screen Recording/TCC denial surfaces as a capture failure and must not create an artifact record.
+- The service does not publish `RunCoordinator` events yet.
 
 ### Accessibility Tree Snapshot
 
@@ -191,23 +185,16 @@ accessibility/
 
 ## What Should Be Done Next
 
-Continue the read-only vertical slice from the completed local artifact writer and window resolver:
+Continue the read-only vertical slice from the completed local artifact writer, window resolver, and screenshot artifact service:
 
-1. Add one overlap-aware target screenshot artifact.
-   - Resolve a `MacWindowTargetCandidate` from an explicit `windowID` or the focused/frontmost fallback.
-   - Refuse or safety-stop before capture when the target safety status is blocked or review-required.
-   - Prefer true window capture over bounds cropping so overlapping windows do not contaminate the selected target artifact.
-   - If bounds cropping is the only available first implementation, add occlusion checks from the ordered window list and refuse/record a partial run when another visible window overlaps the selected target.
-   - Write PNG bytes through `LocalRunArtifactStore` and record screenshot artifact metadata, including target metadata, capture method, coordinate space, image size, and overlap validation result.
-   - Add tests with fixture window providers for safe capture, blocked target refusal, and occluded bounds-crop refusal.
-2. Add candidate-list support for manual/debug selection.
+1. Add candidate-list support for manual/debug selection.
    - Provide a small read-only API that returns ordered visible candidates with ephemeral labels such as `window 1`, `window 2`, and their durable `windowID` values.
    - Make clear that labels are valid only for the current enumeration snapshot; follow-up commands should carry the durable `windowID`.
    - Add tests that labels remain deterministic for one snapshot and that explicit `windowID` selection is used for multi-window flows.
-3. Add shallow Accessibility tree capture behind permission checks.
+2. Add shallow Accessibility tree capture behind permission checks.
    - Serialize a bounded AX snapshot when trusted and record a clear partial-run event when not trusted.
-4. Wire the manual capture flow through `RunCoordinator` events.
+3. Wire the manual capture flow through `RunCoordinator` events.
    - Emit ordered lifecycle/tool events for target resolution, screenshot capture, AX snapshot, artifact persistence, completion, and failure paths.
-5. Add integration tests and manual verification.
+4. Add integration tests and manual verification.
    - Cover artifact metadata, bounded AX serialization, policy denial for input, and partial summaries.
    - Manually verify against iPhone Mirroring and at least one other visible Mac app window, including an overlapped-window scenario.
