@@ -1,4 +1,4 @@
-# Manual Target Context Capture
+# Manual Target Context Capture Master Plan
 
 ## Goal
 
@@ -7,6 +7,23 @@ Build the first read-only data capture milestone for Donkey runs.
 One manual command or UI action should create a run session, select any visible target window, capture a screenshot, dump a shallow macOS Accessibility tree, write trace artifacts, and publish ordered runtime events.
 
 This should prove the data path before continuous capture, perception models, or synthetic input are added.
+
+## Master Plan Role
+
+Use this document as the current active master plan for the next sequence of work.
+
+It coordinates the order of plan edits and implementation slices needed to move Donkey from a runtime coordinator shell into real target-window context capture. Start here before editing the older active plans.
+
+Edit sequence:
+
+1. Keep this plan as the implementation driver until manual target context capture is supported.
+2. Update [18-macos-accessibility.md](18-macos-accessibility.md) only for Accessibility details that are still future-facing after read-only AX snapshots exist.
+3. Update [02-capture-and-perception.md](02-capture-and-perception.md) only for capture/perception boundaries that remain after manual screenshots are supported.
+4. Update [06-benchmarking.md](06-benchmarking.md) only for trace/artifact measurement rules that remain broader than this milestone.
+5. Update [20-off-the-shelf-run-loop.md](20-off-the-shelf-run-loop.md) only for the larger runtime/perception loop that remains after the minimal coordinator and manual capture pieces are documented.
+6. When this milestone is implemented, write or update the supported guide in `docs/guides/`, then move this plan to `plans/done/`.
+
+Do not spread implementation instructions across multiple active plans while this one is still open. Use linked plans for background and cleanup targets, not as competing sources of truth.
 
 ## Related Plans And Guides
 
@@ -39,7 +56,7 @@ In scope:
 - iPhone Mirroring as one supported target option, not a special-only path
 - screenshot artifact metadata and PNG output
 - shallow Accessibility tree snapshot with roles, labels/titles, values, frames, pid, and window metadata
-- local trace folder for one run
+- local trace folder for one run, stored under Application Support by default
 - ordered runtime events for capture and persistence
 - privacy-oriented redaction boundaries for sensitive windows
 
@@ -82,10 +99,10 @@ Out of scope:
 
 - Start with one manual screenshot per run.
 - Capture the explicitly selected target window bounds, not the whole desktop by default.
-- Store screenshots under:
+- Store screenshots under the prepared run folder:
 
 ```text
-runs/<run-id>/screenshots/<artifact-id>.png
+<run-folder>/screenshots/<artifact-id>.png
 ```
 
 - Write sidecar metadata:
@@ -106,10 +123,10 @@ runs/<run-id>/screenshots/<artifact-id>.png
   - resolve a selected target window by pid/title/window metadata when possible
   - read a shallow AX tree with bounded depth and child count
   - serialize role, title/label, value summary, frame, enabled/focused state, and action names
-- Store AX snapshots under:
+- Store AX snapshots under the prepared run folder:
 
 ```text
-runs/<run-id>/accessibility/<artifact-id>.json
+<run-folder>/accessibility/<artifact-id>.json
 ```
 
 - Keep the tree bounded. Do not dump arbitrarily large app trees.
@@ -117,18 +134,24 @@ runs/<run-id>/accessibility/<artifact-id>.json
 
 ### Trace Artifact Store
 
-- Add a simple local run artifact layout:
+Supported as the first vertical slice. `LocalRunArtifactStore` prepares durable run folders, appends JSONL event records, reserves safe artifact paths, records artifact metadata, and updates summaries.
+
+Installed Donkey stores runs under:
 
 ```text
-runs/<run-id>/
-  events.jsonl
-  summary.json
-  screenshots/
-  accessibility/
+~/Library/Application Support/Donkey/Runs/<run-id>/
 ```
 
-- Write event and artifact records in append order.
-- Keep the artifact store simple and local for this milestone. It can become async or buffered later.
+Tests and development tools may pass an explicit base directory override. Each run folder contains:
+
+```text
+events.jsonl
+summary.json
+screenshots/
+accessibility/
+```
+
+- Keep the artifact store simple and local for this milestone. It can become async or buffered after coordinator capture events are wired to disk.
 
 ### Context Assembly
 
@@ -149,7 +172,7 @@ runs/<run-id>/
 - Missing Accessibility permission produces a clear event and a partial run summary instead of crashing.
 - Input and Accessibility actions remain disabled.
 - Sensitive/system/payment/login windows are refused or marked as safety stops.
-- Unit tests cover metadata serialization, bounded AX tree serialization, policy denial for input, and run artifact path generation.
+- Unit tests cover metadata serialization, run artifact path generation, artifact summary updates, bounded AX tree serialization, and policy denial for input.
 - Manual verification works against at least two different windows, such as iPhone Mirroring and a normal Mac app window.
 
 ## Handoff Notes For The Next LLM
@@ -166,12 +189,20 @@ runs/<run-id>/
 
 ## What Should Be Done Next
 
-Start with the smallest read-only vertical slice:
+Continue the read-only vertical slice from the completed local artifact writer:
 
-1. Add the local `runs/<run-id>/` artifact writer.
-2. Add window enumeration and target selection metadata.
-3. Add one target-scoped screenshot artifact.
-4. Add shallow Accessibility tree capture behind permission checks.
-5. Wire those steps through `RunCoordinator` events.
-6. Add tests for artifact metadata and bounded AX serialization.
-7. Manually verify against iPhone Mirroring and at least one other visible Mac app window.
+1. Add window enumeration and target selection metadata.
+   - Add a macOS window resolver in `DonkeyRuntime` that returns visible candidate windows with window id, pid, app name or bundle id, title, bounds, and frontmost/focus metadata.
+   - Support explicit selection by window id and a focused-window default when no explicit target is provided.
+   - Treat iPhone Mirroring as a normal visible candidate, not a special-only path.
+   - Add conservative safety metadata so later capture can refuse obvious system, login, payment, or unknown sensitive surfaces.
+   - Add tests for metadata serialization, target selection rules, focused-window fallback, and safety classification.
+2. Add one target-scoped screenshot artifact.
+   - Capture the selected target bounds, write PNG bytes through `LocalRunArtifactStore`, and record screenshot artifact metadata.
+3. Add shallow Accessibility tree capture behind permission checks.
+   - Serialize a bounded AX snapshot when trusted and record a clear partial-run event when not trusted.
+4. Wire the manual capture flow through `RunCoordinator` events.
+   - Emit ordered lifecycle/tool events for target resolution, screenshot capture, AX snapshot, artifact persistence, completion, and failure paths.
+5. Add integration tests and manual verification.
+   - Cover artifact metadata, bounded AX serialization, policy denial for input, and partial summaries.
+   - Manually verify against iPhone Mirroring and at least one other visible Mac app window.

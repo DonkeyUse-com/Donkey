@@ -6,6 +6,12 @@ Build a desktop AI agent that can play iPhone games through Apple's iPhone Mirro
 
 iPhone games are the first product focus. Gaming is the latency proof. The larger platform is real-time desktop and mobile-app control from the Mac.
 
+## Current Master Plan
+
+Start with [master-plan.md](master-plan.md).
+
+That plan coordinates the next sequence of edits across capture, Accessibility, trace artifacts, and runtime events. Treat older active plans as background or cleanup targets while `22` is open.
+
 ## Near-Term Focus
 
 Become genuinely good at playing iPhone games through iPhone Mirroring.
@@ -54,6 +60,7 @@ Every frame should use local, bounded-cost logic:
 
 ## Plan Breakdown
 
+- [master-plan.md](master-plan.md): current master plan for manual screenshot, Accessibility tree, and trace artifact capture for any target window
 - [01-latency-budget.md](01-latency-budget.md): hard timing budget and optimization priorities
 - [02-capture-and-perception.md](02-capture-and-perception.md): screen capture, visual parsing, and world-state updates
 - [03-fast-controller.md](03-fast-controller.md): real-time controller design
@@ -74,7 +81,6 @@ Every frame should use local, bounded-cost logic:
 - [18-macos-accessibility.md](18-macos-accessibility.md): macOS Accessibility tree/action backend
 - [19-ai-harness.md](19-ai-harness.md): slow-path memory, LLM/VLM connection, model routing, and update plan
 - [20-off-the-shelf-run-loop.md](20-off-the-shelf-run-loop.md): off-the-shelf perception, deterministic control, and low-latency runtime stack
-- [22-manual-target-context-capture.md](22-manual-target-context-capture.md): manual screenshot, Accessibility tree, and trace artifact capture for one run
 
 ## System Priorities
 

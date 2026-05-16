@@ -1,6 +1,6 @@
 import Foundation
 
-public enum RunLifecycleState: String, Equatable, Sendable {
+public enum RunLifecycleState: String, Codable, Equatable, Sendable {
     case idle
     case starting
     case running
@@ -21,14 +21,14 @@ public enum RunLifecycleState: String, Equatable, Sendable {
     }
 }
 
-public enum RunEventStream: String, Equatable, Sendable {
+public enum RunEventStream: String, Codable, Equatable, Sendable {
     case assistant
     case tool
     case lifecycle
     case reflex
 }
 
-public enum ToolCallCapability: String, CaseIterable, Equatable, Hashable, Sendable {
+public enum ToolCallCapability: String, CaseIterable, Codable, Equatable, Hashable, Sendable {
     case capture
     case accessibility
     case model
@@ -38,7 +38,7 @@ public enum ToolCallCapability: String, CaseIterable, Equatable, Hashable, Senda
     case controller
 }
 
-public enum ToolCallDecision: Equatable, Sendable {
+public enum ToolCallDecision: Codable, Equatable, Sendable {
     case allow
     case deny(reason: String)
     case ask(reason: String)
@@ -48,7 +48,7 @@ public enum ToolCallDecision: Equatable, Sendable {
     }
 }
 
-public struct ToolCallPolicy: Equatable, Sendable {
+public struct ToolCallPolicy: Codable, Equatable, Sendable {
     public var allowedCapabilities: Set<ToolCallCapability>
     public var deniedCapabilities: Set<ToolCallCapability>
     public var approvalRequiredCapabilities: Set<ToolCallCapability>
@@ -91,7 +91,7 @@ public struct ToolCallPolicy: Equatable, Sendable {
     public static let `default` = ToolCallPolicy()
 }
 
-public struct RunSession: Equatable, Sendable {
+public struct RunSession: Codable, Equatable, Sendable {
     public var id: String
     public var userGoal: String
     public var targetID: String
@@ -116,7 +116,7 @@ public struct RunSession: Equatable, Sendable {
     }
 }
 
-public struct AssistantRunEvent: Equatable, Sendable {
+public struct AssistantRunEvent: Codable, Equatable, Sendable {
     public var message: String
 
     public init(message: String) {
@@ -124,7 +124,7 @@ public struct AssistantRunEvent: Equatable, Sendable {
     }
 }
 
-public struct ToolRunEvent: Equatable, Sendable {
+public struct ToolRunEvent: Codable, Equatable, Sendable {
     public var capability: ToolCallCapability
     public var decision: ToolCallDecision
     public var toolName: String?
@@ -140,7 +140,7 @@ public struct ToolRunEvent: Equatable, Sendable {
     }
 }
 
-public struct LifecycleRunEvent: Equatable, Sendable {
+public struct LifecycleRunEvent: Codable, Equatable, Sendable {
     public var state: RunLifecycleState
     public var reason: String?
 
@@ -150,7 +150,7 @@ public struct LifecycleRunEvent: Equatable, Sendable {
     }
 }
 
-public struct ReflexRunEvent: Equatable, Sendable {
+public struct ReflexRunEvent: Codable, Equatable, Sendable {
     public var frameID: String?
     public var stateID: String?
     public var actionID: String?
@@ -169,14 +169,14 @@ public struct ReflexRunEvent: Equatable, Sendable {
     }
 }
 
-public enum RunEventPayload: Equatable, Sendable {
+public enum RunEventPayload: Codable, Equatable, Sendable {
     case assistant(AssistantRunEvent)
     case tool(ToolRunEvent)
     case lifecycle(LifecycleRunEvent)
     case reflex(ReflexRunEvent)
 }
 
-public struct RunEvent: Equatable, Sendable {
+public struct RunEvent: Codable, Equatable, Sendable {
     public var sequence: Int
     public var stream: RunEventStream
     public var summary: String
@@ -210,7 +210,7 @@ public struct RunEvent: Equatable, Sendable {
     }
 }
 
-public struct RunWorldStateSummary: Equatable, Sendable {
+public struct RunWorldStateSummary: Codable, Equatable, Sendable {
     public var stateID: String
     public var summary: String
     public var confidence: Double
@@ -222,7 +222,7 @@ public struct RunWorldStateSummary: Equatable, Sendable {
     }
 }
 
-public struct RunPlannerHint: Equatable, Sendable {
+public struct RunPlannerHint: Codable, Equatable, Sendable {
     public var id: String
     public var summary: String
     public var isValid: Bool
@@ -234,7 +234,7 @@ public struct RunPlannerHint: Equatable, Sendable {
     }
 }
 
-public struct RunFailureSummary: Equatable, Sendable {
+public struct RunFailureSummary: Codable, Equatable, Sendable {
     public var traceID: String
     public var summary: String
 
@@ -244,7 +244,7 @@ public struct RunFailureSummary: Equatable, Sendable {
     }
 }
 
-public struct RunContextPackage: Equatable, Sendable {
+public struct RunContextPackage: Codable, Equatable, Sendable {
     public var sessionID: String
     public var userGoal: String
     public var targetID: String
@@ -275,5 +275,107 @@ public struct RunContextPackage: Equatable, Sendable {
         self.droppedTranscriptCharacterCount = droppedTranscriptCharacterCount
         self.activeHints = activeHints
         self.recentFailures = recentFailures
+    }
+}
+
+public struct RunTraceTimestamp: Codable, Equatable, Sendable {
+    public var wallClock: Date
+    public var monotonicUptimeNanoseconds: UInt64
+
+    public init(
+        wallClock: Date,
+        monotonicUptimeNanoseconds: UInt64
+    ) {
+        self.wallClock = wallClock
+        self.monotonicUptimeNanoseconds = monotonicUptimeNanoseconds
+    }
+}
+
+public enum RunArtifactKind: String, Codable, Equatable, Sendable {
+    case screenshot
+    case accessibilitySnapshot
+
+    public var directoryName: String {
+        switch self {
+        case .screenshot:
+            return "screenshots"
+        case .accessibilitySnapshot:
+            return "accessibility"
+        }
+    }
+}
+
+public struct RunArtifactRecord: Codable, Equatable, Sendable {
+    public var artifactID: String
+    public var kind: RunArtifactKind
+    public var relativePath: String
+    public var contentType: String
+    public var byteCount: Int64
+    public var createdAt: RunTraceTimestamp
+    public var metadata: [String: String]
+
+    public init(
+        artifactID: String,
+        kind: RunArtifactKind,
+        relativePath: String,
+        contentType: String,
+        byteCount: Int64,
+        createdAt: RunTraceTimestamp,
+        metadata: [String: String] = [:]
+    ) {
+        self.artifactID = artifactID
+        self.kind = kind
+        self.relativePath = relativePath
+        self.contentType = contentType
+        self.byteCount = byteCount
+        self.createdAt = createdAt
+        self.metadata = metadata
+    }
+}
+
+public struct RunTraceSummary: Codable, Equatable, Sendable {
+    public var runID: String
+    public var traceID: String
+    public var session: RunSession
+    public var startedAt: RunTraceTimestamp
+    public var updatedAt: RunTraceTimestamp
+    public var eventCount: Int
+    public var artifacts: [RunArtifactRecord]
+
+    public init(
+        runID: String,
+        traceID: String,
+        session: RunSession,
+        startedAt: RunTraceTimestamp,
+        updatedAt: RunTraceTimestamp,
+        eventCount: Int = 0,
+        artifacts: [RunArtifactRecord] = []
+    ) {
+        self.runID = runID
+        self.traceID = traceID
+        self.session = session
+        self.startedAt = startedAt
+        self.updatedAt = updatedAt
+        self.eventCount = eventCount
+        self.artifacts = artifacts
+    }
+}
+
+public struct RunTraceEventRecord: Codable, Equatable, Sendable {
+    public var runID: String
+    public var traceID: String
+    public var recordedAt: RunTraceTimestamp
+    public var event: RunEvent
+
+    public init(
+        runID: String,
+        traceID: String,
+        recordedAt: RunTraceTimestamp,
+        event: RunEvent
+    ) {
+        self.runID = runID
+        self.traceID = traceID
+        self.recordedAt = recordedAt
+        self.event = event
     }
 }
