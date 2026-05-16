@@ -1,6 +1,6 @@
 # Latency Budget
 
-> Archived status: historical context only. This file is not an active implementation queue. Supported behavior lives in `docs/`; future work from this idea needs a fresh active plan created deliberately.
+> Active status: not complete. Current reports support synthetic and dry-run traces, but this plan is not complete until p50/p95/p99 budgets are measured for a concrete local-model navigation target.
 
 ## Target
 

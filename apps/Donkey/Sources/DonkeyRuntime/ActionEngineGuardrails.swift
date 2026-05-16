@@ -248,14 +248,16 @@ public actor ActionEngineGuardrail {
         }
 
         lastAcceptedCommandAt = command.issuedAt
-        if (command.holdDurationMS ?? 0) > 0 {
-            heldCommandIDs.insert(command.id)
-        }
 
         guard configuration.liveInputEnabled else {
+            if (command.holdDurationMS ?? 0) > 0 {
+                heldCommandIDs.insert(command.id)
+            }
+
             return appendTrace(
                 command: command,
                 decision: .projectedDryRun,
+                executed: false,
                 focusGuardPassed: true,
                 permissionDecision: permissionDecision,
                 rateLimited: false,
@@ -268,6 +270,10 @@ public actor ActionEngineGuardrail {
         }
 
         let backendResult = await inputBackend.execute(command)
+        if backendResult.executed, (command.holdDurationMS ?? 0) > 0 {
+            heldCommandIDs.insert(command.id)
+        }
+
         var metadata = backendResult.metadata
         metadata["heldInputCount"] = String(heldCommandIDs.count)
         metadata["liveInputCompletedAt"] = String(backendResult.completedAt.monotonicUptimeNanoseconds)
@@ -277,6 +283,8 @@ public actor ActionEngineGuardrail {
             decision: backendResult.executed
                 ? .executedLive
                 : .denied(reason: "live input backend did not execute"),
+            executed: backendResult.executed,
+            recordedAt: backendResult.completedAt,
             focusGuardPassed: true,
             permissionDecision: permissionDecision,
             rateLimited: false,
@@ -313,6 +321,8 @@ public actor ActionEngineGuardrail {
     private func appendTrace(
         command: ActionEngineCommand,
         decision: ActionEngineCommandDecision,
+        executed: Bool = false,
+        recordedAt: RunTraceTimestamp? = nil,
         focusGuardPassed: Bool,
         permissionDecision: ToolCallDecision,
         rateLimited: Bool,
@@ -322,8 +332,8 @@ public actor ActionEngineGuardrail {
         let trace = ActionEngineCommandTrace(
             command: command,
             decision: decision,
-            recordedAt: command.issuedAt,
-            executed: false,
+            recordedAt: recordedAt ?? command.issuedAt,
+            executed: executed,
             liveInputEnabled: configuration.liveInputEnabled,
             focusGuardPassed: focusGuardPassed,
             permissionDecision: permissionDecision,

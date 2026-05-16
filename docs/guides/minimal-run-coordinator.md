@@ -90,7 +90,7 @@ This is a coordination, in-memory reflex trace, hot-loop contract, deterministic
 - Keep cheap perception deterministic and compact until real pixel/model adapters exist. Perception may summarize fixture or recorded-frame metadata, but controllers must only see typed signals, world state, and action affordances.
 - Keep controller fallback explicit. Low confidence, stale signals, missing affordances, and missing signals should produce traceable `wait` or `observe` actions, not silent no-ops.
 - Keep every chosen controller action trace-linked with action id, state id, frame id, policy name, confidence, rationale, and fallback metadata.
-- Keep action-engine commands typed and replayable. Guardrails must run before live input and record permission, focus, rate-limit, hold-duration, release, backend, and execution status.
+- Keep action-engine commands typed and replayable. Guardrails must run before live input and record permission, focus, rate-limit, hold-duration, release, backend, issued time, backend completion time, and execution status. Live held-input tracking starts only after the backend reports execution.
 - Keep live OS input disabled unless a caller explicitly configures live mode, allows input in policy, passes focus guard, and supplies an input backend. The default backend does not synthesize OS events.
 - Use monotonic timestamps for latency math. Wall-clock timestamps are for human labels and trace correlation only.
 - Use latency reports for any p50/p95/p99 claim. Reports should include dropped frames, stale actions, tick rates, and worst traces.

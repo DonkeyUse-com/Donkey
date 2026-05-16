@@ -1,6 +1,6 @@
 # Action Engine
 
-> Archived status: historical context only. This file is not an active implementation queue. Supported behavior lives in `docs/`; future work from this idea needs a fresh active plan created deliberately.
+> Active status: not complete. Current action-engine support provides guardrails, traces, and injected-backend smoke execution, but not a default live OS input backend with measured input latency.
 
 ## Goal
 

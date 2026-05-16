@@ -1,6 +1,6 @@
 # Off-The-Shelf Run Loop
 
-> Archived status: historical context only. This file is not an active implementation queue. Supported behavior lives in `docs/`; future work from this idea needs a fresh active plan created deliberately.
+> Active status: not complete. The current repo supports metadata-only local-navigation dry-run scaffolding and guarded live-action smoke, but not fast local navigation using local detector/OCR/segmentation/model inference for a concrete target.
 
 ## Goal
 
@@ -429,11 +429,12 @@ The runtime foundation now supports a product-shaped local-navigation slice of t
 - guarded live-action smoke through an injected backend only after dry-run latency evidence, explicit input policy allowance, and focus guard success
 - optional slow-planner sidecar that publishes only validated hints without blocking reflex latency
 
-This is still not the full off-the-shelf vision stack. It does not ship real detector/OCR/segmentation adapters, continuous streaming capture, a default OS input backend, high-volume persisted replay traces, or target-specific visual calibration.
+This is still not the full off-the-shelf vision stack and must not be treated as completion. It does not ship real local detector/OCR/segmentation/model adapters, continuous streaming capture, a default OS input backend, high-volume persisted replay traces, or target-specific visual calibration.
 
-## Remaining Future Work
+## Required Before This Plan Is Done
 
-- Add measured local detector/template/OCR adapters for real visual targets.
+- Add measured local detector/template/OCR/segmentation adapters for a real visual target.
+- Prove fast local navigation from local perception/model output, not only macOS window metadata or supplied browser-tab metadata.
 - Add continuous streaming capture once queue-depth, stale-result, and trace sinks are ready for longer sessions.
 - Add a real macOS input backend behind the existing guardrails only after manual operator safety review.
 - Add durable high-volume replay trace persistence and target-specific benchmark baselines.

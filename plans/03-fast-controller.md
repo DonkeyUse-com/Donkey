@@ -1,6 +1,6 @@
 # Fast Controller
 
-> Archived status: historical context only. This file is not an active implementation queue. Supported behavior lives in `docs/`; future work from this idea needs a fresh active plan created deliberately.
+> Active status: not complete. Current controller support is deterministic and traceable for metadata/local-navigation dry-runs, but not yet proven against local model perception for a real target.
 
 ## Goal
 

@@ -1,6 +1,6 @@
 # Slow Planner
 
-> Archived status: historical context only. This file is not an active implementation queue. Supported behavior lives in `docs/`; future work from this idea needs a fresh active plan created deliberately.
+> Active status: not complete. Current slow-planner support includes snapshots, validation, and hint bus scaffolding, but not a provider-backed local/online LLM planner loop.
 
 ## Goal
 
@@ -94,4 +94,3 @@ If the planner is slow, unavailable, or wrong:
 - Planner latency does not affect p95 reflex latency.
 - Controller can run for at least 30 seconds without planner output.
 - Planner output is validated before it reaches the controller.
-

@@ -4,7 +4,7 @@ This folder is the product and engineering source of truth for capabilities that
 
 Plans describe what we might build. Guides describe what Donkey currently supports and how to maintain it.
 
-There is currently no active plan in `plans/`. The roadmap-era plans have been moved to `plans/done/` as historical context because they either describe already-supported slices or future work that is not actionable in this repo without a fresh product/target decision.
+There is an active milestone plan in `plans/master-plan.md`. It tracks the unfinished work needed before the run-loop and AI-harness roadmap can be considered complete, especially fast local navigation from local model/perception output and a slow planner loop that can use both local and online LLM providers.
 
 ## Product Guides
 
@@ -20,6 +20,7 @@ There is currently no active plan in `plans/`. The roadmap-era plans have been m
 - Add a guide here when a plan moves to `plans/done/`.
 - Treat `plans/done/` as background only; do not use archived plans as active implementation instructions.
 - Ask before creating a new active plan.
+- Move active plans to `plans/done/` only after the behavior is implemented, documented, and verified.
 - Product guides should explain supported behavior, boundaries, and verification.
 - Engineering guides should explain patterns current code must follow, not speculative architecture.
 - Guides should not duplicate implementation. Prefer intent, rules, and concise source entrypoints over code listings or long file inventories.

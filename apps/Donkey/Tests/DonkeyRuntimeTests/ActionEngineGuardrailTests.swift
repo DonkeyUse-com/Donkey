@@ -54,7 +54,31 @@ struct ActionEngineGuardrailTests {
         #expect(trace.focusGuardPassed == true)
         #expect(trace.permissionDecision.isAllowed == true)
         #expect(trace.metadata["liveInputBackend"] == "recording")
+        #expect(trace.command.issuedAt.monotonicUptimeNanoseconds == 0)
+        #expect(trace.recordedAt.monotonicUptimeNanoseconds == 5_000_000)
+        #expect(trace.metadata["liveInputCompletedAt"] == "5000000")
         #expect(await backend.executedCommandIDs() == ["tap-live"])
+    }
+
+    @Test
+    func liveBackendRefusalIsDeniedWithoutRecordingHeldInput() async {
+        let engine = ActionEngineGuardrail(
+            configuration: ActionEngineConfiguration(liveInputEnabled: true),
+            inputBackend: UnavailableActionEngineInputBackend()
+        )
+        let policy = ToolCallPolicy(deniedCapabilities: [])
+
+        let trace = await engine.handle(
+            command(id: "key-live-refused", kind: .key, issuedAtMS: 0, holdDurationMS: 50),
+            permissionPolicy: policy
+        )
+
+        #expect(trace.decision == .denied(reason: "live input backend did not execute"))
+        #expect(trace.executed == false)
+        #expect(trace.liveInputEnabled == true)
+        #expect(trace.metadata["liveInputBackend"] == "notImplemented")
+        #expect(trace.metadata["heldInputCount"] == "0")
+        #expect(await engine.heldInputCount() == 0)
     }
 
     @Test
@@ -171,7 +195,10 @@ private actor RecordingInputBackend: ActionEngineInputBackend {
         commandIDs.append(command.id)
         return ActionEngineInputBackendResult(
             executed: true,
-            completedAt: command.issuedAt,
+            completedAt: RunTraceTimestamp(
+                wallClock: command.issuedAt.wallClock.addingTimeInterval(0.005),
+                monotonicUptimeNanoseconds: command.issuedAt.monotonicUptimeNanoseconds + 5_000_000
+            ),
             metadata: [
                 "liveInputBackend": "recording"
             ]

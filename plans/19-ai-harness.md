@@ -1,6 +1,6 @@
 # AI Harness
 
-> Archived status: historical context only. This file is not an active implementation queue. Supported behavior lives in `docs/`; future work from this idea needs a fresh active plan created deliberately.
+> Active status: not complete. The current repo has OpenAI adapter scaffolding, model routing, memory scaffolding, and an optional slow-planner sidecar, but it does not yet provide a complete slow loop that can use both local and online LLM providers.
 
 ## Goal
 
@@ -610,10 +610,13 @@ The AI harness foundation now supports the optional slow-path sidecar pieces nee
 - `ValidatedPlannerHintBus` and `PlannerHintAwareControllerPolicy`, which allow validated hints to advise controller metadata without becoming direct input
 - tests proving planner latency does not move reflex p95 when the harness runs beside the dry-run loop
 
-## Remaining Future Work
+This is not complete slow-loop AI. The current `AIModelProvider` supports only OpenAI, and the sidecar consumes an injected `SlowPlannerHintGenerating` implementation instead of owning a provider-backed local/online planner loop.
+
+## Required Before This Plan Is Done
 
 - Add embedding-backed semantic memory retrieval and explicit retrieval budgets.
-- Add local/Ollama slow-planner providers behind the same hint-generation boundary if needed.
+- Add local/Ollama slow-planner providers behind the same hint-generation boundary.
+- Wire the slow planner loop so it can route to local and online providers, apply timeout/failure policy, and publish only validated hints.
 - Add redaction hooks before any screenshot or DOM summary is sent to a remote provider.
 - Add aggregate model-call observability reports for latency, schema validity, hint acceptance, cost, and recovery success.
 - Add memory write proposal decoding directly from provider outputs, then route proposals through the deterministic approver.

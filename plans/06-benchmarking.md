@@ -1,6 +1,6 @@
 # Benchmarking And Monitoring
 
-> Archived status: historical context only. This file is not an active implementation queue. Supported behavior lives in `docs/`; future work from this idea needs a fresh active plan created deliberately.
+> Active status: not complete. Current benchmark support can summarize dry-run traces, but not persistent cross-run trends or concrete local-model target baselines.
 
 ## Goal
 
