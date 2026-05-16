@@ -87,6 +87,7 @@ public struct DryRunReflexLoop: Sendable {
     public var controllerPolicy: any DryRunControllerPolicy
     public var actionProjector: any DryRunActionProjecting
     public var worldStateProjector: any DryRunWorldStateProjecting
+    public var slowPlannerSidecar: DryRunSlowPlannerSidecar?
     public var staleSignalThresholdMS: Double
 
     public init(
@@ -96,6 +97,7 @@ public struct DryRunReflexLoop: Sendable {
         worldStateProjector: (any DryRunWorldStateProjecting)? = nil,
         controllerPolicy: any DryRunControllerPolicy = DeterministicControllerPolicy(),
         actionProjector: any DryRunActionProjecting = DryRunActionProjector(),
+        slowPlannerSidecar: DryRunSlowPlannerSidecar? = nil,
         staleSignalThresholdMS: Double = 250
     ) {
         self.coordinator = coordinator
@@ -105,6 +107,7 @@ public struct DryRunReflexLoop: Sendable {
         self.actionProjector = actionProjector
         self.worldStateProjector = worldStateProjector
             ?? HotLoopWorldStateProjector(staleSignalThresholdMS: staleSignalThresholdMS)
+        self.slowPlannerSidecar = slowPlannerSidecar
         self.staleSignalThresholdMS = staleSignalThresholdMS
     }
 
@@ -258,6 +261,15 @@ public struct DryRunReflexLoop: Sendable {
         )
 
         await coordinator.appendReflexTrace(trace)
+        if let slowPlannerSidecar {
+            Task {
+                await slowPlannerSidecar.observe(
+                    worldState: worldState,
+                    action: action,
+                    trace: trace
+                )
+            }
+        }
 
         return (worldState, action)
     }

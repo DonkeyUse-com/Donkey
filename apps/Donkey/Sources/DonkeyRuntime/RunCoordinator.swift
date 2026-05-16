@@ -329,7 +329,9 @@ private extension ReflexLatencyBreakdown {
         values["latency.preprocessMS"] = preprocessMS.map { String($0) }
         values["latency.modelInferenceMS"] = modelInferenceMS.map { String($0) }
         values["latency.perceptionMS"] = perceptionMS.map { String($0) }
+        values["latency.stateUpdateMS"] = stateUpdateMS.map { String($0) }
         values["latency.decisionMS"] = decisionMS.map { String($0) }
+        values["latency.actionProjectionMS"] = actionProjectionMS.map { String($0) }
         values["latency.inputMS"] = inputMS.map { String($0) }
         values["latency.softwareLoopMS"] = softwareLoopMS.map { String($0) }
         values["latency.frameAgeMS"] = frameAgeMS.map { String($0) }

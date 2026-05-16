@@ -415,9 +415,27 @@ Runtime: native core where the hot path needs it
 
 ## Current Supported Slice
 
-The runtime foundation now supports typed reflex trace records for the future hot loop. A trace can carry capture, preprocessing, model, perception, state, controller, action, and input timestamps; derive stage latency, software-loop latency, frame age, and state age from monotonic time; retain recent traces in a bounded in-memory store; and publish matching `reflex` events through `RunCoordinator`.
+The runtime foundation now supports a product-shaped local-navigation slice of the off-the-shelf loop:
 
-This is still a boundary and observability slice. It does not capture frames continuously, run detector/OCR/model inference, execute controller actions, or persist high-volume replay traces.
+- typed reflex trace records with capture, preprocessing, model, perception, state, controller, action, and input timestamps
+- bounded target-window frame capture for dry-run frames without PNG/JPEG hot-path encoding
+- cheap metadata perception and swappable world-state projection
+- loop-integrated metadata-only local-navigation dry-run selection with optional browser-tab metadata
+- latest-frame-wins queue depth 1 with dropped-frame counting
+- p50/p95/p99 latency reports across capture, preprocess, model, perception, state update, controller decision, action projection, and input stages
+- action-engine permission, focus, rate, hold-duration, release, and backend-execution guardrails
+- guarded live-action smoke through an injected backend only after dry-run latency evidence, explicit input policy allowance, and focus guard success
+- optional slow-planner sidecar that publishes only validated hints without blocking reflex latency
+
+This is still not the full off-the-shelf vision stack. It does not ship real detector/OCR/segmentation adapters, continuous streaming capture, a default OS input backend, high-volume persisted replay traces, or target-specific visual calibration.
+
+## Remaining Future Work
+
+- Add measured local detector/template/OCR adapters for real visual targets.
+- Add continuous streaming capture once queue-depth, stale-result, and trace sinks are ready for longer sessions.
+- Add a real macOS input backend behind the existing guardrails only after manual operator safety review.
+- Add durable high-volume replay trace persistence and target-specific benchmark baselines.
+- Keep segmentation/OCR optional and introduce them only with cropped, measured, target-specific evidence.
 
 ## Where To Look
 

@@ -51,8 +51,8 @@ The hot path must continue to work with the AI harness disabled.
 
 - Runtime shell: minimal run coordination, ordered events, bounded context assembly, local run artifacts, manual target context capture, in-memory reflex trace retention, and stage-split latency reports are supported.
 - Reflex hot path: typed frame/world-state/action contracts, deterministic dry-run loop, bounded target-window frame source, cheap metadata perception, swappable world-state projection, deterministic controller, loop-integrated metadata-only local-navigation dry-run action selection, optional caller-supplied browser-tab metadata, and dry-run action projection are supported. Live OS input is not supported.
-- Safety boundary: action-engine command contracts, permission/focus/rate/hold/release guardrails, and replayable command traces are supported before live input.
-- Slow AI boundary: structured planner hints, validation/expiry/latest-valid selection, model registry/router, an OpenAI Responses structured-output adapter, source-linked memory, and replay/eval scaffolding are supported as optional sidecar pieces. The hot loop still runs without AI output.
+- Safety boundary: action-engine command contracts, permission/focus/rate/hold/release guardrails, guarded live-action smoke with an injected backend, and replayable command traces are supported before any default OS input backend exists.
+- Slow AI boundary: structured planner hints, validation/expiry/latest-valid selection, loop-adjacent slow-planner trigger/snapshot sidecar, model registry/router, an OpenAI Responses structured-output adapter, source-linked memory, and replay/eval scaffolding are supported as optional sidecar pieces. The hot loop still runs without AI output.
 - Source of truth: detailed supported behavior lives in `docs/guides/minimal-run-coordinator.md`; historical implementation details should be found with search in `docs/`, `plans/`, and git history, not duplicated here.
 
 ## Non-Negotiable Rules
@@ -68,20 +68,7 @@ The hot path must continue to work with the AI harness disabled.
 
 ## Active Queue
 
-1. Integrate slow planner beside the dry-run loop.
-   - Trigger planner calls on scene change, low confidence, repeated failure, goal completion, or user instruction.
-   - Build compact snapshots from world state, trace summaries, optional screenshots, and memory.
-   - Publish only validated hints to the controller.
-   - Prove planner latency does not move p95 reflex latency.
-
-2. Enable guarded live-action smoke only after dry-run closeout.
-   - Use fast local navigation as the first target behavior.
-   - Run end-to-end dry-run with input disabled and latency report passing.
-   - Enable live input only with explicit policy allowance and focus guard.
-   - Verify abort and timeout release held input.
-   - Record trace evidence for every action.
-
-3. Close out the primary plans.
+1. Close out the primary plans.
    - Update supported behavior guides in `docs/guides/`.
    - Move `plans/20-off-the-shelf-run-loop.md` to `plans/done/` when the reflex loop acceptance criteria are supported.
    - Move `plans/19-ai-harness.md` to `plans/done/` when the AI harness acceptance criteria are supported.
@@ -90,9 +77,9 @@ The hot path must continue to work with the AI harness disabled.
 
 ## What Should Be Done Next
 
-Start with active task 1: integrate the slow planner beside the dry-run loop.
+Start with active task 1: close out the primary plans.
 
-This is the right next slice because the metadata-only local-navigation path now runs through the dry-run loop with browser-tab metadata when available, no remote-model dependency, queue depth 1, no hot-path image encoding, and stage-split latency traces. The next gap is proving optional planner calls can publish validated hints without moving reflex p95 latency.
+This is the right next slice because the metadata-only local-navigation path runs through the dry-run loop, the optional slow-planner sidecar can publish validated hints without moving reflex p95 latency, and the guarded live-action smoke boundary requires dry-run latency evidence, explicit input policy allowance, focus guard success, and replayable action traces. The remaining work is plan hygiene: decide which primary/supporting acceptance criteria are fully satisfied, move completed plans to `plans/done/`, and keep only clearly named future work active.
 
 ## Closeout Criteria
 

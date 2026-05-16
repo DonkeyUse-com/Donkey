@@ -52,6 +52,7 @@ public struct ActionEngineCommand: Codable, Equatable, Sendable {
 
 public enum ActionEngineCommandDecision: Codable, Equatable, Sendable {
     case projectedDryRun
+    case executedLive
     case denied(reason: String)
 }
 
@@ -112,6 +113,26 @@ public protocol ActionEngineFocusGuard: Sendable {
     func targetIsSafeForInput(targetID: String) async -> Bool
 }
 
+public struct ActionEngineInputBackendResult: Equatable, Sendable {
+    public var executed: Bool
+    public var completedAt: RunTraceTimestamp
+    public var metadata: [String: String]
+
+    public init(
+        executed: Bool,
+        completedAt: RunTraceTimestamp,
+        metadata: [String: String] = [:]
+    ) {
+        self.executed = executed
+        self.completedAt = completedAt
+        self.metadata = metadata
+    }
+}
+
+public protocol ActionEngineInputBackend: Sendable {
+    func execute(_ command: ActionEngineCommand) async -> ActionEngineInputBackendResult
+}
+
 public struct AlwaysSafeActionEngineFocusGuard: ActionEngineFocusGuard {
     public init() {}
 
@@ -120,19 +141,36 @@ public struct AlwaysSafeActionEngineFocusGuard: ActionEngineFocusGuard {
     }
 }
 
+public struct UnavailableActionEngineInputBackend: ActionEngineInputBackend {
+    public init() {}
+
+    public func execute(_ command: ActionEngineCommand) async -> ActionEngineInputBackendResult {
+        ActionEngineInputBackendResult(
+            executed: false,
+            completedAt: command.issuedAt,
+            metadata: [
+                "liveInputBackend": "notImplemented"
+            ]
+        )
+    }
+}
+
 public actor ActionEngineGuardrail {
     private let configuration: ActionEngineConfiguration
     private let focusGuard: any ActionEngineFocusGuard
+    private let inputBackend: any ActionEngineInputBackend
     private var traces: [ActionEngineCommandTrace] = []
     private var heldCommandIDs: Set<String> = []
     private var lastAcceptedCommandAt: RunTraceTimestamp?
 
     public init(
         configuration: ActionEngineConfiguration = ActionEngineConfiguration(),
-        focusGuard: any ActionEngineFocusGuard = AlwaysSafeActionEngineFocusGuard()
+        focusGuard: any ActionEngineFocusGuard = AlwaysSafeActionEngineFocusGuard(),
+        inputBackend: any ActionEngineInputBackend = UnavailableActionEngineInputBackend()
     ) {
         self.configuration = configuration
         self.focusGuard = focusGuard
+        self.inputBackend = inputBackend
     }
 
     @discardableResult
@@ -214,17 +252,36 @@ public actor ActionEngineGuardrail {
             heldCommandIDs.insert(command.id)
         }
 
+        guard configuration.liveInputEnabled else {
+            return appendTrace(
+                command: command,
+                decision: .projectedDryRun,
+                focusGuardPassed: true,
+                permissionDecision: permissionDecision,
+                rateLimited: false,
+                releaseAll: false,
+                metadata: [
+                    "heldInputCount": String(heldCommandIDs.count),
+                    "liveInputBackend": "disabled"
+                ]
+            )
+        }
+
+        let backendResult = await inputBackend.execute(command)
+        var metadata = backendResult.metadata
+        metadata["heldInputCount"] = String(heldCommandIDs.count)
+        metadata["liveInputCompletedAt"] = String(backendResult.completedAt.monotonicUptimeNanoseconds)
+
         return appendTrace(
             command: command,
-            decision: .projectedDryRun,
+            decision: backendResult.executed
+                ? .executedLive
+                : .denied(reason: "live input backend did not execute"),
             focusGuardPassed: true,
             permissionDecision: permissionDecision,
             rateLimited: false,
             releaseAll: false,
-            metadata: [
-                "heldInputCount": String(heldCommandIDs.count),
-                "liveInputBackend": "notImplemented"
-            ]
+            metadata: metadata
         )
     }
 

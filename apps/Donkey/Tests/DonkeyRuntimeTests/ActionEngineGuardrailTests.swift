@@ -31,7 +31,30 @@ struct ActionEngineGuardrailTests {
         #expect(trace.executed == false)
         #expect(trace.liveInputEnabled == false)
         #expect(trace.focusGuardPassed == true)
-        #expect(trace.metadata["liveInputBackend"] == "notImplemented")
+        #expect(trace.metadata["liveInputBackend"] == "disabled")
+    }
+
+    @Test
+    func liveInputRequiresExplicitConfigurationPolicyAndFocusGuard() async {
+        let backend = RecordingInputBackend()
+        let engine = ActionEngineGuardrail(
+            configuration: ActionEngineConfiguration(liveInputEnabled: true),
+            inputBackend: backend
+        )
+        let policy = ToolCallPolicy(deniedCapabilities: [])
+
+        let trace = await engine.handle(
+            command(id: "tap-live", issuedAtMS: 0),
+            permissionPolicy: policy
+        )
+
+        #expect(trace.decision == .executedLive)
+        #expect(trace.executed == true)
+        #expect(trace.liveInputEnabled == true)
+        #expect(trace.focusGuardPassed == true)
+        #expect(trace.permissionDecision.isAllowed == true)
+        #expect(trace.metadata["liveInputBackend"] == "recording")
+        #expect(await backend.executedCommandIDs() == ["tap-live"])
     }
 
     @Test
@@ -138,5 +161,24 @@ struct ActionEngineGuardrailTests {
 private struct DenyingFocusGuard: ActionEngineFocusGuard {
     func targetIsSafeForInput(targetID: String) async -> Bool {
         false
+    }
+}
+
+private actor RecordingInputBackend: ActionEngineInputBackend {
+    private var commandIDs: [String] = []
+
+    func execute(_ command: ActionEngineCommand) async -> ActionEngineInputBackendResult {
+        commandIDs.append(command.id)
+        return ActionEngineInputBackendResult(
+            executed: true,
+            completedAt: command.issuedAt,
+            metadata: [
+                "liveInputBackend": "recording"
+            ]
+        )
+    }
+
+    func executedCommandIDs() -> [String] {
+        commandIDs
     }
 }

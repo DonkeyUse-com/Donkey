@@ -594,3 +594,24 @@ The harness should degrade quietly and visibly.
 - Model upgrades require replay/eval results before promotion.
 - A failed model call cannot produce direct input.
 - A trace can explain which memories and model outputs influenced a planner hint.
+
+## Current Supported Slice
+
+The AI harness foundation now supports the optional slow-path sidecar pieces needed by the first local-navigation loop:
+
+- structured planner hints with validation, expiry, latest-valid selection, and trace/state/model-call source links
+- a model registry and router boundary so default provider model ids live in registry entries instead of controller logic
+- a provider-neutral OpenAI Responses structured-output adapter with `store: false`, traceable failure results, and strict planner-hint decoding
+- short-term run memory, scoped target JSONL memory, deterministic memory-write approval, listing, and deletion
+- planner replay/eval scaffolding and model update checklist records
+- `DryRunSlowPlannerSidecar` snapshots from compact world state, action, trace summaries, optional screenshot artifact references, and memory
+- `ValidatedPlannerHintBus` and `PlannerHintAwareControllerPolicy`, which allow validated hints to advise controller metadata without becoming direct input
+- tests proving planner latency does not move reflex p95 when the harness runs beside the dry-run loop
+
+## Remaining Future Work
+
+- Add embedding-backed semantic memory retrieval and explicit retrieval budgets.
+- Add local/Ollama slow-planner providers behind the same hint-generation boundary if needed.
+- Add redaction hooks before any screenshot or DOM summary is sent to a remote provider.
+- Add aggregate model-call observability reports for latency, schema validity, hint acceptance, cost, and recovery success.
+- Add memory write proposal decoding directly from provider outputs, then route proposals through the deterministic approver.
