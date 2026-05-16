@@ -98,6 +98,50 @@ struct WindowScreenshotCaptureServiceTests {
     }
 
     @Test
+    func labeledCandidateListSelectionUsesDurableWindowIDForCapture() async throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = try LocalRunArtifactStore(baseDirectory: root)
+        _ = try await store.prepareRun(
+            session: RunSession(id: "run-labeled", userGoal: "capture", targetID: "target-1"),
+            traceID: "trace-labeled"
+        )
+        let windows = [
+            fixtureWindow(windowID: 11, processID: 100, appName: "Terminal"),
+            fixtureWindow(windowID: 22, processID: 200, appName: "Safari")
+        ]
+        let snapshot = MacWindowResolver(
+            provider: FixtureWindowProvider(
+                windows: windows,
+                frontmostProcessID: 100
+            )
+        )
+        .enumerateCandidateList()
+        let capturer = FakeWindowScreenshotCapturer()
+        let service = makeService(
+            store: store,
+            windows: windows,
+            frontmostProcessID: 100,
+            capturer: capturer
+        )
+
+        guard let selection = snapshot.selectionRequest(forLabel: "window 2") else {
+            Issue.record("Expected window 2 to map to a selection request")
+            return
+        }
+        let result = try await service.captureScreenshot(
+            runID: "run-labeled",
+            selection: selection,
+            artifactID: "screenshot-labeled"
+        )
+
+        #expect(snapshot.candidates.map(\.label) == ["window 1", "window 2"])
+        #expect(result.target.windowID == 22)
+        #expect(capturer.capturedWindowIDs == [22])
+    }
+
+    @Test
     func unsafeTargetRefusesBeforeWritingFileOrArtifact() async throws {
         let root = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

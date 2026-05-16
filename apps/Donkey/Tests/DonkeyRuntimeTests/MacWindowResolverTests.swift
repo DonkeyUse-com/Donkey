@@ -56,6 +56,86 @@ struct MacWindowResolverTests {
     }
 
     @Test
+    func candidateListLabelsAreDeterministicWithinSnapshotAndPreserveOrder() throws {
+        let resolver = MacWindowResolver(
+            provider: FixtureWindowProvider(
+                windows: [
+                    fixtureWindow(windowID: 10, processID: 100, appName: "Terminal"),
+                    fixtureWindow(windowID: 20, processID: 200, appName: "Safari"),
+                    fixtureWindow(windowID: 30, processID: 300, appName: "Notes")
+                ],
+                frontmostProcessID: 100
+            )
+        )
+
+        let snapshot = resolver.enumerateCandidateList()
+
+        #expect(snapshot.candidates.map(\.label) == ["window 1", "window 2", "window 3"])
+        #expect(snapshot.candidates.map(\.candidate.windowID) == [10, 20, 30])
+        #expect(snapshot.selectionRequest(forLabel: "window 2") == MacWindowSelectionRequest(windowID: 20))
+        #expect(snapshot.selectionRequest(forLabel: "window 2") == MacWindowSelectionRequest(windowID: 20))
+        #expect(snapshot.selectionRequest(forLabel: "missing") == nil)
+
+        guard let selection = snapshot.selectionRequest(forLabel: "window 2") else {
+            Issue.record("Expected window 2 to map to a selection request")
+            return
+        }
+        let selected = try resolver.selectTarget(selection)
+        #expect(selected.windowID == 20)
+    }
+
+    @Test
+    func candidateListLabelsAreScopedToOneEnumerationSnapshot() {
+        let firstResolver = MacWindowResolver(
+            provider: FixtureWindowProvider(
+                windows: [
+                    fixtureWindow(windowID: 1, processID: 100, appName: "Terminal"),
+                    fixtureWindow(windowID: 2, processID: 200, appName: "Safari")
+                ],
+                frontmostProcessID: 100
+            )
+        )
+        let secondResolver = MacWindowResolver(
+            provider: FixtureWindowProvider(
+                windows: [
+                    fixtureWindow(windowID: 2, processID: 200, appName: "Safari"),
+                    fixtureWindow(windowID: 1, processID: 100, appName: "Terminal")
+                ],
+                frontmostProcessID: 200
+            )
+        )
+
+        let firstSnapshot = firstResolver.enumerateCandidateList()
+        let secondSnapshot = secondResolver.enumerateCandidateList()
+
+        #expect(firstSnapshot.selectionRequest(forLabel: "window 1") == MacWindowSelectionRequest(windowID: 1))
+        #expect(secondSnapshot.selectionRequest(forLabel: "window 1") == MacWindowSelectionRequest(windowID: 2))
+    }
+
+    @Test
+    func candidateListSnapshotRoundTripsThroughJSON() throws {
+        let resolver = MacWindowResolver(
+            provider: FixtureWindowProvider(
+                windows: [
+                    fixtureWindow(windowID: 10, processID: 100, appName: "Terminal"),
+                    fixtureWindow(windowID: 20, processID: 200, appName: "Safari")
+                ],
+                frontmostProcessID: 100
+            )
+        )
+        let snapshot = resolver.enumerateCandidateList()
+
+        let data = try JSONEncoder().encode(snapshot)
+        let decoded = try JSONDecoder().decode(
+            MacWindowCandidateListSnapshot.self,
+            from: data
+        )
+
+        #expect(decoded == snapshot)
+        #expect(decoded.selectionRequest(forLabel: "window 2") == MacWindowSelectionRequest(windowID: 20))
+    }
+
+    @Test
     func focusedWindowSelectionFallsBackToFrontmostCandidate() throws {
         let resolver = MacWindowResolver(
             provider: FixtureWindowProvider(

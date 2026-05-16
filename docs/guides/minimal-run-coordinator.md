@@ -25,7 +25,7 @@ accessibility/
 
 The artifact store can append ordered event records, reserve safe screenshot or Accessibility artifact paths, record artifact metadata, and keep `summary.json` current.
 
-Donkey can also resolve visible macOS target-window metadata for the manual capture path. The resolver enumerates on-screen app windows, describes window id, pid, app name, bundle id, title, bounds, focus/frontmost state, iPhone Mirroring hints, and conservative safety metadata. Callers can select an explicit window id or fall back to the focused/frontmost visible window.
+Donkey can also resolve visible macOS target-window metadata for the manual capture path. The resolver enumerates on-screen app windows, describes window id, pid, app name, bundle id, title, bounds, focus/frontmost state, iPhone Mirroring hints, and conservative safety metadata. Callers can request a candidate-list snapshot with ephemeral labels such as `window 1` and `window 2`; labels are valid only for that enumeration snapshot and should be converted to the candidate's durable `windowID` for follow-up capture commands. Callers can select an explicit window id or fall back to the focused/frontmost visible window.
 
 Donkey can create a single read-only target-window screenshot artifact after a run folder has been prepared. The screenshot service resolves the target, refuses blocked or review-required safety surfaces, captures the selected window with ScreenCaptureKit's desktop-independent window path, writes PNG bytes under `screenshots/`, and records flattened target/capture metadata in `summary.json`. Overlap-sensitive fallback capture backends must refuse occluded targets instead of silently recording pixels from another window.
 
@@ -52,7 +52,7 @@ From `apps/Donkey/`:
 swift test
 ```
 
-The runtime tests should cover lifecycle ordering, abort and timeout safety, latest-session queue drops, tool permission denial, event-store ordering, context compaction, artifact path validation, trace folder layout, JSONL event persistence, summary updates, deterministic window resolver behavior through fixture providers, screenshot artifact metadata, unsafe target refusal, and overlap-sensitive capture refusal.
+The runtime tests should cover lifecycle ordering, abort and timeout safety, latest-session queue drops, tool permission denial, event-store ordering, context compaction, artifact path validation, trace folder layout, JSONL event persistence, summary updates, deterministic window resolver behavior through fixture providers, candidate-list label snapshots, screenshot artifact metadata, unsafe target refusal, and overlap-sensitive capture refusal.
 
 ## Source Entry Points
 

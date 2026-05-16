@@ -84,11 +84,11 @@ Out of scope:
 
 ### Target Window Resolution
 
-Supported as the second vertical slice. `MacWindowResolver` enumerates visible on-screen macOS app windows, normalizes window metadata, supports explicit selection by window id, falls back to the focused/frontmost candidate, marks iPhone Mirroring as a normal candidate with a hint, and attaches conservative safety metadata.
+Supported as the second vertical slice. `MacWindowResolver` enumerates visible on-screen macOS app windows, normalizes window metadata, returns candidate-list snapshots with ephemeral labels for manual/debug selection, supports explicit selection by window id, falls back to the focused/frontmost candidate, marks iPhone Mirroring as a normal candidate with a hint, and attaches conservative safety metadata.
 
 Current boundaries:
 
-- Window candidate numbering is not durable. A debug UI or command should map short labels like "window 1" to the candidate's macOS `windowID` at the time the user chooses.
+- Window candidate numbering is not durable. Candidate-list snapshots map short labels like "window 1" to the candidate's macOS `windowID` only for the current enumeration; follow-up commands should carry the durable `windowID`.
 - Selection by pid/title tuple is still future-facing. Current deterministic selection is explicit window id or focused/frontmost fallback.
 - Safety classification is metadata-only. Later capture orchestration must refuse or safety-stop blocked/review-required targets before writing screenshots.
 - Overlap is not solved by metadata alone. Screenshot capture must avoid accidentally recording another window that visually covers the selected target.
@@ -185,16 +185,12 @@ accessibility/
 
 ## What Should Be Done Next
 
-Continue the read-only vertical slice from the completed local artifact writer, window resolver, and screenshot artifact service:
+Continue the read-only vertical slice from the completed local artifact writer, window resolver, candidate-list API, and screenshot artifact service:
 
-1. Add candidate-list support for manual/debug selection.
-   - Provide a small read-only API that returns ordered visible candidates with ephemeral labels such as `window 1`, `window 2`, and their durable `windowID` values.
-   - Make clear that labels are valid only for the current enumeration snapshot; follow-up commands should carry the durable `windowID`.
-   - Add tests that labels remain deterministic for one snapshot and that explicit `windowID` selection is used for multi-window flows.
-2. Add shallow Accessibility tree capture behind permission checks.
+1. Add shallow Accessibility tree capture behind permission checks.
    - Serialize a bounded AX snapshot when trusted and record a clear partial-run event when not trusted.
-3. Wire the manual capture flow through `RunCoordinator` events.
+2. Wire the manual capture flow through `RunCoordinator` events.
    - Emit ordered lifecycle/tool events for target resolution, screenshot capture, AX snapshot, artifact persistence, completion, and failure paths.
-4. Add integration tests and manual verification.
+3. Add integration tests and manual verification.
    - Cover artifact metadata, bounded AX serialization, policy denial for input, and partial summaries.
    - Manually verify against iPhone Mirroring and at least one other visible Mac app window, including an overlapped-window scenario.

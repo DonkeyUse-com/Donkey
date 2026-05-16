@@ -97,6 +97,10 @@ public final class MacWindowResolver {
             }
     }
 
+    public func enumerateCandidateList() -> MacWindowCandidateListSnapshot {
+        MacWindowCandidateListSnapshot(candidates: enumerateCandidates())
+    }
+
     public func selectTarget(
         _ request: MacWindowSelectionRequest = MacWindowSelectionRequest()
     ) throws -> MacWindowTargetCandidate {

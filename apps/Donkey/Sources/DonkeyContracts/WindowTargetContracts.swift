@@ -104,3 +104,43 @@ public struct MacWindowSelectionRequest: Codable, Equatable, Sendable {
         self.windowID = windowID
     }
 }
+
+public struct LabeledMacWindowTargetCandidate: Codable, Equatable, Sendable {
+    public var label: String
+    public var candidate: MacWindowTargetCandidate
+
+    public init(
+        label: String,
+        candidate: MacWindowTargetCandidate
+    ) {
+        self.label = label
+        self.candidate = candidate
+    }
+}
+
+public struct MacWindowCandidateListSnapshot: Codable, Equatable, Sendable {
+    public var candidates: [LabeledMacWindowTargetCandidate]
+
+    public init(candidates: [MacWindowTargetCandidate]) {
+        self.candidates = candidates.enumerated().map { index, candidate in
+            LabeledMacWindowTargetCandidate(
+                label: "window \(index + 1)",
+                candidate: candidate
+            )
+        }
+    }
+
+    public init(labeledCandidates: [LabeledMacWindowTargetCandidate]) {
+        self.candidates = labeledCandidates
+    }
+
+    public func selectionRequest(
+        forLabel label: String
+    ) -> MacWindowSelectionRequest? {
+        guard let candidate = candidates.first(where: { $0.label == label })?.candidate else {
+            return nil
+        }
+
+        return MacWindowSelectionRequest(windowID: candidate.windowID)
+    }
+}
