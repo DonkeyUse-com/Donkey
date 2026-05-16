@@ -8,6 +8,7 @@ public actor RunCoordinator {
     private var currentSession: RunSession?
     private var lifecycleState: RunLifecycleState = .idle
     private var requiresInputRelease = false
+    private var activeTraceID: String?
 
     public init(
         sessionQueue: LatestRunSessionQueue = LatestRunSessionQueue(),
@@ -21,6 +22,10 @@ public actor RunCoordinator {
 
     public func submit(_ session: RunSession) async {
         await sessionQueue.submit(session)
+    }
+
+    public func setTraceID(_ traceID: String?) {
+        activeTraceID = traceID
     }
 
     @discardableResult
@@ -87,20 +92,42 @@ public actor RunCoordinator {
         capability: ToolCallCapability,
         toolName: String? = nil
     ) async -> ToolCallDecision {
-        let decision = activePolicy().decision(for: capability)
+        let event = await recordToolEvent(
+            capability: capability,
+            toolName: toolName
+        )
+        guard case .tool(let payload) = event.payload else {
+            return .deny(reason: "\(capability.rawValue) tool event was not recorded")
+        }
+
+        return payload.decision
+    }
+
+    @discardableResult
+    public func recordToolEvent(
+        capability: ToolCallCapability,
+        decision explicitDecision: ToolCallDecision? = nil,
+        toolName: String? = nil,
+        summary: String? = nil,
+        traceID: String? = nil,
+        metadata: [String: String] = [:]
+    ) async -> RunEvent {
+        let decision = explicitDecision ?? activePolicy().decision(for: capability)
         let event = RunEvent(
             stream: .tool,
-            summary: "\(capability.rawValue) tool call \(decision.summaryFragment)",
+            summary: summary ?? "\(capability.rawValue) tool call \(decision.summaryFragment)",
             payload: .tool(
                 ToolRunEvent(
                     capability: capability,
                     decision: decision,
                     toolName: toolName
                 )
-            )
+            ),
+            traceID: traceID ?? activeTraceID,
+            metadata: metadata
         )
-        await eventStore.append(event)
-        return decision
+
+        return await eventStore.append(event)
     }
 
     public func appendReflexSample(
@@ -120,7 +147,7 @@ public actor RunCoordinator {
                         actionID: actionID
                     )
                 ),
-                traceID: traceID
+                traceID: traceID ?? activeTraceID
             )
         )
     }
@@ -177,6 +204,7 @@ public actor RunCoordinator {
                     reason: reason
                 )
             ),
+            traceID: activeTraceID,
             requiresInputRelease: requiresInputRelease
         )
 

@@ -9,6 +9,7 @@ public enum MacAccessibilitySnapshotCaptureError: Error, Equatable, Sendable {
         windowID: UInt32,
         status: WindowTargetSafetyStatus
     )
+    case accessibilityNotTrusted(windowID: UInt32)
     case captureFailed(windowID: UInt32, reason: String)
 }
 
@@ -81,7 +82,8 @@ public final class MacAccessibilitySnapshotCaptureService {
         runID: String,
         selection: MacWindowSelectionRequest = MacWindowSelectionRequest(),
         limits: MacAccessibilitySnapshotLimits = .default,
-        artifactID: String = "accessibility-\(UUID().uuidString)"
+        artifactID: String = "accessibility-\(UUID().uuidString)",
+        recordsPermissionDeniedEvent: Bool = true
     ) async throws -> MacAccessibilitySnapshotCaptureOutcome {
         let summary: RunTraceSummary
         do {
@@ -99,6 +101,12 @@ public final class MacAccessibilitySnapshotCaptureService {
         }
 
         guard capturer.trustStatus() == .trusted else {
+            guard recordsPermissionDeniedEvent else {
+                throw MacAccessibilitySnapshotCaptureError.accessibilityNotTrusted(
+                    windowID: target.windowID
+                )
+            }
+
             let eventRecord = try await artifactStore.appendEvent(
                 permissionDeniedEvent(
                     summary: summary,

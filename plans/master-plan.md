@@ -73,14 +73,17 @@ Out of scope:
 
 ### Runtime And Permission Integration
 
-- Add a capture-facing service in `DonkeyRuntime` that works with `RunCoordinator`.
-- Extend the current tool capability policy only as needed for read-only capture:
-  - screenshot/window capture
-  - Accessibility tree read
-  - trace persistence
-- Keep input/action capabilities denied by default.
-- Emit `tool` events for target resolution, screenshot capture, Accessibility snapshot, and artifact persistence.
-- Emit `lifecycle` events for manual capture start, completion, abort, timeout, and failure.
+Supported as the fifth vertical slice. `ManualTargetContextCaptureService` orchestrates one read-only capture run through `RunCoordinator`, `LocalRunArtifactStore`, target-window resolution, screenshot capture, and Accessibility snapshot capture.
+
+The service prepares the run folder, starts the session, resolves the target once, passes explicit durable `windowID` selection to capture services, records coordinator-assigned lifecycle/tool events, persists those events to `events.jsonl`, and completes the run after screenshot success. Missing Accessibility trust is treated as partial completion: the coordinator records one permission-denied tool event, no Accessibility artifact is written, and the screenshot artifact remains.
+
+Current boundaries:
+
+- The API is runtime-level only. No manual command shell or UI entrypoint has been added yet.
+- Screenshot success is required for completion. Target-resolution, screenshot, persistence, and safety-stop failures fail the run.
+- Accessibility trust denial is the only supported partial-completion AX failure. Other AX capture failures fail the run.
+- Input/action capabilities remain denied by default, and the manual capture service emits no input tool events.
+- Standalone screenshot and Accessibility capture services remain usable independently; standalone missing-AX-trust behavior still records its own partial event unless the orchestrator asks it not to.
 
 ### Target Window Resolution
 
@@ -124,9 +127,10 @@ Current boundaries:
 
 - The snapshot path is read-only. It records available AX action names but never performs Accessibility actions.
 - Missing Accessibility trust creates an `events.jsonl` partial-run event and no artifact; the service does not open System Settings or request trust.
+- Manual capture orchestration can suppress the standalone permission event so missing trust is recorded once through `RunCoordinator`.
 - AX window matching is best effort by pid, title, focus, and frame metadata. Selection remains durable by `windowID` at the resolver/capture boundary.
 - Trees are bounded by depth, children per node, total nodes, and text length. Long text values are summarized with redaction markers.
-- The service does not publish ordered `RunCoordinator` events yet.
+- Ordered `RunCoordinator` events are published by the manual capture orchestrator, not by the standalone AX snapshot service.
 
 ### Trace Artifact Store
 
@@ -186,10 +190,14 @@ accessibility/
 
 ## What Should Be Done Next
 
-Continue the read-only vertical slice from the completed local artifact writer, window resolver, candidate-list API, screenshot artifact service, and Accessibility snapshot service:
+Continue from the completed local artifact writer, window resolver, candidate-list API, screenshot artifact service, Accessibility snapshot service, and runtime-level manual capture event wiring:
 
-1. Wire the manual capture flow through `RunCoordinator` events.
-   - Emit ordered lifecycle/tool events for target resolution, screenshot capture, AX snapshot, artifact persistence, completion, and failure paths.
-2. Add integration tests and manual verification.
-   - Cover artifact metadata, bounded AX serialization, policy denial for input, and partial summaries.
-   - Manually verify against iPhone Mirroring and at least one other visible Mac app window, including an overlapped-window scenario.
+1. Add an integration/manual verification entrypoint.
+   - Provide a small debug command, developer hook, or equivalent UI action that invokes the existing runtime-level manual capture service without adding synthetic input.
+2. Manually verify against real windows.
+   - Test at least iPhone Mirroring and one normal Mac app window.
+   - Include an overlapped-window scenario and an Accessibility-trust-missing scenario.
+   - Confirm the trace folder contains ordered coordinator events, one screenshot artifact, and an Accessibility artifact only when permission is available.
+3. Close out the milestone after verification.
+   - Keep the supported guide current.
+   - Move this plan to `plans/done/` once the manual entrypoint and verification are complete.
