@@ -25,7 +25,9 @@ accessibility/
 
 The artifact store can append ordered event records, reserve safe screenshot or Accessibility artifact paths, record artifact metadata, and keep `summary.json` current.
 
-This is a coordination and trace foundation only. It does not capture the screen, run perception models, call LLMs, execute OS input, or wire coordinator events into disk persistence yet.
+Donkey can also resolve visible macOS target-window metadata for the manual capture path. The resolver enumerates on-screen app windows, describes window id, pid, app name, bundle id, title, bounds, focus/frontmost state, iPhone Mirroring hints, and conservative safety metadata. Callers can select an explicit window id or fall back to the focused/frontmost visible window.
+
+This is a coordination, trace, and target-metadata foundation only. It does not capture the screen, dump Accessibility trees, run perception models, call LLMs, execute OS input, or wire coordinator events into disk persistence yet.
 
 ## Technical Guidelines
 
@@ -33,6 +35,7 @@ This is a coordination and trace foundation only. It does not capture the screen
 - Keep coordinator state and append ordering in `DonkeyRuntime`; UI code should read status through narrow provider boundaries.
 - Treat `RunCoordinator` as the owner of lifecycle and event ordering, not as the owner of perception, controller internals, or input backends.
 - Treat `LocalRunArtifactStore` as a persistence sink for trace records and artifact metadata. It should not own lifecycle state or decide whether tool calls are allowed.
+- Treat macOS window resolution as read-only metadata collection. Safety classifications should be conservative and used by later capture code to refuse or stop on sensitive surfaces.
 - Keep mutable installed-app run artifacts in Application Support, not inside the `.app` bundle and not relative to process working directory.
 - Keep input actions denied unless a caller provides a policy that explicitly allows them.
 - Preserve latest-request-wins behavior for live-control sessions so stale work cannot build up behind the reflex loop.
@@ -46,11 +49,13 @@ From `apps/Donkey/`:
 swift test
 ```
 
-The runtime tests should cover lifecycle ordering, abort and timeout safety, latest-session queue drops, tool permission denial, event-store ordering, context compaction, artifact path validation, trace folder layout, JSONL event persistence, and summary updates.
+The runtime tests should cover lifecycle ordering, abort and timeout safety, latest-session queue drops, tool permission denial, event-store ordering, context compaction, artifact path validation, trace folder layout, JSONL event persistence, summary updates, and deterministic window resolver behavior through fixture providers.
 
 ## Source Entry Points
 
 - Runtime contracts live in `apps/Donkey/Sources/DonkeyContracts/RunLoopContracts.swift`.
+- Window target contracts live in `apps/Donkey/Sources/DonkeyContracts/WindowTargetContracts.swift`.
 - Runtime coordination lives in `apps/Donkey/Sources/DonkeyRuntime/`.
+- macOS window resolution lives in `apps/Donkey/Sources/DonkeyRuntime/MacWindowResolver.swift`.
 - Local artifact persistence lives in `apps/Donkey/Sources/DonkeyRuntime/LocalRunArtifactStore.swift`.
-- The source plan remains active in `plans/20-off-the-shelf-run-loop.md`.
+- The manual capture source plan remains active in `plans/master-plan.md`.

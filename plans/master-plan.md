@@ -84,21 +84,21 @@ Out of scope:
 
 ### Target Window Resolution
 
-- Add a macOS target resolver that can enumerate and describe candidate windows:
-  - pid
-  - app name or bundle id when available
-  - window title
-  - bounds in screen coordinates
-  - focus/frontmost status
-- Support explicit targeting by window id, pid/title tuple, or selected candidate from a debug UI/command.
-- Use the focused window only as a default when no explicit target is provided.
-- Treat iPhone Mirroring as a normal candidate window with optional target-specific metadata.
-- Stop and record a safe failure if the target appears to be a system prompt, payment/login surface, or unknown sensitive window.
+Supported as the second vertical slice. `MacWindowResolver` enumerates visible on-screen macOS app windows, normalizes window metadata, supports explicit selection by window id, falls back to the focused/frontmost candidate, marks iPhone Mirroring as a normal candidate with a hint, and attaches conservative safety metadata.
+
+Current boundaries:
+
+- Window candidate numbering is not durable. A debug UI or command should map short labels like "window 1" to the candidate's macOS `windowID` at the time the user chooses.
+- Selection by pid/title tuple is still future-facing. Current deterministic selection is explicit window id or focused/frontmost fallback.
+- Safety classification is metadata-only. Later capture orchestration must refuse or safety-stop blocked/review-required targets before writing screenshots.
+- Overlap is not solved by metadata alone. Screenshot capture must avoid accidentally recording another window that visually covers the selected target.
 
 ### Screenshot Capture
 
 - Start with one manual screenshot per run.
-- Capture the explicitly selected target window bounds, not the whole desktop by default.
+- Capture the explicitly selected target window, not the whole desktop by default.
+- Prefer a true window-scoped capture path when available so overlapping windows do not contaminate the artifact.
+- If the first implementation must use a bounds crop, validate that the selected target is frontmost/focused immediately before capture, record the capture method as overlap-sensitive, and safety-stop when another visible window appears to cover the target bounds.
 - Store screenshots under the prepared run folder:
 
 ```text
@@ -114,6 +114,7 @@ Out of scope:
   - coordinate space
   - image size
   - capture method
+  - occlusion/overlap validation result when available
 
 ### Accessibility Tree Snapshot
 
@@ -168,11 +169,12 @@ accessibility/
 - The trace folder contains `events.jsonl`, `summary.json`, one screenshot artifact, and one Accessibility snapshot when permission is available.
 - The capture flow records ordered `tool` and `lifecycle` events through `RunCoordinator`.
 - Screenshot capture is target/window scoped by default.
+- Overlapping windows do not silently produce misleading target screenshots. The capture path either uses true window capture or records/refuses an overlap-sensitive bounds crop when the target is occluded.
 - Accessibility tree capture is shallow, bounded, and serializable.
 - Missing Accessibility permission produces a clear event and a partial run summary instead of crashing.
 - Input and Accessibility actions remain disabled.
 - Sensitive/system/payment/login windows are refused or marked as safety stops.
-- Unit tests cover metadata serialization, run artifact path generation, artifact summary updates, bounded AX tree serialization, and policy denial for input.
+- Unit tests cover metadata serialization, target selection rules, run artifact path generation, artifact summary updates, bounded AX tree serialization, overlap/occlusion safety behavior, and policy denial for input.
 - Manual verification works against at least two different windows, such as iPhone Mirroring and a normal Mac app window.
 
 ## Handoff Notes For The Next LLM
@@ -189,20 +191,23 @@ accessibility/
 
 ## What Should Be Done Next
 
-Continue the read-only vertical slice from the completed local artifact writer:
+Continue the read-only vertical slice from the completed local artifact writer and window resolver:
 
-1. Add window enumeration and target selection metadata.
-   - Add a macOS window resolver in `DonkeyRuntime` that returns visible candidate windows with window id, pid, app name or bundle id, title, bounds, and frontmost/focus metadata.
-   - Support explicit selection by window id and a focused-window default when no explicit target is provided.
-   - Treat iPhone Mirroring as a normal visible candidate, not a special-only path.
-   - Add conservative safety metadata so later capture can refuse obvious system, login, payment, or unknown sensitive surfaces.
-   - Add tests for metadata serialization, target selection rules, focused-window fallback, and safety classification.
-2. Add one target-scoped screenshot artifact.
-   - Capture the selected target bounds, write PNG bytes through `LocalRunArtifactStore`, and record screenshot artifact metadata.
+1. Add one overlap-aware target screenshot artifact.
+   - Resolve a `MacWindowTargetCandidate` from an explicit `windowID` or the focused/frontmost fallback.
+   - Refuse or safety-stop before capture when the target safety status is blocked or review-required.
+   - Prefer true window capture over bounds cropping so overlapping windows do not contaminate the selected target artifact.
+   - If bounds cropping is the only available first implementation, add occlusion checks from the ordered window list and refuse/record a partial run when another visible window overlaps the selected target.
+   - Write PNG bytes through `LocalRunArtifactStore` and record screenshot artifact metadata, including target metadata, capture method, coordinate space, image size, and overlap validation result.
+   - Add tests with fixture window providers for safe capture, blocked target refusal, and occluded bounds-crop refusal.
+2. Add candidate-list support for manual/debug selection.
+   - Provide a small read-only API that returns ordered visible candidates with ephemeral labels such as `window 1`, `window 2`, and their durable `windowID` values.
+   - Make clear that labels are valid only for the current enumeration snapshot; follow-up commands should carry the durable `windowID`.
+   - Add tests that labels remain deterministic for one snapshot and that explicit `windowID` selection is used for multi-window flows.
 3. Add shallow Accessibility tree capture behind permission checks.
    - Serialize a bounded AX snapshot when trusted and record a clear partial-run event when not trusted.
 4. Wire the manual capture flow through `RunCoordinator` events.
    - Emit ordered lifecycle/tool events for target resolution, screenshot capture, AX snapshot, artifact persistence, completion, and failure paths.
 5. Add integration tests and manual verification.
    - Cover artifact metadata, bounded AX serialization, policy denial for input, and partial summaries.
-   - Manually verify against iPhone Mirroring and at least one other visible Mac app window.
+   - Manually verify against iPhone Mirroring and at least one other visible Mac app window, including an overlapped-window scenario.
