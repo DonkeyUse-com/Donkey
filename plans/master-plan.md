@@ -20,12 +20,12 @@ Supported behavior and engineering guidance belong in `docs/guides/minimal-run-c
 - [x] Update the supported behavior guide for the completed runtime, capture, Accessibility, and debug-entrypoint slices.
 - [x] Manually verify `--list-window-candidates` against current visible Mac windows.
 - [x] Manually verify `--manual-capture --window-id <id>` against one normal Mac app window.
+- [x] Manually verify an explicitly overlapped-window capture uses the true window capture path without requiring overlap-free bounds.
 
 ## Remaining Tasks
 
 1. Complete the remaining live verification cases.
    - Run `swift run Donkey -- --manual-capture --window-id <id>` against iPhone Mirroring when available.
-   - Verify an explicitly overlapped-window scenario does not produce misleading capture behavior.
    - Verify an Accessibility-trust-missing scenario completes partially with one screenshot artifact and one coordinator permission event.
 
 2. Close out the milestone.
