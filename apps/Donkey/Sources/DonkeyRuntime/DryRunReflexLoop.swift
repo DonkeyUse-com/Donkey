@@ -78,13 +78,14 @@ public struct DryRunReflexLoop: Sendable {
     public var perceptionAdapter: any DryRunPerceptionAdapting
     public var controllerPolicy: any DryRunControllerPolicy
     public var actionProjector: any DryRunActionProjecting
+    public var worldStateProjector: HotLoopWorldStateProjector
     public var staleSignalThresholdMS: Double
 
     public init(
         coordinator: RunCoordinator,
         frameSource: any DryRunFrameSource,
-        perceptionAdapter: any DryRunPerceptionAdapting = SyntheticPerceptionAdapter(),
-        controllerPolicy: any DryRunControllerPolicy = InspectableDryRunControllerPolicy(),
+        perceptionAdapter: any DryRunPerceptionAdapting = CheapPerceptionAdapter(),
+        controllerPolicy: any DryRunControllerPolicy = DeterministicControllerPolicy(),
         actionProjector: any DryRunActionProjecting = DryRunActionProjector(),
         staleSignalThresholdMS: Double = 250
     ) {
@@ -93,6 +94,7 @@ public struct DryRunReflexLoop: Sendable {
         self.perceptionAdapter = perceptionAdapter
         self.controllerPolicy = controllerPolicy
         self.actionProjector = actionProjector
+        self.worldStateProjector = HotLoopWorldStateProjector(staleSignalThresholdMS: staleSignalThresholdMS)
         self.staleSignalThresholdMS = staleSignalThresholdMS
     }
 
@@ -149,14 +151,10 @@ public struct DryRunReflexLoop: Sendable {
     ) async -> (worldState: HotLoopWorldState, action: HotLoopControllerAction) {
         let signals = await perceptionAdapter.perceive(frame: frame)
         let observedAt = signals.map(\.observedAt).maxByMonotonicUptime() ?? frame.capturedAt.addingMilliseconds(2)
-        let affordances = actionAffordances(from: signals)
-        let worldState = HotLoopWorldState.build(
-            id: "state-\(frame.id)",
+        let worldState = worldStateProjector.project(
             frame: frame,
             signals: signals,
             observedAt: observedAt,
-            staleThresholdMS: staleSignalThresholdMS,
-            actionAffordances: affordances
         )
         let controllerStart = observedAt.addingMilliseconds(1)
         let action = await controllerPolicy.decide(state: worldState)
@@ -183,8 +181,11 @@ public struct DryRunReflexLoop: Sendable {
             metadata: [
                 "dryRun.mode": result.mode.rawValue,
                 "dryRun.executed": String(result.executed),
-                "dryRun.summary": result.summary
-            ]
+                "dryRun.summary": result.summary,
+                "action.kind": action.kind.rawValue,
+                "action.rationale": action.rationale,
+                "action.fallback": action.metadata["fallback"] ?? "false"
+            ].merging(action.metadata, uniquingKeysWith: { current, _ in current })
         )
 
         await coordinator.appendReflexTrace(trace)
@@ -205,21 +206,6 @@ public struct DryRunReflexLoop: Sendable {
         }
     }
 
-    private func actionAffordances(
-        from signals: [HotLoopPerceptionSignal]
-    ) -> [HotLoopActionAffordance] {
-        signals.flatMap { signal in
-            signal.observations.map { observation in
-                HotLoopActionAffordance(
-                    id: "affordance-\(observation.id)",
-                    kind: .tapTarget,
-                    targetBounds: observation.bounds,
-                    confidence: min(signal.confidence, observation.confidence),
-                    sourceSignalID: signal.id
-                )
-            }
-        }
-    }
 }
 
 public struct SyntheticFrameSource: DryRunFrameSource {
@@ -250,123 +236,8 @@ public struct RecordedFrameSource: DryRunFrameSource {
     }
 }
 
-public struct SyntheticPerceptionAdapter: DryRunPerceptionAdapting {
-    public init() {}
-
-    public func perceive(frame: HotLoopFrame) async -> [HotLoopPerceptionSignal] {
-        let confidence = Double(frame.metadata["signalConfidence"] ?? "") ?? 1
-        let observedAt = frame.capturedAt.addingMilliseconds(2)
-        let observation = observation(from: frame, confidence: confidence)
-
-        return [
-            HotLoopPerceptionSignal(
-                id: "signal-\(frame.id)",
-                traceID: frame.traceID,
-                frameID: frame.id,
-                kind: frame.metadata["signalKind"] ?? "synthetic",
-                capturedAt: frame.capturedAt,
-                observedAt: observedAt,
-                confidence: confidence,
-                observations: observation.map { [$0] } ?? [],
-                plannerHintID: frame.plannerHintID
-            )
-        ]
-    }
-
-    private func observation(
-        from frame: HotLoopFrame,
-        confidence: Double
-    ) -> HotLoopPerceptionObservation? {
-        guard let x = Double(frame.metadata["tapTargetX"] ?? ""),
-              let y = Double(frame.metadata["tapTargetY"] ?? "")
-        else {
-            return nil
-        }
-
-        let width = Double(frame.metadata["tapTargetWidth"] ?? "") ?? 0.1
-        let height = Double(frame.metadata["tapTargetHeight"] ?? "") ?? 0.1
-
-        return HotLoopPerceptionObservation(
-            id: "observation-\(frame.id)",
-            label: frame.metadata["tapTargetLabel"] ?? "tap-target",
-            bounds: HotLoopRect(
-                x: x,
-                y: y,
-                width: width,
-                height: height,
-                space: .normalizedTarget
-            ),
-            confidence: confidence
-        )
-    }
-}
-
-public struct InspectableDryRunControllerPolicy: DryRunControllerPolicy {
-    public var name: String
-
-    public init(name: String = "inspectable-dry-run") {
-        self.name = name
-    }
-
-    public func decide(state: HotLoopWorldState) async -> HotLoopControllerAction {
-        if let affordance = state.actionAffordances.first(where: { $0.kind == .tapTarget }) {
-            return HotLoopControllerAction(
-                id: "action-\(state.id)",
-                traceID: state.traceID,
-                frameID: state.frameID,
-                stateID: state.id,
-                kind: .tapTarget,
-                target: affordance.targetBounds,
-                policyName: name,
-                confidence: affordance.confidence,
-                rationale: "Synthetic tap target affordance is available",
-                plannerHintID: state.plannerHintID
-            )
-        }
-
-        let kind: HotLoopActionKind = state.signalSummaries.isEmpty ? .observe : .wait
-        return HotLoopControllerAction(
-            id: "action-\(state.id)",
-            traceID: state.traceID,
-            frameID: state.frameID,
-            stateID: state.id,
-            kind: kind,
-            policyName: name,
-            confidence: state.confidence,
-            rationale: kind == .observe ? "No perception signal is available" : "No safe action affordance is available",
-            plannerHintID: state.plannerHintID
-        )
-    }
-}
-
-public struct DryRunActionProjector: DryRunActionProjecting {
-    public init() {}
-
-    public func project(
-        action: HotLoopControllerAction,
-        state: HotLoopWorldState
-    ) async -> HotLoopActionResult {
-        let enqueuedAt = state.observedAt.addingMilliseconds(2)
-        let completedAt = enqueuedAt
-
-        return HotLoopActionResult(
-            id: "result-\(action.id)",
-            traceID: action.traceID,
-            frameID: action.frameID,
-            stateID: action.stateID,
-            actionID: action.id,
-            mode: .dryRun,
-            executed: false,
-            enqueuedAt: enqueuedAt,
-            completedAt: completedAt,
-            summary: "Dry-run projected \(action.kind.rawValue)",
-            metadata: [
-                "policyName": action.policyName,
-                "rationale": action.rationale
-            ]
-        )
-    }
-}
+public typealias SyntheticPerceptionAdapter = CheapPerceptionAdapter
+public typealias InspectableDryRunControllerPolicy = DeterministicControllerPolicy
 
 private extension RunTraceTimestamp {
     func addingMilliseconds(_ milliseconds: UInt64) -> RunTraceTimestamp {

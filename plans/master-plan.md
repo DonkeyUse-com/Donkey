@@ -54,6 +54,8 @@ The hot path must continue to work with the AI harness disabled.
 - Shared hot-loop contracts exist for frames, crops, explicit coordinate spaces, perception signals, compact world state, controller actions, action results, stale-signal marking, and trace-linked IDs.
 - A deterministic dry-run reflex loop skeleton exists for synthetic or recorded frame batches with latest-frame-wins queue depth 1, dropped-frame counting, dry-run action projection, and coordinator-published reflex traces.
 - Bounded target-window frame capture exists for the dry-run hot-loop boundary with selected-window safety checks, optional crop metadata, monotonic capture/copy timing, and no PNG/JPEG artifact encoding.
+- A cheap deterministic perception adapter exists for fixture or recorded-frame metadata, with compact world-state projection and raw pixels kept behind the perception boundary.
+- A deterministic controller policy exists for the first supported dry-run behavior: tap a fresh high-confidence target affordance, otherwise fall back to traceable wait/observe actions.
 
 ## Non-Negotiable Rules
 
@@ -74,22 +76,10 @@ The hot path must continue to work with the AI harness disabled.
 - [x] Define shared hot-loop contracts for typed frame, crop, world-state, perception-signal, controller-action, action-result, and coordinate conversion.
 - [x] Add deterministic dry-run reflex loop skeleton for synthetic or recorded frames only.
 - [x] Add bounded target-window capture as a dry-run frame source without screenshot artifact writes.
+- [x] Add the first cheap perception adapter and compact world-state projector for deterministic metadata/fixture signals.
+- [x] Add deterministic controller policy and dry-run action projection with confidence-aware fallback and trace metadata.
 
 ## Remaining Tasks
-
-4. Add the first cheap perception adapter.
-   - Start with deterministic template, color, edge, OCR-crop stub, or synthetic detector signal before adding heavier models.
-   - Convert perception output into compact world state.
-   - Include signal confidence and age.
-   - Keep detector tensors, masks, and raw pixels behind perception boundaries.
-   - Add replay tests from recorded or fixture frames.
-
-5. Add deterministic controller and dry-run action projection.
-   - Define policy selection and one inspectable rule/state-machine policy for the first supported behavior.
-   - Emit semantic action commands with state id, action id, policy name, confidence, and rationale metadata.
-   - Add confidence-aware fallback behavior.
-   - Record every chosen action in traces.
-   - Prove controller p95 decision time under 20ms in replay.
 
 6. Add action-engine guardrails before live input.
    - Define command interface for tap, swipe, key, mouse, controller, and `release_all`.
@@ -156,9 +146,9 @@ The hot path must continue to work with the AI harness disabled.
 
 ## What Should Be Done Next
 
-Start with task 4: add the first cheap perception adapter.
+Start with task 6: add action-engine guardrails before live input.
 
-This is the right next slice because the current runtime now has lifecycle, event, artifact, manual capture, reflex trace, shared hot-loop contracts, a synthetic/recorded-frame dry-run skeleton, and bounded selected-window frame capture. It still needs a cheap deterministic perception adapter that converts fixture or target-window frame metadata into compact world state before controller replay can become target-shaped.
+This is the right next slice because the current runtime now has lifecycle, event, artifact, manual capture, reflex trace, shared hot-loop contracts, a synthetic/recorded-frame dry-run skeleton, bounded selected-window frame capture, cheap deterministic perception, and a dry-run controller policy. It still needs an action-engine command boundary and guardrails before any live input can be considered.
 
 ## Closeout Criteria
 

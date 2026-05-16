@@ -22,6 +22,8 @@ Donkey also supports a deterministic dry-run reflex loop skeleton. The loop cons
 
 Donkey also supports a bounded target-window frame source for the dry-run hot-loop boundary. The frame source reuses macOS window selection and safety checks, captures selected windows through ScreenCaptureKit's desktop-independent window path, returns `HotLoopFrame` metadata for a caller-provided maximum frame count, and records capture latency and copy cost with monotonic timestamps. This path does not write screenshot artifacts and does not PNG/JPEG encode or decode frames. High-resolution manual screenshot artifacts remain separate from reflex frames.
 
+Donkey also supports the first cheap perception and deterministic controller slice. `CheapPerceptionAdapter` reads deterministic fixture or recorded-frame metadata for template-style targets, emits compact perception signals with confidence and monotonic source age, and marks that raw pixels are not exposed past the perception boundary. `HotLoopWorldStateProjector` converts those signals into compact world state and action affordances. `DeterministicControllerPolicy` selects a semantic `tapTarget` action for fresh high-confidence affordances, otherwise falls back to `wait` or `observe` with explicit rationale and fallback metadata. `DryRunActionProjector` remains side-effect free and records projected dry-run actions without OS input.
+
 Donkey also supports a local run artifact store for durable trace data. Installed app runs are stored under `~/Library/Application Support/Donkey/Runs/<run-id>/`; tests and development tools may pass an explicit base directory override. Each prepared run creates:
 
 ```text
@@ -43,7 +45,7 @@ Donkey supports a runtime-level manual target context capture service that wires
 
 The installed executable also supports a developer-only launch-argument entrypoint for manual verification. `--list-window-candidates` prints the current candidate-list labels and durable `windowID` values. `--manual-capture` runs one manual capture, optionally with `--window-id <id>`, `--run-id <safe-id>`, and `--trace-id <safe-id>`, then prints the run folder and artifact paths. These commands are non-interactive and exit before showing the pointer prompt overlay.
 
-This is a coordination, in-memory reflex trace, hot-loop contract, deterministic dry-run skeleton, bounded target-window frame-source, target-metadata, single-screenshot artifact, read-only Accessibility snapshot, and manual capture orchestration foundation only. It does not run real perception models, call LLMs, execute OS input, perform Accessibility actions, provide a manual capture UI, persist high-volume reflex traces to disk, or provide continuous streaming capture yet.
+This is a coordination, in-memory reflex trace, hot-loop contract, deterministic dry-run skeleton, bounded target-window frame-source, cheap metadata perception, deterministic controller, target-metadata, single-screenshot artifact, read-only Accessibility snapshot, and manual capture orchestration foundation only. It does not run real vision models or OCR, call LLMs, execute OS input, perform Accessibility actions, provide a manual capture UI, persist high-volume reflex traces to disk, or provide continuous streaming capture yet.
 
 ## Technical Guidelines
 
@@ -64,6 +66,9 @@ This is a coordination, in-memory reflex trace, hot-loop contract, deterministic
 - Keep reflex frame buffers at queue depth 1. Dropped frames are expected under pressure and should be counted.
 - Keep target-window reflex frames bounded by caller-provided frame count until a streaming capture loop exists.
 - Keep manual screenshot artifacts and high-resolution planner snapshots separate from reflex frames. The reflex frame source should not encode PNG/JPEG or write screenshot artifacts.
+- Keep cheap perception deterministic and compact until real pixel/model adapters exist. Perception may summarize fixture or recorded-frame metadata, but controllers must only see typed signals, world state, and action affordances.
+- Keep controller fallback explicit. Low confidence, stale signals, missing affordances, and missing signals should produce traceable `wait` or `observe` actions, not silent no-ops.
+- Keep every chosen controller action trace-linked with action id, state id, frame id, policy name, confidence, rationale, and fallback metadata.
 - Use monotonic timestamps for latency math. Wall-clock timestamps are for human labels and trace correlation only.
 - Keep reflex trace retention bounded. The current in-memory store is for recent status and tests, not high-volume replay persistence.
 - Use sampled or summarized reflex events until a measured disk trace sink exists.
@@ -76,7 +81,7 @@ From `apps/Donkey/`:
 swift test
 ```
 
-The runtime tests should cover lifecycle ordering, abort and timeout safety, latest-session queue drops, tool permission denial, event-store ordering, context compaction, reflex trace latency math, bounded in-memory reflex trace retention, reflex event publication, hot-loop contract Codable round trips, coordinate conversion, stale-signal marking, deterministic dry-run trace publication, queue-depth-1 dropped-frame counting, bounded target-window frame capture, target-frame safety and overlap refusal, target-frame no-artifact/no-encoding metadata, artifact path validation, trace folder layout, JSONL event persistence, summary updates, deterministic window resolver behavior through fixture providers, candidate-list label snapshots, screenshot artifact metadata, bounded Accessibility serialization, missing Accessibility trust partial events, unsafe target refusal, overlap-sensitive capture refusal, manual capture event ordering through persisted coordinator events, and debug launch-argument parsing/formatting.
+The runtime tests should cover lifecycle ordering, abort and timeout safety, latest-session queue drops, tool permission denial, event-store ordering, context compaction, reflex trace latency math, bounded in-memory reflex trace retention, reflex event publication, hot-loop contract Codable round trips, coordinate conversion, stale-signal marking, deterministic dry-run trace publication, queue-depth-1 dropped-frame counting, bounded target-window frame capture, target-frame safety and overlap refusal, target-frame no-artifact/no-encoding metadata, cheap perception signal projection, controller confidence/staleness fallback, controller p95 replay timing under 20ms, artifact path validation, trace folder layout, JSONL event persistence, summary updates, deterministic window resolver behavior through fixture providers, candidate-list label snapshots, screenshot artifact metadata, bounded Accessibility serialization, missing Accessibility trust partial events, unsafe target refusal, overlap-sensitive capture refusal, manual capture event ordering through persisted coordinator events, and debug launch-argument parsing/formatting.
 
 Manual smoke commands:
 
@@ -99,6 +104,7 @@ Remaining live verification is environment-dependent. On May 16, 2026, iPhone Mi
 - Runtime coordination lives in `apps/Donkey/Sources/DonkeyRuntime/`.
 - The deterministic dry-run reflex skeleton lives in `apps/Donkey/Sources/DonkeyRuntime/DryRunReflexLoop.swift`.
 - Bounded target-window reflex frame capture lives in `apps/Donkey/Sources/DonkeyRuntime/TargetWindowFrameSource.swift`.
+- Cheap perception, world-state projection, deterministic controller policy, and dry-run action projection live in `apps/Donkey/Sources/DonkeyRuntime/CheapPerceptionAndController.swift`.
 - Recent reflex trace retention lives in `apps/Donkey/Sources/DonkeyRuntime/InMemoryReflexTraceStore.swift`.
 - macOS window resolution lives in `apps/Donkey/Sources/DonkeyRuntime/MacWindowResolver.swift`.
 - Target-window screenshot capture lives in `apps/Donkey/Sources/DonkeyRuntime/WindowScreenshotCaptureService.swift`.
