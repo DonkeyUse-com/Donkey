@@ -14,6 +14,8 @@ The coordinator can:
 - mark aborts and timeouts as requiring held-input release
 - build bounded planner context from the current session, world-state summary, transcript summary, valid hints, and recent failures
 
+Donkey also supports the first real reflex trace shape for the off-the-shelf run loop. Reflex traces can carry monotonic timing checkpoints for capture, preprocessing, model inference, perception, state publication, controller decision, action enqueue, and input execution. The shared contracts derive stage latency, software-loop latency, frame age, and state age from monotonic timestamps only. `RunCoordinator` can append a `ReflexTraceRecord`, retain it in a bounded in-memory trace store, and publish a matching `reflex` event with compact latency metadata.
+
 Donkey also supports a local run artifact store for durable trace data. Installed app runs are stored under `~/Library/Application Support/Donkey/Runs/<run-id>/`; tests and development tools may pass an explicit base directory override. Each prepared run creates:
 
 ```text
@@ -35,7 +37,7 @@ Donkey supports a runtime-level manual target context capture service that wires
 
 The installed executable also supports a developer-only launch-argument entrypoint for manual verification. `--list-window-candidates` prints the current candidate-list labels and durable `windowID` values. `--manual-capture` runs one manual capture, optionally with `--window-id <id>`, `--run-id <safe-id>`, and `--trace-id <safe-id>`, then prints the run folder and artifact paths. These commands are non-interactive and exit before showing the pointer prompt overlay.
 
-This is a coordination, trace, target-metadata, single-screenshot artifact, read-only Accessibility snapshot, and manual capture orchestration foundation only. It does not run perception models, call LLMs, execute OS input, perform Accessibility actions, provide a manual capture UI, or complete live verification against the full target matrix yet.
+This is a coordination, in-memory reflex trace, target-metadata, single-screenshot artifact, read-only Accessibility snapshot, and manual capture orchestration foundation only. It does not run perception models, call LLMs, execute OS input, perform Accessibility actions, provide a manual capture UI, persist high-volume reflex traces to disk, or provide the full real-time capture/perception/controller loop yet.
 
 ## Technical Guidelines
 
@@ -51,7 +53,9 @@ This is a coordination, trace, target-metadata, single-screenshot artifact, read
 - Keep mutable installed-app run artifacts in Application Support, not inside the `.app` bundle and not relative to process working directory.
 - Keep input actions denied unless a caller provides a policy that explicitly allows them.
 - Preserve latest-request-wins behavior for live-control sessions so stale work cannot build up behind the reflex loop.
-- Use sampled or summarized reflex events until a measured trace sink exists.
+- Use monotonic timestamps for latency math. Wall-clock timestamps are for human labels and trace correlation only.
+- Keep reflex trace retention bounded. The current in-memory store is for recent status and tests, not high-volume replay persistence.
+- Use sampled or summarized reflex events until a measured disk trace sink exists.
 
 ## Verification
 
@@ -61,7 +65,7 @@ From `apps/Donkey/`:
 swift test
 ```
 
-The runtime tests should cover lifecycle ordering, abort and timeout safety, latest-session queue drops, tool permission denial, event-store ordering, context compaction, artifact path validation, trace folder layout, JSONL event persistence, summary updates, deterministic window resolver behavior through fixture providers, candidate-list label snapshots, screenshot artifact metadata, bounded Accessibility serialization, missing Accessibility trust partial events, unsafe target refusal, overlap-sensitive capture refusal, manual capture event ordering through persisted coordinator events, and debug launch-argument parsing/formatting.
+The runtime tests should cover lifecycle ordering, abort and timeout safety, latest-session queue drops, tool permission denial, event-store ordering, context compaction, reflex trace latency math, bounded in-memory reflex trace retention, reflex event publication, artifact path validation, trace folder layout, JSONL event persistence, summary updates, deterministic window resolver behavior through fixture providers, candidate-list label snapshots, screenshot artifact metadata, bounded Accessibility serialization, missing Accessibility trust partial events, unsafe target refusal, overlap-sensitive capture refusal, manual capture event ordering through persisted coordinator events, and debug launch-argument parsing/formatting.
 
 Manual smoke commands:
 
@@ -81,6 +85,7 @@ Remaining live verification is environment-dependent. On May 16, 2026, iPhone Mi
 - Runtime contracts live in `apps/Donkey/Sources/DonkeyContracts/RunLoopContracts.swift`.
 - Window target contracts live in `apps/Donkey/Sources/DonkeyContracts/WindowTargetContracts.swift`.
 - Runtime coordination lives in `apps/Donkey/Sources/DonkeyRuntime/`.
+- Recent reflex trace retention lives in `apps/Donkey/Sources/DonkeyRuntime/InMemoryReflexTraceStore.swift`.
 - macOS window resolution lives in `apps/Donkey/Sources/DonkeyRuntime/MacWindowResolver.swift`.
 - Target-window screenshot capture lives in `apps/Donkey/Sources/DonkeyRuntime/WindowScreenshotCaptureService.swift`.
 - Accessibility snapshot contracts live in `apps/Donkey/Sources/DonkeyContracts/AccessibilitySnapshotContracts.swift`.
@@ -88,4 +93,4 @@ Remaining live verification is environment-dependent. On May 16, 2026, iPhone Mi
 - Manual target context capture orchestration lives in `apps/Donkey/Sources/DonkeyRuntime/ManualTargetContextCaptureService.swift`.
 - Manual capture debug command parsing lives in `apps/Donkey/Sources/DonkeyRuntime/ManualCaptureDebugCommand.swift`.
 - Local artifact persistence lives in `apps/Donkey/Sources/DonkeyRuntime/LocalRunArtifactStore.swift`.
-- The manual capture source plan remains active in `plans/master-plan.md`.
+- The manual capture source plan is complete in `plans/done/manual-target-context-capture-master-plan.md`.

@@ -154,17 +154,20 @@ public struct ReflexRunEvent: Codable, Equatable, Sendable {
     public var frameID: String?
     public var stateID: String?
     public var actionID: String?
+    public var latency: ReflexLatencyBreakdown?
     public var sampled: Bool
 
     public init(
         frameID: String? = nil,
         stateID: String? = nil,
         actionID: String? = nil,
+        latency: ReflexLatencyBreakdown? = nil,
         sampled: Bool = true
     ) {
         self.frameID = frameID
         self.stateID = stateID
         self.actionID = actionID
+        self.latency = latency
         self.sampled = sampled
     }
 }
@@ -288,6 +291,159 @@ public struct RunTraceTimestamp: Codable, Equatable, Sendable {
     ) {
         self.wallClock = wallClock
         self.monotonicUptimeNanoseconds = monotonicUptimeNanoseconds
+    }
+
+    public func milliseconds(until later: RunTraceTimestamp) -> Double? {
+        guard later.monotonicUptimeNanoseconds >= monotonicUptimeNanoseconds else {
+            return nil
+        }
+
+        let elapsedNanoseconds = later.monotonicUptimeNanoseconds - monotonicUptimeNanoseconds
+        return Double(elapsedNanoseconds) / 1_000_000
+    }
+}
+
+public struct ReflexTraceTimeline: Codable, Equatable, Sendable {
+    public var captureStart: RunTraceTimestamp?
+    public var captureEnd: RunTraceTimestamp?
+    public var preprocessStart: RunTraceTimestamp?
+    public var preprocessEnd: RunTraceTimestamp?
+    public var modelStart: RunTraceTimestamp?
+    public var modelEnd: RunTraceTimestamp?
+    public var perceptionStart: RunTraceTimestamp?
+    public var perceptionEnd: RunTraceTimestamp?
+    public var statePublished: RunTraceTimestamp?
+    public var controllerStart: RunTraceTimestamp?
+    public var controllerEnd: RunTraceTimestamp?
+    public var actionEnqueued: RunTraceTimestamp?
+    public var inputExecuted: RunTraceTimestamp?
+
+    public init(
+        captureStart: RunTraceTimestamp? = nil,
+        captureEnd: RunTraceTimestamp? = nil,
+        preprocessStart: RunTraceTimestamp? = nil,
+        preprocessEnd: RunTraceTimestamp? = nil,
+        modelStart: RunTraceTimestamp? = nil,
+        modelEnd: RunTraceTimestamp? = nil,
+        perceptionStart: RunTraceTimestamp? = nil,
+        perceptionEnd: RunTraceTimestamp? = nil,
+        statePublished: RunTraceTimestamp? = nil,
+        controllerStart: RunTraceTimestamp? = nil,
+        controllerEnd: RunTraceTimestamp? = nil,
+        actionEnqueued: RunTraceTimestamp? = nil,
+        inputExecuted: RunTraceTimestamp? = nil
+    ) {
+        self.captureStart = captureStart
+        self.captureEnd = captureEnd
+        self.preprocessStart = preprocessStart
+        self.preprocessEnd = preprocessEnd
+        self.modelStart = modelStart
+        self.modelEnd = modelEnd
+        self.perceptionStart = perceptionStart
+        self.perceptionEnd = perceptionEnd
+        self.statePublished = statePublished
+        self.controllerStart = controllerStart
+        self.controllerEnd = controllerEnd
+        self.actionEnqueued = actionEnqueued
+        self.inputExecuted = inputExecuted
+    }
+
+    public func latencyBreakdown() -> ReflexLatencyBreakdown {
+        ReflexLatencyBreakdown(
+            captureMS: milliseconds(from: captureStart, to: captureEnd),
+            preprocessMS: milliseconds(from: preprocessStart, to: preprocessEnd),
+            modelInferenceMS: milliseconds(from: modelStart, to: modelEnd),
+            perceptionMS: milliseconds(from: perceptionStart, to: perceptionEnd),
+            decisionMS: milliseconds(from: controllerStart, to: controllerEnd),
+            inputMS: milliseconds(from: actionEnqueued, to: inputExecuted),
+            softwareLoopMS: milliseconds(from: captureEnd, to: inputExecuted),
+            frameAgeMS: milliseconds(from: captureEnd, to: controllerStart),
+            stateAgeMS: milliseconds(from: statePublished, to: inputExecuted)
+        )
+    }
+
+    private func milliseconds(
+        from start: RunTraceTimestamp?,
+        to end: RunTraceTimestamp?
+    ) -> Double? {
+        guard let start, let end else { return nil }
+        return start.milliseconds(until: end)
+    }
+}
+
+public struct ReflexLatencyBreakdown: Codable, Equatable, Sendable {
+    public var captureMS: Double?
+    public var preprocessMS: Double?
+    public var modelInferenceMS: Double?
+    public var perceptionMS: Double?
+    public var decisionMS: Double?
+    public var inputMS: Double?
+    public var softwareLoopMS: Double?
+    public var frameAgeMS: Double?
+    public var stateAgeMS: Double?
+
+    public init(
+        captureMS: Double? = nil,
+        preprocessMS: Double? = nil,
+        modelInferenceMS: Double? = nil,
+        perceptionMS: Double? = nil,
+        decisionMS: Double? = nil,
+        inputMS: Double? = nil,
+        softwareLoopMS: Double? = nil,
+        frameAgeMS: Double? = nil,
+        stateAgeMS: Double? = nil
+    ) {
+        self.captureMS = captureMS
+        self.preprocessMS = preprocessMS
+        self.modelInferenceMS = modelInferenceMS
+        self.perceptionMS = perceptionMS
+        self.decisionMS = decisionMS
+        self.inputMS = inputMS
+        self.softwareLoopMS = softwareLoopMS
+        self.frameAgeMS = frameAgeMS
+        self.stateAgeMS = stateAgeMS
+    }
+}
+
+public struct ReflexTraceRecord: Codable, Equatable, Sendable {
+    public var traceID: String
+    public var frameID: String
+    public var stateID: String
+    public var actionID: String?
+    public var timestamps: ReflexTraceTimeline
+    public var latencyBreakdown: ReflexLatencyBreakdown
+    public var controllerPolicy: String?
+    public var confidence: Double?
+    public var plannerHintID: String?
+    public var machineProfile: String?
+    public var buildID: String?
+    public var metadata: [String: String]
+
+    public init(
+        traceID: String,
+        frameID: String,
+        stateID: String,
+        actionID: String? = nil,
+        timestamps: ReflexTraceTimeline,
+        controllerPolicy: String? = nil,
+        confidence: Double? = nil,
+        plannerHintID: String? = nil,
+        machineProfile: String? = nil,
+        buildID: String? = nil,
+        metadata: [String: String] = [:]
+    ) {
+        self.traceID = traceID
+        self.frameID = frameID
+        self.stateID = stateID
+        self.actionID = actionID
+        self.timestamps = timestamps
+        self.latencyBreakdown = timestamps.latencyBreakdown()
+        self.controllerPolicy = controllerPolicy
+        self.confidence = confidence
+        self.plannerHintID = plannerHintID
+        self.machineProfile = machineProfile
+        self.buildID = buildID
+        self.metadata = metadata
     }
 }
 

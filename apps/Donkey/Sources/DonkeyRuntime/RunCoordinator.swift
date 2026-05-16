@@ -4,6 +4,7 @@ import Foundation
 public actor RunCoordinator {
     private let sessionQueue: LatestRunSessionQueue
     private let eventStore: InMemoryRunEventStore
+    private let reflexTraceStore: InMemoryReflexTraceStore
     private let contextAssembler: RunContextAssembler
     private var currentSession: RunSession?
     private var lifecycleState: RunLifecycleState = .idle
@@ -13,10 +14,12 @@ public actor RunCoordinator {
     public init(
         sessionQueue: LatestRunSessionQueue = LatestRunSessionQueue(),
         eventStore: InMemoryRunEventStore = InMemoryRunEventStore(),
+        reflexTraceStore: InMemoryReflexTraceStore = InMemoryReflexTraceStore(),
         contextAssembler: RunContextAssembler = RunContextAssembler()
     ) {
         self.sessionQueue = sessionQueue
         self.eventStore = eventStore
+        self.reflexTraceStore = reflexTraceStore
         self.contextAssembler = contextAssembler
     }
 
@@ -152,6 +155,32 @@ public actor RunCoordinator {
         )
     }
 
+    @discardableResult
+    public func appendReflexTrace(
+        _ record: ReflexTraceRecord,
+        sampled: Bool = true
+    ) async -> RunEvent {
+        await reflexTraceStore.append(record)
+
+        return await eventStore.append(
+            RunEvent(
+                stream: .reflex,
+                summary: "Reflex trace recorded",
+                payload: .reflex(
+                    ReflexRunEvent(
+                        frameID: record.frameID,
+                        stateID: record.stateID,
+                        actionID: record.actionID,
+                        latency: record.latencyBreakdown,
+                        sampled: sampled
+                    )
+                ),
+                traceID: record.traceID,
+                metadata: reflexMetadata(for: record)
+            )
+        )
+    }
+
     public func buildContext(
         latestWorldState: RunWorldStateSummary? = nil,
         transcriptSummary: String = "",
@@ -186,6 +215,14 @@ public actor RunCoordinator {
 
     public func events() async -> [RunEvent] {
         await eventStore.allEvents()
+    }
+
+    public func reflexTraces() async -> [ReflexTraceRecord] {
+        await reflexTraceStore.allRecords()
+    }
+
+    public func latestReflexTrace() async -> ReflexTraceRecord? {
+        await reflexTraceStore.latestRecord()
     }
 
     private func transition(
@@ -247,6 +284,26 @@ public actor RunCoordinator {
             return "Run failed"
         }
     }
+
+    private func reflexMetadata(for record: ReflexTraceRecord) -> [String: String] {
+        var metadata = record.metadata
+
+        metadata["reflex.frameID"] = record.frameID
+        metadata["reflex.stateID"] = record.stateID
+        metadata["reflex.actionID"] = record.actionID
+        metadata["reflex.controllerPolicy"] = record.controllerPolicy
+        metadata["reflex.plannerHintID"] = record.plannerHintID
+        metadata["reflex.machineProfile"] = record.machineProfile
+        metadata["reflex.buildID"] = record.buildID
+
+        if let confidence = record.confidence {
+            metadata["reflex.confidence"] = String(confidence)
+        }
+
+        metadata.merge(record.latencyBreakdown.metadata) { current, _ in current }
+
+        return metadata
+    }
 }
 
 private extension ToolCallDecision {
@@ -259,5 +316,23 @@ private extension ToolCallDecision {
         case .ask:
             return "requires approval"
         }
+    }
+}
+
+private extension ReflexLatencyBreakdown {
+    var metadata: [String: String] {
+        var values: [String: String] = [:]
+
+        values["latency.captureMS"] = captureMS.map { String($0) }
+        values["latency.preprocessMS"] = preprocessMS.map { String($0) }
+        values["latency.modelInferenceMS"] = modelInferenceMS.map { String($0) }
+        values["latency.perceptionMS"] = perceptionMS.map { String($0) }
+        values["latency.decisionMS"] = decisionMS.map { String($0) }
+        values["latency.inputMS"] = inputMS.map { String($0) }
+        values["latency.softwareLoopMS"] = softwareLoopMS.map { String($0) }
+        values["latency.frameAgeMS"] = frameAgeMS.map { String($0) }
+        values["latency.stateAgeMS"] = stateAgeMS.map { String($0) }
+
+        return values
     }
 }

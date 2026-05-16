@@ -11,7 +11,7 @@ Plans describe what we might build. Guides describe what Donkey currently suppor
 ## Engineering Guides
 
 - [Swift MVC Guide](guides/swift-mvc.md): Swift/AppKit/SwiftUI organization rules for model-view-controller boundaries.
-- [Minimal Run Coordinator](guides/minimal-run-coordinator.md): in-memory run lifecycle, events, policy checks, session queueing, and context compaction boundary.
+- [Minimal Run Coordinator](guides/minimal-run-coordinator.md): in-memory run lifecycle, events, policy checks, session queueing, context compaction, manual capture orchestration, and reflex trace boundary.
 
 ## Navigation Rules
 

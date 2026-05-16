@@ -6,11 +6,11 @@ Build a desktop AI agent that can play iPhone games through Apple's iPhone Mirro
 
 iPhone games are the first product focus. Gaming is the latency proof. The larger platform is real-time desktop and mobile-app control from the Mac.
 
-## Current Master Plan
+## Current Focus
 
-Start with [master-plan.md](master-plan.md).
+The manual target context capture milestone is complete in [done/manual-target-context-capture-master-plan.md](done/manual-target-context-capture-master-plan.md).
 
-That plan coordinates the next sequence of edits across capture, Accessibility, trace artifacts, and runtime events. Treat older active plans as background or cleanup targets while `22` is open.
+Continue feature work from [20-off-the-shelf-run-loop.md](20-off-the-shelf-run-loop.md), with [02-capture-and-perception.md](02-capture-and-perception.md), [06-benchmarking.md](06-benchmarking.md), and [18-macos-accessibility.md](18-macos-accessibility.md) as the near-term supporting plans.
 
 ## Near-Term Focus
 
@@ -60,7 +60,7 @@ Every frame should use local, bounded-cost logic:
 
 ## Plan Breakdown
 
-- [master-plan.md](master-plan.md): current master plan for manual screenshot, Accessibility tree, and trace artifact capture for any target window
+- [done/manual-target-context-capture-master-plan.md](done/manual-target-context-capture-master-plan.md): completed manual screenshot, Accessibility tree, and trace artifact capture milestone
 - [01-latency-budget.md](01-latency-budget.md): hard timing budget and optimization priorities
 - [02-capture-and-perception.md](02-capture-and-perception.md): screen capture, visual parsing, and world-state updates
 - [03-fast-controller.md](03-fast-controller.md): real-time controller design

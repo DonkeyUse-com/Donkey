@@ -413,6 +413,12 @@ Runtime: native core where the hot path needs it
 - Transcript and trace writes stay ordered under concurrent model/tool/reflex events.
 - Context compaction keeps planner input bounded while preserving the latest goal, state, failures, and valid hints.
 
+## Current Supported Slice
+
+The runtime foundation now supports typed reflex trace records for the future hot loop. A trace can carry capture, preprocessing, model, perception, state, controller, action, and input timestamps; derive stage latency, software-loop latency, frame age, and state age from monotonic time; retain recent traces in a bounded in-memory store; and publish matching `reflex` events through `RunCoordinator`.
+
+This is still a boundary and observability slice. It does not capture frames continuously, run detector/OCR/model inference, execute controller actions, or persist high-volume replay traces.
+
 ## Where To Look
 
 - Ultralytics supported models: https://docs.ultralytics.com/models/

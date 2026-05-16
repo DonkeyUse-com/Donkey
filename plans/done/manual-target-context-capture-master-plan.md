@@ -1,6 +1,6 @@
 # Manual Target Context Capture Master Plan
 
-This file is the active task queue for the manual target context capture milestone.
+This file records the completed manual target context capture milestone.
 Supported behavior and engineering guidance belong in `docs/guides/minimal-run-coordinator.md`.
 
 ## Completed Tasks
@@ -21,24 +21,15 @@ Supported behavior and engineering guidance belong in `docs/guides/minimal-run-c
 - [x] Manually verify `--list-window-candidates` against current visible Mac windows.
 - [x] Manually verify `--manual-capture --window-id <id>` against one normal Mac app window.
 - [x] Manually verify an explicitly overlapped-window capture uses the true window capture path without requiring overlap-free bounds.
+- [x] Close out the milestone after live verification and guide cleanup.
 
-## Remaining Tasks
+## Deferred Environment-Dependent Checks
 
-1. Complete the remaining live verification cases.
-   - Run `swift run Donkey -- --manual-capture --window-id <id>` against iPhone Mirroring when available.
-     - Blocked on May 16, 2026: no iPhone Mirroring window appeared in the candidate list.
-   - Verify an Accessibility-trust-missing scenario completes partially with one screenshot artifact and one coordinator permission event.
-     - Blocked on May 16, 2026: the current process is Accessibility-trusted; do not reset or revoke macOS privacy permissions without explicit user approval.
+- Run `swift run Donkey -- --manual-capture --window-id <id>` against iPhone Mirroring when an iPhone Mirroring window is available.
+  - Blocked on May 16, 2026: no iPhone Mirroring window appeared in the candidate list.
+- Verify an Accessibility-trust-missing scenario completes partially with one screenshot artifact and one coordinator permission event when the process is not already Accessibility-trusted.
+  - Blocked on May 16, 2026: the current process is Accessibility-trusted; do not reset or revoke macOS privacy permissions without explicit user approval.
 
-2. Close out the milestone.
-   - Update `docs/guides/minimal-run-coordinator.md` with any findings from live verification.
-   - Keep active plans focused on future work only:
-     - `plans/18-macos-accessibility.md`
-     - `plans/02-capture-and-perception.md`
-     - `plans/06-benchmarking.md`
-     - `plans/20-off-the-shelf-run-loop.md`
-   - Move this file to `plans/done/` after verification and guide cleanup.
+## Completion
 
-## Next Item
-
-Complete the remaining live verification cases.
+This milestone is complete. Supported behavior and engineering guidance live in `docs/guides/minimal-run-coordinator.md`; future implementation should continue from the active capture, Accessibility, benchmarking, and off-the-shelf run-loop plans.
