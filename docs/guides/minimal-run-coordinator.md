@@ -16,6 +16,12 @@ The coordinator can:
 
 Donkey also supports the first real reflex trace shape for the off-the-shelf run loop. Reflex traces can carry monotonic timing checkpoints for capture, preprocessing, model inference, perception, state publication, controller decision, action enqueue, and input execution. The shared contracts derive stage latency, software-loop latency, frame age, and state age from monotonic timestamps only. `RunCoordinator` can append a `ReflexTraceRecord`, retain it in a bounded in-memory trace store, and publish a matching `reflex` event with compact latency metadata.
 
+Donkey also supports shared hot-loop contracts for deterministic reflex-loop slices. Frames, crops, coordinate spaces, perception signals, compact world states, controller actions, and action results are typed, Codable, Sendable contracts. Coordinate spaces are explicit across screen, window, crop, and normalized target space. Perception signals carry confidence and monotonic source age, and stale signals are marked on world state instead of being silently reused.
+
+Donkey also supports a deterministic dry-run reflex loop skeleton. The loop consumes synthetic or recorded frame batches through a latest-frame-wins buffer with queue depth 1, counts dropped frames, converts signals into compact world state, chooses an inspectable semantic action, projects the action in dry-run mode without OS input, and publishes `ReflexTraceRecord` samples through `RunCoordinator`. This skeleton is for contract validation and replayable tests only; target-window continuous capture and live input are not supported yet.
+
+Donkey also supports a bounded target-window frame source for the dry-run hot-loop boundary. The frame source reuses macOS window selection and safety checks, captures selected windows through ScreenCaptureKit's desktop-independent window path, returns `HotLoopFrame` metadata for a caller-provided maximum frame count, and records capture latency and copy cost with monotonic timestamps. This path does not write screenshot artifacts and does not PNG/JPEG encode or decode frames. High-resolution manual screenshot artifacts remain separate from reflex frames.
+
 Donkey also supports a local run artifact store for durable trace data. Installed app runs are stored under `~/Library/Application Support/Donkey/Runs/<run-id>/`; tests and development tools may pass an explicit base directory override. Each prepared run creates:
 
 ```text
@@ -37,7 +43,7 @@ Donkey supports a runtime-level manual target context capture service that wires
 
 The installed executable also supports a developer-only launch-argument entrypoint for manual verification. `--list-window-candidates` prints the current candidate-list labels and durable `windowID` values. `--manual-capture` runs one manual capture, optionally with `--window-id <id>`, `--run-id <safe-id>`, and `--trace-id <safe-id>`, then prints the run folder and artifact paths. These commands are non-interactive and exit before showing the pointer prompt overlay.
 
-This is a coordination, in-memory reflex trace, target-metadata, single-screenshot artifact, read-only Accessibility snapshot, and manual capture orchestration foundation only. It does not run perception models, call LLMs, execute OS input, perform Accessibility actions, provide a manual capture UI, persist high-volume reflex traces to disk, or provide the full real-time capture/perception/controller loop yet.
+This is a coordination, in-memory reflex trace, hot-loop contract, deterministic dry-run skeleton, bounded target-window frame-source, target-metadata, single-screenshot artifact, read-only Accessibility snapshot, and manual capture orchestration foundation only. It does not run real perception models, call LLMs, execute OS input, perform Accessibility actions, provide a manual capture UI, persist high-volume reflex traces to disk, or provide continuous streaming capture yet.
 
 ## Technical Guidelines
 
@@ -53,6 +59,11 @@ This is a coordination, in-memory reflex trace, target-metadata, single-screensh
 - Keep mutable installed-app run artifacts in Application Support, not inside the `.app` bundle and not relative to process working directory.
 - Keep input actions denied unless a caller provides a policy that explicitly allows them.
 - Preserve latest-request-wins behavior for live-control sessions so stale work cannot build up behind the reflex loop.
+- Keep hot-loop data flowing through `DonkeyContracts` types. Controllers should consume `HotLoopWorldState`, not raw screenshots, detector tensors, or untyped metadata.
+- Keep dry-run action projection side-effect free. It records semantic action intent and trace evidence, but never calls the input capability.
+- Keep reflex frame buffers at queue depth 1. Dropped frames are expected under pressure and should be counted.
+- Keep target-window reflex frames bounded by caller-provided frame count until a streaming capture loop exists.
+- Keep manual screenshot artifacts and high-resolution planner snapshots separate from reflex frames. The reflex frame source should not encode PNG/JPEG or write screenshot artifacts.
 - Use monotonic timestamps for latency math. Wall-clock timestamps are for human labels and trace correlation only.
 - Keep reflex trace retention bounded. The current in-memory store is for recent status and tests, not high-volume replay persistence.
 - Use sampled or summarized reflex events until a measured disk trace sink exists.
@@ -65,7 +76,7 @@ From `apps/Donkey/`:
 swift test
 ```
 
-The runtime tests should cover lifecycle ordering, abort and timeout safety, latest-session queue drops, tool permission denial, event-store ordering, context compaction, reflex trace latency math, bounded in-memory reflex trace retention, reflex event publication, artifact path validation, trace folder layout, JSONL event persistence, summary updates, deterministic window resolver behavior through fixture providers, candidate-list label snapshots, screenshot artifact metadata, bounded Accessibility serialization, missing Accessibility trust partial events, unsafe target refusal, overlap-sensitive capture refusal, manual capture event ordering through persisted coordinator events, and debug launch-argument parsing/formatting.
+The runtime tests should cover lifecycle ordering, abort and timeout safety, latest-session queue drops, tool permission denial, event-store ordering, context compaction, reflex trace latency math, bounded in-memory reflex trace retention, reflex event publication, hot-loop contract Codable round trips, coordinate conversion, stale-signal marking, deterministic dry-run trace publication, queue-depth-1 dropped-frame counting, bounded target-window frame capture, target-frame safety and overlap refusal, target-frame no-artifact/no-encoding metadata, artifact path validation, trace folder layout, JSONL event persistence, summary updates, deterministic window resolver behavior through fixture providers, candidate-list label snapshots, screenshot artifact metadata, bounded Accessibility serialization, missing Accessibility trust partial events, unsafe target refusal, overlap-sensitive capture refusal, manual capture event ordering through persisted coordinator events, and debug launch-argument parsing/formatting.
 
 Manual smoke commands:
 
@@ -83,8 +94,11 @@ Remaining live verification is environment-dependent. On May 16, 2026, iPhone Mi
 ## Source Entry Points
 
 - Runtime contracts live in `apps/Donkey/Sources/DonkeyContracts/RunLoopContracts.swift`.
+- Hot-loop contracts live in `apps/Donkey/Sources/DonkeyContracts/HotLoopContracts.swift`.
 - Window target contracts live in `apps/Donkey/Sources/DonkeyContracts/WindowTargetContracts.swift`.
 - Runtime coordination lives in `apps/Donkey/Sources/DonkeyRuntime/`.
+- The deterministic dry-run reflex skeleton lives in `apps/Donkey/Sources/DonkeyRuntime/DryRunReflexLoop.swift`.
+- Bounded target-window reflex frame capture lives in `apps/Donkey/Sources/DonkeyRuntime/TargetWindowFrameSource.swift`.
 - Recent reflex trace retention lives in `apps/Donkey/Sources/DonkeyRuntime/InMemoryReflexTraceStore.swift`.
 - macOS window resolution lives in `apps/Donkey/Sources/DonkeyRuntime/MacWindowResolver.swift`.
 - Target-window screenshot capture lives in `apps/Donkey/Sources/DonkeyRuntime/WindowScreenshotCaptureService.swift`.
