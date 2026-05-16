@@ -21,8 +21,11 @@ public enum PointerPromptLayout {
     public static let composerInputHorizontalPadding: CGFloat = 16
     public static let composerInputLeadingContentPadding: CGFloat = 20
     public static let composerInputTrailingContentPadding: CGFloat = 8
+    public static let composerTextWaveformSpacing: CGFloat = 12
+    public static let composerWaveformSize = CGSize(width: 54, height: 28)
     public static let composerInputMinimumHeight: CGFloat = 66
     public static let composerInputTextMinimumHeight: CGFloat = 19.2
+    public static let composerInputTextMaximumHeight: CGFloat = 134.4
     public static let composerInputTextVerticalPadding: CGFloat = 23.4
     public static let composerInputVoiceButtonSize: CGFloat = 33.6
     public static let composerExpandedTextTopPadding: CGFloat = 18
@@ -32,7 +35,7 @@ public enum PointerPromptLayout {
     public static let closeButtonSize: CGFloat = 12
     public static let closeButtonInset: CGFloat = 16
     public static let closeControlWidth = closeButtonSize
-    public static let externalCloseButtonSize: CGFloat = 24
+    public static let externalCloseButtonSize: CGFloat = 19.2
     public static let externalCloseButtonGap: CGFloat = 2
     public static let externalCloseButtonOutsideMargin: CGFloat = externalCloseButtonSize + externalCloseButtonGap
 
@@ -43,7 +46,19 @@ public enum PointerPromptLayout {
     )
 
     public static func composerInputHeight(inputTextHeight: CGFloat) -> CGFloat {
-        guard isComposerInputExpanded(inputTextHeight: inputTextHeight) else {
+        composerInputHeight(
+            inputTextHeight: inputTextHeight,
+            isExpanded: isComposerInputExpanded(inputTextHeight: inputTextHeight)
+        )
+    }
+
+    public static func composerInputHeight(
+        inputTextHeight: CGFloat,
+        isExpanded: Bool
+    ) -> CGFloat {
+        let inputTextHeight = clampedComposerInputTextHeight(inputTextHeight)
+
+        guard isExpanded else {
             return composerInputMinimumHeight
         }
 
@@ -58,6 +73,25 @@ public enum PointerPromptLayout {
         inputTextHeight > composerInputTextMinimumHeight + 1
     }
 
+    public static func clampedComposerInputTextHeight(_ inputTextHeight: CGFloat) -> CGFloat {
+        min(
+            max(composerInputTextMinimumHeight, inputTextHeight),
+            composerInputTextMaximumHeight
+        )
+    }
+
+    public static var composerWrappingTextWidth: CGFloat {
+        composerInputSurfaceWidth -
+            composerInputLeadingContentPadding -
+            composerInputTrailingContentPadding -
+            composerTextWaveformSpacing -
+            composerWaveformSize.width
+    }
+
+    public static var composerExpandedTextWidth: CGFloat {
+        composerInputSurfaceWidth - composerExpandedTextHorizontalPadding * 2
+    }
+
     public static func singleLineComposerInputHeight(inputTextHeight: CGFloat) -> CGFloat {
         max(
             composerInputMinimumHeight,
@@ -69,11 +103,22 @@ public enum PointerPromptLayout {
         composerInputHeight(inputTextHeight: inputTextHeight)
     }
 
+    public static func composerHeight(inputTextHeight: CGFloat, isExpanded: Bool) -> CGFloat {
+        composerInputHeight(inputTextHeight: inputTextHeight, isExpanded: isExpanded)
+    }
+
     public static func contentSize(inputTextHeight: CGFloat) -> CGSize {
+        contentSize(
+            inputTextHeight: inputTextHeight,
+            isExpanded: isComposerInputExpanded(inputTextHeight: inputTextHeight)
+        )
+    }
+
+    public static func contentSize(inputTextHeight: CGFloat, isExpanded: Bool) -> CGSize {
         CGSize(
             width: contentWidth,
             height: stageVerticalPadding * 2 +
-                composerHeight(inputTextHeight: inputTextHeight) +
+                composerHeight(inputTextHeight: inputTextHeight, isExpanded: isExpanded) +
                 contentExtraHeight
         )
     }

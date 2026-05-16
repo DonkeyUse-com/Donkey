@@ -453,7 +453,10 @@ final class PointerPromptOverlayController {
             x: composerFrame.minX,
             y: composerFrame.minY,
             width: PointerPromptLayout.composerInputSurfaceWidth,
-            height: PointerPromptLayout.composerInputHeight(inputTextHeight: model.inputTextHeight)
+            height: PointerPromptLayout.composerInputHeight(
+                inputTextHeight: model.inputTextHeight,
+                isExpanded: model.isInputExpanded
+            )
         )
     }
 
@@ -467,25 +470,20 @@ final class PointerPromptOverlayController {
     }
 
     private func composerTextInputFrame(in inputSurfaceFrame: CGRect) -> CGRect {
-        if PointerPromptLayout.isComposerInputExpanded(inputTextHeight: model.inputTextHeight) {
+        if model.isInputExpanded {
             return CGRect(
                 x: inputSurfaceFrame.minX +
                     PointerPromptLayout.composerExpandedTextHorizontalPadding,
                 y: inputSurfaceFrame.maxY -
                     PointerPromptLayout.composerExpandedTextTopPadding -
                     model.inputTextHeight,
-                width: inputSurfaceFrame.width -
-                    PointerPromptLayout.composerExpandedTextHorizontalPadding * 2,
+                width: PointerPromptLayout.composerExpandedTextWidth,
                 height: model.inputTextHeight
             )
         }
 
-        let waveformAndSpacingWidth: CGFloat = 54 + 12
         let x = inputSurfaceFrame.minX + PointerPromptLayout.composerInputLeadingContentPadding
-        let width = inputSurfaceFrame.width -
-            PointerPromptLayout.composerInputLeadingContentPadding -
-            PointerPromptLayout.composerInputTrailingContentPadding -
-            waveformAndSpacingWidth
+        let width = PointerPromptLayout.composerWrappingTextWidth
         let height = model.inputTextHeight
 
         return CGRect(
@@ -528,11 +526,17 @@ final class PointerPromptOverlayController {
     }
 
     private var currentContentSize: CGSize {
-        PointerPromptLayout.contentSize(inputTextHeight: model.inputTextHeight)
+        PointerPromptLayout.contentSize(
+            inputTextHeight: model.inputTextHeight,
+            isExpanded: model.isInputExpanded
+        )
     }
 
     private var currentComposerHeight: CGFloat {
-        PointerPromptLayout.composerHeight(inputTextHeight: model.inputTextHeight)
+        PointerPromptLayout.composerHeight(
+            inputTextHeight: model.inputTextHeight,
+            isExpanded: model.isInputExpanded
+        )
     }
 
     private func resizeActivePanelIfNeeded(_ panel: NSPanel) {

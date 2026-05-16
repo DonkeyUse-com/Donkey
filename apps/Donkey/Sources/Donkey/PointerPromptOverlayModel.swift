@@ -10,6 +10,7 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
     @Published var messageText = ""
     @Published var placement: PointerPromptPlacement = .bottomRight
     @Published var inputTextHeight = PointerPromptLayout.composerInputTextMinimumHeight
+    @Published var isInputExpanded = false
 
     private let runtimeProvider: any RuntimeStatusProviding
     private let aiProvider: any AIHarnessSnapshotProviding
@@ -58,11 +59,17 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
             guard !trimmedText.isEmpty else { return }
 
             messageText = ""
+            inputTextHeight = PointerPromptLayout.composerInputTextMinimumHeight
+            isInputExpanded = false
             promptState.leadingSignalLevel = .thinking
         case .inputTextHeightChanged(let height):
-            let clampedHeight = max(PointerPromptLayout.composerInputTextMinimumHeight, height)
+            let clampedHeight = PointerPromptLayout.clampedComposerInputTextHeight(height)
             guard abs(inputTextHeight - clampedHeight) > 0.5 else { return }
             inputTextHeight = clampedHeight
+        case .inputExpansionChanged(let isExpanded):
+            let shouldExpand = !messageText.isEmpty && (isExpanded || messageText.contains("\n"))
+            guard isInputExpanded != shouldExpand else { return }
+            isInputExpanded = shouldExpand
         case .dismissed:
             promptState.isPrimaryActionEnabled = false
             promptState.isActive = false

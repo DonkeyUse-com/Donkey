@@ -8,6 +8,7 @@ public struct PointerPromptStageView: View {
     private let state: PointerPromptState
     @Binding private var messageText: String
     private let inputTextHeight: CGFloat
+    private let isInputExpanded: Bool
     private let placement: PointerPromptPlacement
     private weak var intentSink: (any PointerPromptIntentSink)?
 
@@ -15,12 +16,14 @@ public struct PointerPromptStageView: View {
         state: PointerPromptState,
         messageText: Binding<String>,
         inputTextHeight: CGFloat = PointerPromptLayout.composerInputTextMinimumHeight,
+        isInputExpanded: Bool = false,
         placement: PointerPromptPlacement = .bottomRight,
         intentSink: any PointerPromptIntentSink
     ) {
         self.state = state
         self._messageText = messageText
         self.inputTextHeight = inputTextHeight
+        self.isInputExpanded = isInputExpanded
         self.placement = placement
         self.intentSink = intentSink
     }
@@ -83,6 +86,7 @@ public struct PointerPromptStageView: View {
             state: state,
             messageText: $messageText,
             inputTextHeight: inputTextHeight,
+            isInputExpanded: isInputExpanded,
             dismiss: {
                 intentSink?.handle(.dismissed)
             },
@@ -91,11 +95,17 @@ public struct PointerPromptStageView: View {
             },
             inputTextHeightChanged: { height in
                 intentSink?.handle(.inputTextHeightChanged(height))
+            },
+            inputExpansionChanged: { isExpanded in
+                intentSink?.handle(.inputExpansionChanged(isExpanded))
             }
         )
         .frame(
             width: PointerPromptLayout.composerWidth,
-            height: PointerPromptLayout.composerHeight(inputTextHeight: inputTextHeight)
+            height: PointerPromptLayout.composerHeight(
+                inputTextHeight: inputTextHeight,
+                isExpanded: isInputExpanded
+            )
         )
     }
 
@@ -113,9 +123,11 @@ private struct PointerPromptComposer: View {
     let state: PointerPromptState
     @Binding var messageText: String
     let inputTextHeight: CGFloat
+    let isInputExpanded: Bool
     let dismiss: @MainActor () -> Void
     let submit: @MainActor () -> Void
     let inputTextHeightChanged: @MainActor (CGFloat) -> Void
+    let inputExpansionChanged: @MainActor (Bool) -> Void
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -130,7 +142,10 @@ private struct PointerPromptComposer: View {
         }
         .frame(
             width: PointerPromptLayout.composerInputSurfaceWidth,
-            height: PointerPromptLayout.composerInputHeight(inputTextHeight: inputTextHeight),
+            height: PointerPromptLayout.composerInputHeight(
+                inputTextHeight: inputTextHeight,
+                isExpanded: isExpanded
+            ),
             alignment: .topLeading
         )
         .padding(.top, PointerPromptLayout.externalCloseButtonSize + PointerPromptLayout.externalCloseButtonGap)
@@ -147,17 +162,24 @@ private struct PointerPromptComposer: View {
     }
 
     private var promptCapsule: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: PointerPromptLayout.composerTextWaveformSpacing) {
             textInput
+                .frame(width: PointerPromptLayout.composerWrappingTextWidth)
 
             VoiceWaveformView(levels: state.voiceWaveformLevels)
-                .frame(width: 54, height: 28)
+                .frame(
+                    width: PointerPromptLayout.composerWaveformSize.width,
+                    height: PointerPromptLayout.composerWaveformSize.height
+                )
         }
         .padding(.leading, PointerPromptLayout.composerInputLeadingContentPadding)
         .padding(.trailing, PointerPromptLayout.composerInputTrailingContentPadding)
         .frame(
             width: PointerPromptLayout.composerInputSurfaceWidth,
-            height: PointerPromptLayout.composerInputHeight(inputTextHeight: inputTextHeight)
+            height: PointerPromptLayout.composerInputHeight(
+                inputTextHeight: inputTextHeight,
+                isExpanded: isExpanded
+            )
         )
         .background {
             Capsule(style: .continuous)
@@ -179,6 +201,7 @@ private struct PointerPromptComposer: View {
     private var expandedPromptSurface: some View {
         VStack(spacing: 0) {
             textInput
+                .frame(width: PointerPromptLayout.composerExpandedTextWidth)
                 .padding(.top, PointerPromptLayout.composerExpandedTextTopPadding)
                 .padding(.horizontal, PointerPromptLayout.composerExpandedTextHorizontalPadding)
                 .frame(
@@ -191,7 +214,10 @@ private struct PointerPromptComposer: View {
         }
         .frame(
             width: PointerPromptLayout.composerInputSurfaceWidth,
-            height: PointerPromptLayout.composerInputHeight(inputTextHeight: inputTextHeight)
+            height: PointerPromptLayout.composerInputHeight(
+                inputTextHeight: inputTextHeight,
+                isExpanded: isExpanded
+            )
         )
         .background {
             RoundedRectangle(
@@ -225,7 +251,10 @@ private struct PointerPromptComposer: View {
             Spacer(minLength: 0)
 
             VoiceWaveformView(levels: state.voiceWaveformLevels)
-                .frame(width: 54, height: 28)
+                .frame(
+                    width: PointerPromptLayout.composerWaveformSize.width,
+                    height: PointerPromptLayout.composerWaveformSize.height
+                )
         }
         .padding(.horizontal, PointerPromptLayout.composerExpandedTextHorizontalPadding)
         .frame(
@@ -265,6 +294,7 @@ private struct PointerPromptComposer: View {
             placeholder: state.promptText,
             isActive: state.isActive,
             textHeightChanged: inputTextHeightChanged,
+            expansionChanged: inputExpansionChanged,
             submit: submit
         )
         .frame(maxWidth: .infinity)
@@ -272,7 +302,7 @@ private struct PointerPromptComposer: View {
     }
 
     private var expandedSurfaceHeight: CGFloat {
-        PointerPromptLayout.composerInputHeight(inputTextHeight: inputTextHeight)
+        PointerPromptLayout.composerInputHeight(inputTextHeight: inputTextHeight, isExpanded: true)
     }
 
     private var expandedTextAreaHeight: CGFloat {
@@ -283,8 +313,7 @@ private struct PointerPromptComposer: View {
     }
 
     private var isExpanded: Bool {
-        messageText.contains("\n") ||
-            PointerPromptLayout.isComposerInputExpanded(inputTextHeight: inputTextHeight)
+        isInputExpanded || messageText.contains("\n")
     }
 }
 
@@ -295,15 +324,19 @@ private struct ComposerExternalCloseButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "xmark")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(Color.white.opacity(0.82))
+                .font(.system(size: 8.8, weight: .bold))
+                .foregroundStyle(Color.white.opacity(0.92))
                 .frame(
                     width: PointerPromptLayout.externalCloseButtonSize,
                     height: PointerPromptLayout.externalCloseButtonSize
                 )
                 .background {
                     Circle()
-                        .fill(Color.white.opacity(isHovered ? 0.28 : 0.2))
+                        .fill(Color.black.opacity(isHovered ? 0.82 : 0.68))
+                        .overlay {
+                            Circle()
+                                .stroke(Color.white.opacity(0.42), lineWidth: 1)
+                        }
                 }
         }
         .buttonStyle(.plain)
@@ -354,6 +387,7 @@ private struct ComposerMultilineTextInput: NSViewRepresentable {
     let placeholder: String
     let isActive: Bool
     let textHeightChanged: @MainActor (CGFloat) -> Void
+    let expansionChanged: @MainActor (Bool) -> Void
     let submit: @MainActor () -> Void
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -429,6 +463,7 @@ private struct ComposerMultilineTextInput: NSViewRepresentable {
         DispatchQueue.main.async {
             context.coordinator.updateTextContainerWidth(for: textView, in: scrollView)
             context.coordinator.reportTextHeight(for: textView)
+            context.coordinator.reportExpansionState(for: textView)
 
             if isActive, textView.window?.firstResponder !== textView {
                 textView.focusIfNeeded()
@@ -454,6 +489,8 @@ private struct ComposerMultilineTextInput: NSViewRepresentable {
             parent.text = textView.string
             textView.needsDisplay = true
             reportTextHeight(for: textView)
+            reportExpansionState(for: textView)
+            textView.scrollRangeToVisible(textView.selectedRange())
         }
 
         func updateTextContainerWidth(
@@ -461,7 +498,7 @@ private struct ComposerMultilineTextInput: NSViewRepresentable {
             in scrollView: NSScrollView
         ) {
             let width = max(1, scrollView.contentView.bounds.width)
-            let height = max(
+            let visibleHeight = max(
                 PointerPromptLayout.composerInputTextMinimumHeight,
                 scrollView.contentView.bounds.height
             )
@@ -469,27 +506,76 @@ private struct ComposerMultilineTextInput: NSViewRepresentable {
                 width: width,
                 height: .greatestFiniteMagnitude
             )
+
+            let documentHeight = max(visibleHeight, measuredTextHeight(for: textView))
             textView.frame = CGRect(
                 x: 0,
                 y: 0,
                 width: width,
-                height: height
+                height: documentHeight
             )
         }
 
         func reportTextHeight(for textView: NSTextView) {
+            let measuredHeight = measuredTextHeight(for: textView)
+            let documentHeight = max(textView.frame.height, measuredHeight)
+            if abs(textView.frame.height - documentHeight) > 0.5 {
+                textView.setFrameSize(CGSize(width: textView.frame.width, height: documentHeight))
+            }
+
+            parent.textHeightChanged(measuredHeight)
+        }
+
+        func reportExpansionState(for textView: NSTextView) {
+            let wrappedHeight = measuredTextHeight(
+                for: textView.string,
+                width: PointerPromptLayout.composerWrappingTextWidth
+            )
+            let shouldExpand = PointerPromptLayout.isComposerInputExpanded(
+                inputTextHeight: wrappedHeight
+            )
+            parent.expansionChanged(shouldExpand)
+        }
+
+        private func measuredTextHeight(for textView: NSTextView) -> CGFloat {
             guard let layoutManager = textView.layoutManager,
                   let textContainer = textView.textContainer else {
-                return
+                return PointerPromptLayout.composerInputTextMinimumHeight
             }
 
             layoutManager.ensureLayout(for: textContainer)
             let usedRect = layoutManager.usedRect(for: textContainer)
-            let measuredHeight = ceil(max(
+            return ceil(max(
                 PointerPromptLayout.composerInputTextMinimumHeight,
                 usedRect.height
             ))
-            parent.textHeightChanged(measuredHeight)
+        }
+
+        private func measuredTextHeight(for string: String, width: CGFloat) -> CGFloat {
+            guard !string.isEmpty else {
+                return PointerPromptLayout.composerInputTextMinimumHeight
+            }
+
+            let textStorage = NSTextStorage(
+                string: string,
+                attributes: ComposerTextStyle.attributes(color: .white, font: ComposerTextStyle.font)
+            )
+            let layoutManager = NSLayoutManager()
+            let textContainer = NSTextContainer(
+                containerSize: CGSize(width: width, height: .greatestFiniteMagnitude)
+            )
+            textContainer.lineFragmentPadding = 0
+            textContainer.widthTracksTextView = false
+            textContainer.heightTracksTextView = false
+            layoutManager.addTextContainer(textContainer)
+            textStorage.addLayoutManager(layoutManager)
+            layoutManager.ensureLayout(for: textContainer)
+            let usedRect = layoutManager.usedRect(for: textContainer)
+
+            return ceil(max(
+                PointerPromptLayout.composerInputTextMinimumHeight,
+                usedRect.height
+            ))
         }
     }
 }

@@ -203,6 +203,7 @@ public enum PointerPromptIntent: Equatable, Sendable {
     case primaryActionRequested(promptText: String)
     case messageSubmitted(text: String)
     case inputTextHeightChanged(CGFloat)
+    case inputExpansionChanged(Bool)
     case dismissed
 }
 
