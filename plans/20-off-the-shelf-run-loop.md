@@ -1,6 +1,6 @@
 # Off-The-Shelf Run Loop
 
-> Active status: not complete. The current repo supports metadata-only local-navigation dry-run scaffolding, generic local-app task catalog parsing/adaptation, local-model command parsing, pointer-prompt typed command submission, macOS app launch/focus, guarded macOS keyboard input, local voice-transcription model selection, target-app availability checks, Accessibility visible-text observation when trusted, built-in task definitions across weather/media/document domains, and guarded live-action smoke. It still needs real-session verification and richer control discovery before any benchmark should be treated as done.
+> Active status: not complete. The current repo supports metadata-only local-navigation dry-run scaffolding, generic local-app task catalog parsing/adaptation, local JSON/JSONL task-definition loading, local-model command parsing, local task-context intake, review-first document form-fill planning, pointer-prompt typed command submission, macOS app launch/focus, guarded macOS keyboard input, local voice-transcription model selection, target-app availability checks, Accessibility visible-text observation when trusted, built-in task definitions across weather/media/document domains, and guarded live-action smoke. It still needs real-session verification and richer control discovery before any benchmark should be treated as done.
 
 ## Goal
 
@@ -442,6 +442,8 @@ The first benchmark is still Weather lookup, represented as a local-app task def
 - target app: resolved from task definition
 - success: target app is frontmost and visibly showing the requested result
 
+Weather is only the first benchmark definition. The same catalog, local-model intent parser, context intake, and guarded runtime should support other user tasks such as playing music in a media app or filling a document from structured data without introducing source-specific runtime classes.
+
 Good follow-on tasks:
 
 - fast game/menu navigation to a known screen
@@ -467,17 +469,20 @@ Runtime: native Swift coordinator and trace pipeline
 
 1. Define generic `TaskIntent`, target-app, entity, workflow-step, observation, and verification contracts.
 2. Add local-model command parsing from local app-task definitions, including aliases such as `SF -> San Francisco` in benchmark data, with deterministic parsing kept as fallback/validation.
-3. Add installed-app and app-task knowledge lookup for target app identity, workflows, controls, and verification rules.
-4. Define generic task-state fields and terminal states.
-5. Extend the generic local-app task adapter from dry-run semantic actions to guarded-live orchestration.
-6. Add app launch/focus action commands and guardrails.
-7. Add guarded text-entry and submit/select commands.
-8. Add Accessibility observation for resolved controls and visible result text.
-9. Add local model UI-understanding fallback only where Accessibility and metadata are insufficient; keep OCR optional and measured.
-10. Add result verification for normalized requested entities.
-11. Add command-to-result latency report and manual baseline comparison.
-12. Add optional slow planner recovery only after deterministic execution works.
-13. Keep game/vision adapters as follow-on targets using the same contracts.
+3. Load additional local app-task definitions from Application Support so new workflows can be added as data.
+4. Add installed-app and app-task knowledge lookup for target app identity, workflows, controls, and verification rules.
+5. Define generic task-state fields and terminal states.
+6. Extend the generic local-app task adapter from dry-run semantic actions to guarded-live orchestration.
+7. Add app launch/focus action commands and guardrails.
+8. Add guarded text-entry and submit/select commands.
+9. Add Accessibility observation for resolved controls and visible result text.
+10. Add local task-context intake for focused app/window metadata, clipboard structured data, attached files, and observed form fields.
+11. Add review-first document/data mapping before any guarded form-fill execution.
+12. Add local model UI-understanding fallback only where Accessibility and metadata are insufficient; keep OCR optional and measured.
+13. Add result verification for normalized requested entities.
+14. Add command-to-result latency report and manual baseline comparison.
+15. Add optional slow planner recovery only after deterministic execution works.
+16. Keep game/vision adapters as follow-on targets using the same contracts.
 
 ## Acceptance Criteria
 
@@ -510,17 +515,18 @@ The runtime foundation now supports a product-shaped local-navigation slice of t
 - p50/p95/p99 latency reports across capture, preprocess, model, perception, state update, controller decision, action projection, and input stages
 - action-engine permission, focus, rate, hold-duration, release, and backend-execution guardrails
 - guarded live-action smoke through an injected backend only after dry-run latency evidence, explicit input policy allowance, and focus guard success
-- generic local-app task catalog, intent contracts, built-in benchmark definitions across Weather lookup, Music playback, and PDF/document form-fill, local-model command parsing, deterministic fallback parsing, pointer-prompt typed command submission, dry-run workflow-step projection, guarded keyboard command templates, macOS launch/focus, guarded macOS keyboard input, Accessibility visible-text observation when trusted, and visible-text verification
+- generic local-app task catalog, intent contracts, built-in benchmark definitions across Weather lookup, Music playback, and PDF/document form-fill, local JSON/JSONL task-definition loading, local-model command parsing, deterministic fallback parsing, local task-context intake, review-first document form-fill planning, pointer-prompt typed command submission, dry-run workflow-step projection, guarded keyboard command templates, macOS launch/focus, guarded macOS keyboard input, Accessibility visible-text observation when trusted, and visible-text verification
 - screenshot segmentation model-candidate metadata for Ultralytics YOLO26 nano segmentation (`yolo26n-seg.pt`)
 - optional slow-planner sidecar that publishes only validated hints without blocking reflex latency
 
-This is still not the full off-the-shelf vision stack and must not be treated as completion. It can replay and trace compact local vision evidence, name a current YOLO segmentation candidate, and run a guarded keyboard-based local-app task path, but it does not ship live local detector/local-model/OCR/segmentation adapters over captured pixels, continuous streaming capture, Accessibility action execution, robust UI control discovery, high-volume persisted replay traces, or target-specific visual calibration.
+This is still not the full off-the-shelf vision stack and must not be treated as completion. It can replay and trace compact local vision evidence, name a current YOLO segmentation candidate, load local task definitions, build reviewable document form-fill plans, and run a guarded keyboard-based local-app task path, but it does not ship live local detector/local-model/OCR/segmentation adapters over captured pixels, continuous streaming capture, Accessibility action execution, approved form-fill execution, robust UI control discovery, high-volume persisted replay traces, or target-specific visual calibration.
 
 ## Required Before This Plan Is Done
 
 - Manually verify measured guarded-live execution for the first local-app task benchmark command "show me the weather for SF".
 - Prove fast local navigation from parsed intent, local app observation, deterministic controller state, and guarded live input, not remote planning.
 - Extend the narrow macOS app-control backend from keyboard-only workflows to Accessibility action/control discovery where available.
+- Add the user-visible review and approval UI for document form-fill proposals before enabling guarded field entry.
 - Add result verification through Accessibility plus local model UI-understanding fallback, with OCR only if a narrow benchmark justifies it.
 - Add measured YOLO26 screenshot/crop segmentation inference for visual fallback, including export/runtime choice, crop size, mask quality, and p95 latency.
 - Add continuous streaming capture once queue-depth, stale-result, and trace sinks are ready for longer sessions.
