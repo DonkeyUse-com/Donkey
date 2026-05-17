@@ -2,7 +2,7 @@
 
 This is the active task queue. The milestone is focused on fast local navigation: Donkey should turn a short user command into structured intent, navigate the local desktop/app surface quickly, perform guarded local actions, verify the result, and leave the target in the requested state.
 
-Weather lookup is the first simple benchmark scenario for this navigation engine: when the user says something like "show me the weather for SF", Donkey should open or focus Weather, type/search for San Francisco, verify the result, and present it. The same loop should later generalize to faster game/app navigation where local observation and deterministic control matter more than chat reasoning.
+Weather lookup is the first simple benchmark scenario for this navigation engine, but it should be represented as app-task knowledge rather than Weather-specific code: when the user says something like "show me the weather for SF", Donkey should resolve the installed app/task definition, open or focus the right app, type/search for San Francisco, verify the result, and present it. The same generic loop should work for many local app use cases where Donkey behaves like an expert user of the app, using local observation and deterministic control rather than chat reasoning.
 
 Primary plans:
 
@@ -33,8 +33,8 @@ Build the first product-shaped loop where Donkey can run a local navigation sess
 
 ```text
 user command: "show me the weather for SF"
-  -> local intent parse: weather_lookup(city: "San Francisco")
-  -> app/task adapter: Weather
+  -> local intent parse from app-task definitions: weather_lookup(city: "San Francisco")
+  -> generic local-app task adapter with Weather as data
   -> launch or focus app
   -> observe app state through Accessibility/window metadata/screenshot fallback
   -> deterministic UI controller
@@ -56,7 +56,7 @@ The normal Weather benchmark path should work without a remote model call. A tin
 ## Supported Boundary
 
 - Runtime shell: minimal run coordination, ordered events, bounded context assembly, local run artifacts, manual target context capture, in-memory reflex trace retention, and stage-split latency reports are supported.
-- Fast navigation hot path: typed frame/world-state/action contracts, deterministic dry-run loop, bounded target-window frame source, cheap metadata perception, recorded off-the-shelf detector/template/OCR/segmentation evidence projection, swappable world-state projection, deterministic controller, loop-integrated metadata-only local-navigation dry-run action selection, optional caller-supplied browser-tab metadata, and dry-run action projection are supported. This is not yet a live fast-navigation agent: there is no Weather benchmark adapter, no default app launch/focus/type backend, and no verified command-to-result loop.
+- Fast navigation hot path: typed frame/world-state/action contracts, deterministic dry-run loop, bounded target-window frame source, cheap metadata perception, recorded off-the-shelf detector/template/OCR/segmentation evidence projection, swappable world-state projection, deterministic controller, loop-integrated metadata-only local-navigation dry-run action selection, optional caller-supplied browser-tab metadata, dry-run action projection, generic local-app task intent contracts, data-driven task definitions, deterministic parsing with entity alias expansion, generic dry-run task adaptation, local-navigation request construction, step projection, guarded keyboard command templates, and visible-text verification are supported. Weather lookup is now only the first benchmark definition for this generic boundary. This is not yet a live fast-navigation agent: there is no default app launch/focus/type backend, no Accessibility action execution, no app-knowledge retrieval layer, and no verified live command-to-result loop.
 - Safety boundary: action-engine command contracts, permission/focus/rate/hold/release guardrails, guarded live-action smoke with an injected backend, and replayable command traces are supported before any default OS input or Accessibility-action backend exists.
 - Slow AI boundary: structured planner hints, validation/expiry/latest-valid selection, loop-adjacent slow-planner trigger/snapshot sidecar, model registry/router, OpenAI Responses and Ollama-compatible planner adapters, provider-backed local/online planner fallback, source-linked memory, and replay/eval scaffolding are supported as optional sidecar pieces. This is not yet the complete AI harness because semantic retrieval, redaction, aggregate model observability, and provider-decoded memory write proposals remain active.
 - Source of truth: detailed supported behavior lives in `docs/guides/minimal-run-coordinator.md`; active unfinished work lives in this plan and its primary/supporting plans.
@@ -80,18 +80,19 @@ Recent commits completed these pieces:
 - `9b160f8` and `201e76c`: metadata-only local-navigation dry-run, local-navigation controller contracts, memory/replay scaffolding.
 - `0e21088`: OpenAI Responses adapter, planner hint contracts, model registry/router scaffolding.
 - `9bebfbb`: slow-planner sidecar trigger/snapshot/hint bus and guarded live-action smoke boundary.
-- current working slice: Ollama-compatible local planner adapter, provider-backed local/online slow planner fallback, and explicit slow-planner completion tests.
+- recent slice: Ollama-compatible local planner adapter, provider-backed local/online slow planner fallback, and explicit slow-planner completion tests.
+- current slice: generic local-app task intent/parser and dry-run adapter boundary, with Weather lookup represented as catalog-style benchmark data.
 - `d6e48c9`: archived plans, which was premature for this milestone.
 
-The code does not yet include a Weather benchmark adapter, command-to-intent parsing for navigation tasks, default app launch/focus/type execution, Accessibility action execution, live result verification, local detector/OCR/segmentation/model inference adapters, semantic memory retrieval, remote-input redaction hooks, aggregate model observability, or provider-decoded memory write proposals.
+The code now includes the first generic local-app task intent/parser and dry-run adapter boundary. It does not yet include default app launch/focus/type execution, Accessibility action execution, an app-knowledge/catalog retrieval layer for installed apps, live result verification, local detector/OCR/segmentation/model inference adapters, semantic memory retrieval, remote-input redaction hooks, aggregate model observability, or provider-decoded memory write proposals.
 
 ## What Should Be Done Next
 
-1. Add a `weather_lookup` intent contract and parser as the first fast-navigation benchmark, including deterministic aliases such as `SF -> San Francisco`.
-2. Add a Weather navigation adapter that can dry-run and then guarded-live: launch/focus Weather, find the search affordance, type the city, submit/select, and verify the displayed location.
-3. Add the default local action backend needed for this narrow task: app launch/activation plus guarded keyboard typing/clicking or Accessibility actions, with emergency release and focus checks.
+1. Add the generic app-knowledge layer that can enumerate installed apps, resolve a task definition for a user command, and represent app expertise as data: target app identity, task triggers, entities, aliases, workflow steps, observation strategy, allowed controls, and verification rules.
+2. Extend the generic local-app task adapter from dry-run projection to guarded-live orchestration: launch/focus the target app, observe app state, find the needed control, enter normalized entities, submit/select, and verify the requested result.
+3. Add the default local action backend needed for this narrow first benchmark: app launch/activation plus guarded keyboard typing/clicking or Accessibility actions, with emergency release and focus checks.
 4. Add benchmark/reporting evidence for command-to-result latency, local navigation/action latency, verification confidence, and comparison against manual/chat-style workflows.
-5. Keep the current dry-run/guarded-live safety boundary: local or online LLM output can only become validated intent or planner hints, never direct input.
+5. Keep the current dry-run/guarded-live safety boundary: local or online LLM output can only become validated intent, task definitions, app-knowledge updates, or planner hints, never direct input.
 
 ## Completion Gates
 

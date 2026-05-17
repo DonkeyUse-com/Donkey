@@ -1,12 +1,12 @@
 # Off-The-Shelf Run Loop
 
-> Active status: not complete. The current repo supports metadata-only local-navigation dry-run scaffolding and guarded live-action smoke, but not a live fast-navigation agent for a concrete command such as "show me the weather for SF".
+> Active status: not complete. The current repo supports metadata-only local-navigation dry-run scaffolding, generic local-app task parsing/adaptation, and guarded live-action smoke, but not a live fast-navigation agent for a concrete command such as "show me the weather for SF".
 
 ## Goal
 
 Build the first fast local navigation agent from existing system components instead of custom model work.
 
-The first product proof is a local Weather lookup navigation benchmark. Donkey should interpret a natural command, use local macOS navigation to open or focus Weather, type/search for San Francisco, verify the app is showing the requested place, and leave the result visible. It should feel faster than manual app navigation or a chat assistant because most work is local and deterministic.
+The first product proof is a local Weather lookup navigation benchmark expressed through a generic local-app task system. Donkey should interpret a natural command, resolve the installed app and task definition, use local macOS navigation to open or focus the target app, perform the defined expert-user workflow, verify the app is showing the requested result, and leave the result visible. It should feel faster than manual app navigation or a chat assistant because most work is local and deterministic.
 
 Fast navigation is the focus across apps and games. Use Accessibility, app/window metadata, LaunchServices, keyboard input, screenshot/OCR fallback, open-vocabulary detectors, segmentation, templates, and classical CV as swappable navigation signals. Start with the cheapest local signal that can reliably move the target toward the requested state.
 
@@ -51,7 +51,8 @@ The first version should prove:
 
 Use existing, swappable components:
 
-- deterministic intent parser for common local commands
+- deterministic intent parser for common local commands using app-task definitions
+- installed-app and task-knowledge lookup for target app identity, workflows, controls, and verification rules
 - small local model or planner hint only for ambiguous command parsing
 - target/task adapters for app-specific workflows
 - LaunchServices or Workspace app launch/focus
@@ -125,24 +126,25 @@ The runtime shell does not own app-specific workflow internals, perception logic
 
 ### First Benchmark: Weather Lookup
 
-The first supported benchmark is:
+The first supported benchmark definition is:
 
 ```text
 "show me the weather for SF"
   -> weather_lookup(city: "San Francisco")
-  -> open/focus Weather
-  -> search/select San Francisco
-  -> verify displayed location
+  -> resolve target app/task metadata
+  -> open/focus the target app
+  -> perform the definition's search/select workflow
+  -> verify displayed result
 ```
 
-The first navigation adapter should support:
+The first local-app task adapter should stay generic and support:
 
 - deterministic alias expansion for common city shorthand such as `SF`
 - dry-run trace output before live input
-- app launch/focus through a narrow macOS app-control boundary
+- app launch/focus through a narrow macOS app-control boundary based on resolved target app metadata
 - observation through Accessibility first, window metadata second, screenshot/OCR fallback last
-- guarded text entry into the Weather search field
-- verification that the visible Weather location matches San Francisco
+- guarded text entry into the resolved task control
+- verification that visible app output matches the normalized requested entity
 - terminal result states: completed, needs-user-review, failed-safe, timed-out
 
 ### Event Bridge
@@ -354,16 +356,16 @@ Rules:
 - do not expose detector tensors or raw masks directly to the controller
 - prefer task-specific state over generic scene captions
 
-For the Weather target, state should include:
+For a local app task, state should include task-specific facts such as:
 
 ```text
 app_running
 app_frontmost
-search_field_available
-search_text
-selected_location
-visible_location
-weather_result_visible
+required_control_available
+entered_text
+selected_result
+visible_result_text
+requested_result_visible
 confidence
 verification_reason
 ```
@@ -382,11 +384,11 @@ Task State
 
 Examples:
 
-- Weather not running -> launch app
-- Weather running but not focused -> focus app
-- search field visible and empty -> type normalized city
-- matching location suggestion visible -> select suggestion
-- visible location matches normalized city -> complete
+- target app not running -> launch app
+- target app running but not focused -> focus app
+- required control visible and empty -> type normalized entity
+- matching suggestion/result visible -> select suggestion
+- visible result matches normalized entity -> complete
 - obstacle on left lane -> move center/right
 - button visible and safe -> tap button center
 - health low -> request planner recovery hint
@@ -427,12 +429,12 @@ LLM output must become validated hints, not direct actions.
 
 Pick one navigation scenario with a visible, verifiable end state.
 
-The first benchmark is Weather lookup:
+The first benchmark is still Weather lookup, represented as a local-app task definition rather than a dedicated adapter:
 
 - command: "show me the weather for SF"
 - normalized intent: `weather_lookup(city: "San Francisco")`
-- target app: Weather
-- success: Weather is frontmost and visibly showing San Francisco weather
+- target app: resolved from task definition
+- success: target app is frontmost and visibly showing the requested result
 
 Good follow-on tasks:
 
@@ -449,7 +451,7 @@ Suggested first stack:
 Intent: deterministic parser with local-model fallback for ambiguity
 App control: NSWorkspace/LaunchServices activation
 Observation: Accessibility snapshot first, screenshot/OCR fallback
-Rules: deterministic Weather task state machine
+Rules: deterministic local-app task state machine
 Input: guarded keyboard/mouse or Accessibility action backend
 Reasoning: local/online planner only for recovery or ambiguity
 Runtime: native Swift coordinator and trace pipeline
@@ -457,24 +459,25 @@ Runtime: native Swift coordinator and trace pipeline
 
 ## Rollout
 
-1. Define `TaskIntent` for `weather_lookup`.
-2. Add deterministic parsing for "weather", city names, and common aliases such as `SF`.
-3. Define Weather task-state fields and terminal states.
-4. Add a Weather navigation adapter with dry-run semantic actions.
-5. Add app launch/focus action commands and guardrails.
-6. Add guarded text-entry and submit/select commands.
-7. Add Accessibility observation for Weather controls and visible location.
-8. Add screenshot/OCR fallback only where Accessibility is insufficient.
-9. Add result verification for San Francisco.
-10. Add command-to-result latency report and manual baseline comparison.
-11. Add optional slow planner recovery only after deterministic execution works.
-12. Keep game/vision adapters as follow-on targets using the same contracts.
+1. Define generic `TaskIntent`, target-app, entity, workflow-step, observation, and verification contracts.
+2. Add deterministic parsing from local app-task definitions, including aliases such as `SF -> San Francisco` in benchmark data.
+3. Add installed-app and app-task knowledge lookup for target app identity, workflows, controls, and verification rules.
+4. Define generic task-state fields and terminal states.
+5. Extend the generic local-app task adapter from dry-run semantic actions to guarded-live orchestration.
+6. Add app launch/focus action commands and guardrails.
+7. Add guarded text-entry and submit/select commands.
+8. Add Accessibility observation for resolved controls and visible result text.
+9. Add screenshot/OCR fallback only where Accessibility is insufficient.
+10. Add result verification for normalized requested entities.
+11. Add command-to-result latency report and manual baseline comparison.
+12. Add optional slow planner recovery only after deterministic execution works.
+13. Keep game/vision adapters as follow-on targets using the same contracts.
 
 ## Acceptance Criteria
 
 - No custom model work is required.
 - The hot loop can run with the LLM disabled.
-- The Weather lookup navigation benchmark can run without a remote model call.
+- The first local-app task benchmark can run without a remote model call.
 - Every perception component is swappable.
 - Every action is explainable from state, rule, and trace id.
 - p95 local navigation/action latency stays under the target budget.
@@ -501,13 +504,14 @@ The runtime foundation now supports a product-shaped local-navigation slice of t
 - p50/p95/p99 latency reports across capture, preprocess, model, perception, state update, controller decision, action projection, and input stages
 - action-engine permission, focus, rate, hold-duration, release, and backend-execution guardrails
 - guarded live-action smoke through an injected backend only after dry-run latency evidence, explicit input policy allowance, and focus guard success
+- generic local-app task intent contracts, data-driven task definitions, deterministic parsing, dry-run workflow-step projection, guarded keyboard command templates, and visible-text verification
 - optional slow-planner sidecar that publishes only validated hints without blocking reflex latency
 
 This is still not the full off-the-shelf vision stack and must not be treated as completion. It can replay and trace compact local vision evidence, but it does not ship live local detector/OCR/segmentation/model adapters over captured pixels, continuous streaming capture, a default OS input backend, high-volume persisted replay traces, or target-specific visual calibration.
 
 ## Required Before This Plan Is Done
 
-- Add a measured Weather lookup navigation adapter for the concrete command "show me the weather for SF".
+- Add an app-knowledge layer and measured first local-app task benchmark for the concrete command "show me the weather for SF".
 - Prove fast local navigation from parsed intent, local app observation, deterministic controller state, and guarded live input, not remote planning.
 - Add a default narrow macOS app-control backend for launch/focus/type/select/verify with focus guard and emergency release.
 - Add result verification through Accessibility or screenshot/OCR fallback.
