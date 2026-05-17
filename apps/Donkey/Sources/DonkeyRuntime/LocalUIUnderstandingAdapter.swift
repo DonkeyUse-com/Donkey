@@ -165,6 +165,9 @@ public struct ProcessBackedLocalUIUnderstandingAdapter: LocalUIUnderstandingRunn
                 formFields: output.formFields,
                 confidence: output.confidence,
                 metadata: result.metadata.merging(output.metadata) { current, _ in current }
+                    .merging([
+                        "latency.uiUnderstandingMS": result.latencyMS.map { String(format: "%.3f", $0) } ?? ""
+                    ]) { current, _ in current }
             )
         } catch {
             throw LocalUIUnderstandingError.invalidOutput(String(describing: error))

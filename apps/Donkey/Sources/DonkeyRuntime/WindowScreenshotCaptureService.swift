@@ -282,7 +282,7 @@ public final class WindowScreenshotCaptureService {
     }
 }
 
-private final class ScreenCaptureKitWindowScreenshotCapturer: WindowScreenshotCapturing {
+final class ScreenCaptureKitWindowScreenshotCapturer: WindowScreenshotCapturing {
     var captureMethod: WindowScreenshotCaptureMethod {
         .screenCaptureKitDesktopIndependentWindow
     }

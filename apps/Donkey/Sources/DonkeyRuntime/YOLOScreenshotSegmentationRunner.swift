@@ -180,6 +180,9 @@ public struct ProcessBackedScreenshotSegmentationBackend: ScreenshotSegmentation
                 preprocessMS: response.preprocessMS,
                 modelInferenceMS: response.modelInferenceMS,
                 metadata: result.metadata.merging(response.metadata) { current, _ in current }
+                    .merging([
+                        "latency.yoloSegmentationMS": result.latencyMS.map { String(format: "%.3f", $0) } ?? ""
+                    ]) { current, _ in current }
             )
         } catch {
             throw ScreenshotSegmentationRunnerError.invalidOutput(String(describing: error))

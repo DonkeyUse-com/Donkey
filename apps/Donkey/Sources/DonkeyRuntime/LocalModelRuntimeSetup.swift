@@ -285,17 +285,20 @@ public struct LocalModelRuntimeSetupManager: Sendable {
     public var specs: [LocalModelRuntimeSpec]
     public var isExecutableFile: @Sendable (String) -> Bool
     public var now: @Sendable () -> Date
+    public var bundledPackageDirectory: @Sendable (LocalModelRuntimeID) -> URL?
 
     public init(
         baseDirectory: URL? = nil,
         specs: [LocalModelRuntimeSpec] = Self.defaultSpecs,
         isExecutableFile: @escaping @Sendable (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) },
-        now: @escaping @Sendable () -> Date = Date.init
+        now: @escaping @Sendable () -> Date = Date.init,
+        bundledPackageDirectory: @escaping @Sendable (LocalModelRuntimeID) -> URL? = Self.defaultBundledPackageDirectory
     ) throws {
         self.baseDirectory = try baseDirectory ?? Self.defaultBaseDirectory()
         self.specs = specs
         self.isExecutableFile = isExecutableFile
         self.now = now
+        self.bundledPackageDirectory = bundledPackageDirectory
     }
 
     public static let defaultSpecs: [LocalModelRuntimeSpec] = [
@@ -353,6 +356,21 @@ public struct LocalModelRuntimeSetupManager: Sendable {
             )
             .appendingPathComponent("Donkey", isDirectory: true)
             .appendingPathComponent("LocalModelRuntimes", isDirectory: true)
+    }
+
+    public static func defaultBundledPackageDirectory(runtimeID: LocalModelRuntimeID) -> URL? {
+        guard let resourcesURL = Bundle.main.resourceURL else { return nil }
+        let packageDirectory = resourcesURL
+            .appendingPathComponent("LocalRuntimePackages", isDirectory: true)
+            .appendingPathComponent(runtimeID.rawValue, isDirectory: true)
+        guard FileManager.default.fileExists(
+            atPath: packageDirectory
+                .appendingPathComponent("manifest.json", isDirectory: false)
+                .path
+        ) else {
+            return nil
+        }
+        return packageDirectory
     }
 
     public func instructions() -> [LocalModelRuntimeInstallInstruction] {
@@ -550,6 +568,26 @@ public struct LocalModelRuntimeSetupManager: Sendable {
         downloader: any LocalModelRuntimePackageDownloading = URLSessionLocalModelRuntimePackageDownloader(),
         requiresSignature: Bool = true
     ) async throws -> LocalModelRuntimeDownloadResult {
+        if let packageDirectory = bundledPackageDirectory(runtimeID) {
+            let manifestURL = packageDirectory.appendingPathComponent("manifest.json", isDirectory: false)
+            let manifestData = try Data(contentsOf: manifestURL)
+            let manifest = try Self.decoder().decode(LocalModelRuntimePackageManifest.self, from: manifestData)
+            let installation = try installDownloadedPackage(
+                manifest: manifest,
+                packageDirectory: packageDirectory,
+                requiresSignature: requiresSignature
+            )
+            return LocalModelRuntimeDownloadResult(
+                runtimeID: runtimeID,
+                state: .installed,
+                installation: installation,
+                metadata: [
+                    "download.source": "bundledRuntimePackage",
+                    "download.packageDirectory": packageDirectory.path
+                ]
+            )
+        }
+
         let spec = try spec(for: runtimeID)
         guard let manifestURL = spec.manifestURL else {
             throw LocalModelRuntimeSetupError.manifestMissingDownloadURL(relativePath: "manifest")

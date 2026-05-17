@@ -12,13 +12,18 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
     @Published var isInputExpanded = false
 
     private let commandHandler: any PointerPromptCommandHandling
+    private let voiceTranscriber: LocalVoiceTranscriptionAdapter
 
     init(
         aiProvider: any AIHarnessSnapshotProviding = AIHarnessBoundary(),
         commandHandler: any PointerPromptCommandHandling = LocalAppPointerPromptCommandHandler(),
+        voiceTranscriber: LocalVoiceTranscriptionAdapter = LocalVoiceTranscriptionAdapter(
+            runtime: ProcessBackedParakeetTranscriptionRuntime()
+        ),
         theme: PointerPromptTheme = PointerPromptOverlayModel.bundledTheme()
     ) {
         self.commandHandler = commandHandler
+        self.voiceTranscriber = voiceTranscriber
         let aiSnapshot = aiProvider.snapshot()
         promptState = PointerPromptState(
             promptText: aiSnapshot.suggestedPromptText,
@@ -48,25 +53,14 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
             promptState.leadingSignalLevel = .ready
         case .voiceInputRequested:
             promptState.leadingSignalLevel = .ready
+            promptState.promptText = "Listening..."
         case .primaryActionRequested:
             promptState.leadingSignalLevel = .thinking
         case .messageSubmitted(let text):
             let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedText.isEmpty else { return }
 
-            messageText = ""
-            inputTextHeight = PointerPromptLayout.composerInputTextMinimumHeight
-            isInputExpanded = false
-            promptState.leadingSignalLevel = .thinking
-            promptState.promptText = "Working..."
-            Task { [weak self, commandHandler] in
-                let result = await commandHandler.handleSubmittedCommand(trimmedText)
-                await MainActor.run {
-                    guard let self else { return }
-                    self.promptState.leadingSignalLevel = result.status == .completed ? .ready : .idle
-                    self.promptState.promptText = result.summary
-                }
-            }
+            submitCommand(trimmedText)
         case .inputTextHeightChanged(let height):
             let clampedHeight = PointerPromptLayout.clampedComposerInputTextHeight(height)
             guard abs(inputTextHeight - clampedHeight) > 0.5 else { return }
@@ -78,6 +72,54 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         case .dismissed:
             promptState.isPrimaryActionEnabled = false
             promptState.isActive = false
+        }
+    }
+
+    func submitVoiceAudio(_ audio: LocalVoiceAudioBuffer?) {
+        guard let audio else {
+            promptState.leadingSignalLevel = .idle
+            promptState.promptText = "No voice captured"
+            return
+        }
+
+        let sourceTraceID = "pointer-prompt-voice-\(UUID().uuidString)"
+        promptState.leadingSignalLevel = .thinking
+        promptState.promptText = "Transcribing..."
+        Task { [weak self, voiceTranscriber] in
+            let result = await voiceTranscriber.transcribe(
+                LocalVoiceTranscriptionRequest(
+                    audio: audio,
+                    sourceTraceID: sourceTraceID
+                )
+            )
+            await MainActor.run {
+                guard let self else { return }
+                guard let transcript = result.transcript,
+                      !transcript.text.isEmpty else {
+                    self.promptState.leadingSignalLevel = .idle
+                    self.promptState.promptText = "Voice unavailable"
+                    return
+                }
+
+                self.messageText = transcript.text
+                self.submitCommand(transcript.text)
+            }
+        }
+    }
+
+    private func submitCommand(_ text: String) {
+        messageText = ""
+        inputTextHeight = PointerPromptLayout.composerInputTextMinimumHeight
+        isInputExpanded = false
+        promptState.leadingSignalLevel = .thinking
+        promptState.promptText = "Working..."
+        Task { [weak self, commandHandler] in
+            let result = await commandHandler.handleSubmittedCommand(text)
+            await MainActor.run {
+                guard let self else { return }
+                self.promptState.leadingSignalLevel = result.status == .completed ? .ready : .idle
+                self.promptState.promptText = result.summary
+            }
         }
     }
 

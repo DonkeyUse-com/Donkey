@@ -157,6 +157,8 @@ Already supported:
 
 - `LocalModelRuntimeSetupManager` runtime specs, setup instructions, registration, status, and app-managed executable resolution.
 - First-run local runtime setup window with one setup button that drives download, validation, install, registration, and health checks.
+- Package-time bundled bootstrap sidecar runtime packages embedded under `Donkey.app/Contents/Resources/LocalRuntimePackages/`.
+- Setup manager installation from bundled package manifests before remote manifest download.
 - Manifest-backed package download and managed cache install under Application Support.
 - SHA-256 package file validation and required signature metadata.
 - Sidecar health-check protocol through the existing JSON process runner.
@@ -168,7 +170,7 @@ Already supported:
 
 Still needed:
 
-- Publish real Donkey-compatible runtime package manifests and downloadable files.
+- Replace bootstrap sidecar packages with real model-weight runner packages.
 - Finalize cryptographic signature verification with release signing keys.
 - Settings-menu entry to reopen the setup window after first launch.
 - Behind-the-scenes upgrade/repair/remove flows.

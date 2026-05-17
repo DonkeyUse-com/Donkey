@@ -9,6 +9,7 @@ There is an active milestone plan in `plans/master-plan.md`. It tracks the unfin
 ## Product Guides
 
 - [Pointer Prompt Overlay](guides/pointer-prompt-overlay.md): double-Command standard macOS-style `Make this so` composer that opens near the mouse at a fixed offset.
+- [Install Donkey Locally](guides/install-donkey.md): package the SwiftPM executable into a clickable local macOS app bundle for manual testing.
 
 ## Engineering Guides
 

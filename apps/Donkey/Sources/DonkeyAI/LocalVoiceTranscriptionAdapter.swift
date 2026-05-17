@@ -161,6 +161,9 @@ public struct ProcessBackedParakeetTranscriptionRuntime: LocalVoiceTranscription
                 confidence: response.confidence,
                 segments: response.segments,
                 metadata: result.metadata.merging(response.metadata) { current, _ in current }
+                    .merging([
+                        "latency.parakeetTranscriptionMS": result.latencyMS.map { String(format: "%.3f", $0) } ?? ""
+                    ]) { current, _ in current }
             )
         } catch {
             throw LocalVoiceTranscriptionRuntimeError.invalidOutput(String(describing: error))

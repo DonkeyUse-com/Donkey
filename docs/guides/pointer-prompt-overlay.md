@@ -10,6 +10,7 @@ Donkey supports a floating macOS pointer prompt overlay:
 - uses a wide pill-shaped prompt for single-line text, then expands to a rounded rectangle when text wraps at the max input width or the user inserts new lines
 - places the waveform in a bottom toolbar that blends with the input background when the prompt is expanded
 - captures microphone audio while active and renders the waveform from recent live audio levels
+- on voice activation, records a bounded local audio buffer, sends it to the Parakeet-only local transcription adapter, displays transcript progress, and submits decoded transcript text through the same command path as typed input
 - keeps the prompt modal pinned where activation happened until the user drags, dismisses, or closes the modal
 - dismisses the active modal when the user clicks outside it
 - closes the active modal with a small high-contrast circular x button outside the prompt surface at the top-right corner
@@ -19,7 +20,7 @@ Donkey supports a floating macOS pointer prompt overlay:
 - keeps that fixed offset at screen edges instead of flipping or clamping to the visible screen bounds
 - submits typed prompt text through the local-app command pipeline while keeping model parsing, task validation, and live input outside the SwiftUI rendering path
 
-This is a visual, typed-command, and microphone-level UI capability. Typed submissions go to the local-app command handler, which loads built-in plus local JSON/JSONL task definitions, prefers local-model task-intent parsing, validates the intent against the app-task catalog, and then runs the guarded local-app live runner. Review-only document tasks can return a compact review summary such as the number of mapped fields. The overlay itself does not capture the screen, synthesize input, transcribe speech, or require Accessibility permission. It does request microphone permission so the waveform can reflect live local audio levels. The AI harness has a local voice-transcription adapter boundary, but the overlay has not yet wired microphone buffers into that speech-to-text adapter.
+This is a visual, typed-command, and voice-command UI capability. Typed submissions go to the local-app command handler, which loads built-in plus local JSON/JSONL task definitions, prefers local-model task-intent parsing, validates the intent against the app-task catalog, and then runs the guarded local-app live runner. Voice submissions produce local transcript text through the Parakeet-only transcription boundary before entering that same command handler. Review-only document tasks can return a compact review summary such as the number of mapped fields. The overlay itself does not capture the screen, synthesize input, or require Accessibility permission. It does request microphone permission for local waveform capture and voice commands.
 
 ## Technical Guidelines
 
@@ -44,7 +45,7 @@ This is a visual, typed-command, and microphone-level UI capability. Typed submi
 - Holding the second clean Command press for the shortcut's configured hold duration should activate the prompt modal and start microphone level capture instead of waiting for the second release.
 - Keep the overlay non-invasive: no screen capture loop, input execution, Accessibility prompt, or direct model call in SwiftUI rendering. Submit text to a command handler boundary instead.
 - Keep the command handler data-driven. It should resolve task knowledge from the local catalog, including local task definitions in Application Support, before invoking the guarded runtime path.
-- Keep voice capture separate from transcription. The overlay may publish bounded local audio buffers to a future transcription adapter, but model execution and command parsing should remain outside the SwiftUI view/controller rendering path.
+- Keep voice capture separate from transcription. The overlay publishes bounded local audio buffers to the model layer, and model execution plus command parsing remain outside the SwiftUI view/controller rendering path.
 
 ## Verification
 

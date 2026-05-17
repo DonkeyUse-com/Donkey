@@ -104,12 +104,16 @@ public struct LocalAppTaskLiveRunner: Sendable {
         resolution: LocalAppTaskCatalogResolution,
         metadata: [String: String] = [:]
     ) async -> LocalAppTaskLiveRunResult {
+        let runStartedAt = Self.uptimeMilliseconds()
+        var runMetadata = metadata
         guard resolution.status == .resolved else {
             return unresolvedResult(
                 command: command,
                 traceID: traceID,
                 resolution: resolution,
-                metadata: metadata
+                metadata: metadata.merging([
+                    "latency.totalMS": Self.formatLatency(Self.uptimeMilliseconds() - runStartedAt)
+                ]) { current, _ in current }
             )
         }
 
@@ -122,14 +126,21 @@ public struct LocalAppTaskLiveRunner: Sendable {
                 traceID: traceID,
                 status: .failedSafe,
                 resolution: resolution,
-                metadata: metadata.merging(["reason": "incompleteResolution"]) { current, _ in current }
+                metadata: runMetadata.merging([
+                    "reason": "incompleteResolution",
+                    "latency.totalMS": Self.formatLatency(Self.uptimeMilliseconds() - runStartedAt)
+                ]) { current, _ in current }
             )
         }
 
         intent.metadata["traceID"] = traceID
         let adapter = catalog.adapter(for: definition)
         if definition.metadata["guardedLiveDefault"] == "reviewOnly" {
+            let contextStartedAt = Self.uptimeMilliseconds()
             let context = await contextProvider.snapshot()
+            runMetadata["latency.observationMS"] = Self.formatLatency(
+                Self.uptimeMilliseconds() - contextStartedAt
+            )
             let documentPlan = documentFormFillPlanner.plan(
                 intent: intent,
                 definition: definition,
@@ -160,18 +171,21 @@ public struct LocalAppTaskLiveRunner: Sendable {
                 finalPlan: initialPlan,
                 observation: observation,
                 documentFormFillPlan: documentPlan,
-                metadata: metadata.merging([
+                metadata: runMetadata.merging([
                     "reason": "reviewOnlyTask",
                     "documentFormFillPlan.status": documentPlan.status.rawValue,
-                    "documentFormFillPlan.proposalCount": String(documentPlan.proposals.count)
+                    "documentFormFillPlan.proposalCount": String(documentPlan.proposals.count),
+                    "latency.totalMS": Self.formatLatency(Self.uptimeMilliseconds() - runStartedAt)
                 ]) { current, _ in current }
             )
         }
 
+        let launchStartedAt = Self.uptimeMilliseconds()
         let launchObservation = await appController.launchOrFocus(
             definition: definition,
             availability: availability
         )
+        runMetadata["latency.launchFocusMS"] = Self.formatLatency(Self.uptimeMilliseconds() - launchStartedAt)
         let initialPlan = adapter.dryRunPlan(for: intent, observation: launchObservation)
         guard initialPlan.canAttemptGuardedLive else {
             return LocalAppTaskLiveRunResult(
@@ -181,11 +195,15 @@ public struct LocalAppTaskLiveRunner: Sendable {
                 resolution: resolution,
                 initialPlan: initialPlan,
                 observation: launchObservation,
-                metadata: metadata.merging(["reason": "dryRunPlanBlocked"]) { current, _ in current }
+                metadata: runMetadata.merging([
+                    "reason": "dryRunPlanBlocked",
+                    "latency.totalMS": Self.formatLatency(Self.uptimeMilliseconds() - runStartedAt)
+                ]) { current, _ in current }
             )
         }
 
         var actionTraces: [ActionEngineCommandTrace] = []
+        var accessibilityActionMS = 0.0
         let accessibilityCommands = await accessibilityCommandTemplates(
             intent: intent,
             definition: definition
@@ -194,16 +212,19 @@ public struct LocalAppTaskLiveRunner: Sendable {
             let accessibilityEngine = Self.accessibilityActionEngine(for: definition)
             for (index, actionCommand) in accessibilityCommands.enumerated() {
                 let spacedCommand = actionCommand.withIssuedAt(Self.now(advancedByMilliseconds: Double(index) * 60))
+                let actionStartedAt = Self.uptimeMilliseconds()
                 let trace = await accessibilityEngine.handle(
                     spacedCommand,
                     permissionPolicy: permissionPolicy
                 )
+                accessibilityActionMS += Self.uptimeMilliseconds() - actionStartedAt
                 actionTraces.append(trace)
                 guard trace.executed || trace.decision == .projectedDryRun else {
                     break
                 }
             }
         }
+        runMetadata["latency.accessibilityActionMS"] = Self.formatLatency(accessibilityActionMS)
 
         let engine = actionEngineFactory(definition)
         let accessibilityHandledStepIDs: Set<String> = Set(actionTraces.compactMap { trace -> String? in
@@ -218,17 +239,28 @@ public struct LocalAppTaskLiveRunner: Sendable {
             return !accessibilityHandledStepIDs.contains(workflowStepID)
         }
 
+        var keyboardActionMS = 0.0
         for (index, actionCommand) in commands.enumerated() {
             let spacedCommand = actionCommand.withIssuedAt(Self.now(advancedByMilliseconds: Double(index) * 40))
+            let actionStartedAt = Self.uptimeMilliseconds()
             let trace = await engine.handle(
                 spacedCommand,
                 permissionPolicy: permissionPolicy
             )
+            keyboardActionMS += Self.uptimeMilliseconds() - actionStartedAt
             actionTraces.append(trace)
 
             guard trace.executed || trace.decision == ActionEngineCommandDecision.projectedDryRun else {
+                let observationStartedAt = Self.uptimeMilliseconds()
                 let finalObservation = await appController.observe(definition: definition)
+                runMetadata["latency.observationMS"] = Self.formatLatency(
+                    Self.uptimeMilliseconds() - observationStartedAt
+                )
+                let verificationStartedAt = Self.uptimeMilliseconds()
                 let finalPlan = adapter.dryRunPlan(for: intent, observation: finalObservation)
+                runMetadata["latency.verificationMS"] = Self.formatLatency(
+                    Self.uptimeMilliseconds() - verificationStartedAt
+                )
                 return LocalAppTaskLiveRunResult(
                     command: command,
                     traceID: traceID,
@@ -238,14 +270,24 @@ public struct LocalAppTaskLiveRunner: Sendable {
                     finalPlan: finalPlan,
                     observation: finalObservation,
                     actionTraces: actionTraces,
-                    metadata: metadata.merging(["reason": "actionDenied"]) { current, _ in current }
+                    metadata: runMetadata.merging([
+                        "reason": "actionDenied",
+                        "latency.keyboardActionMS": Self.formatLatency(keyboardActionMS),
+                        "latency.totalMS": Self.formatLatency(Self.uptimeMilliseconds() - runStartedAt)
+                    ]) { current, _ in current }
                 )
             }
         }
+        runMetadata["latency.keyboardActionMS"] = Self.formatLatency(keyboardActionMS)
 
         try? await Task.sleep(nanoseconds: 700_000_000)
+        let observationStartedAt = Self.uptimeMilliseconds()
         let finalObservation = await appController.observe(definition: definition)
+        runMetadata["latency.observationMS"] = Self.formatLatency(Self.uptimeMilliseconds() - observationStartedAt)
+        let verificationStartedAt = Self.uptimeMilliseconds()
         let finalPlan = adapter.dryRunPlan(for: intent, observation: finalObservation)
+        runMetadata["latency.verificationMS"] = Self.formatLatency(Self.uptimeMilliseconds() - verificationStartedAt)
+        runMetadata["latency.totalMS"] = Self.formatLatency(Self.uptimeMilliseconds() - runStartedAt)
         return LocalAppTaskLiveRunResult(
             command: command,
             traceID: traceID,
@@ -255,7 +297,7 @@ public struct LocalAppTaskLiveRunner: Sendable {
             finalPlan: finalPlan,
             observation: finalObservation,
             actionTraces: actionTraces,
-            metadata: metadata.merging([
+            metadata: runMetadata.merging([
                 "executedCommandCount": String(actionTraces.filter(\.executed).count),
                 "projectedCommandCount": String(actionTraces.filter { $0.decision == .projectedDryRun }.count)
             ]) { current, _ in current }
@@ -364,6 +406,14 @@ public struct LocalAppTaskLiveRunner: Sendable {
             monotonicUptimeNanoseconds: UInt64((now * 1_000_000_000) + (milliseconds * 1_000_000))
         )
     }
+
+    private static func uptimeMilliseconds() -> Double {
+        ProcessInfo.processInfo.systemUptime * 1_000
+    }
+
+    private static func formatLatency(_ milliseconds: Double) -> String {
+        String(format: "%.3f", max(0, milliseconds))
+    }
 }
 
 public struct MacLocalAppFocusGuard: ActionEngineFocusGuard {
@@ -389,7 +439,13 @@ public struct MacLocalAppFocusGuard: ActionEngineFocusGuard {
 }
 
 public struct MacLocalAppTaskController: LocalAppTaskAppControlling {
-    public init() {}
+    public var uiUnderstandingRunner: any LocalUIUnderstandingRunning
+
+    public init(
+        uiUnderstandingRunner: any LocalUIUnderstandingRunning = ProcessBackedLocalUIUnderstandingAdapter()
+    ) {
+        self.uiUnderstandingRunner = uiUnderstandingRunner
+    }
 
     @MainActor
     public func launchOrFocus(
@@ -415,7 +471,7 @@ public struct MacLocalAppTaskController: LocalAppTaskAppControlling {
         let verificationKey = definition.metadata["verificationTextKey"]
             ?? definition.verificationEntityName
             ?? "visibleText"
-        let controls: [String: Bool] = Dictionary(
+        var controls: [String: Bool] = Dictionary(
             uniqueKeysWithValues: definition.workflowSteps.compactMap { step in
                 guard step.role == .focusControl,
                       let controlID = step.metadata["controlID"]
@@ -433,7 +489,7 @@ public struct MacLocalAppTaskController: LocalAppTaskAppControlling {
             textValues[verificationKey] = visibleText
         }
 
-        return LocalAppTaskObservation(
+        let accessibilityObservation = LocalAppTaskObservation(
             appIsRunning: runningApplication != nil,
             appIsFocused: isFocused,
             availableControls: controls,
@@ -446,6 +502,128 @@ public struct MacLocalAppTaskController: LocalAppTaskAppControlling {
                 "accessibilityControlCount": accessibilityIndex?.metadata["controlCount"] ?? "0"
             ]
         )
+
+        guard shouldUseScreenshotUnderstanding(
+            definition: definition,
+            observation: accessibilityObservation
+        ) else {
+            return accessibilityObservation
+        }
+
+        guard let screenshotObservation = await screenshotUnderstandingObservation(
+            definition: definition,
+            runningApplication: runningApplication,
+            isFocused: isFocused,
+            verificationKey: verificationKey
+        ) else {
+            var metadata = accessibilityObservation.metadata
+            metadata["screenshotUnderstanding.status"] = "unavailable"
+            return LocalAppTaskObservation(
+                appIsRunning: accessibilityObservation.appIsRunning,
+                appIsFocused: accessibilityObservation.appIsFocused,
+                availableControls: accessibilityObservation.availableControls,
+                visibleText: accessibilityObservation.visibleText,
+                confidence: accessibilityObservation.confidence,
+                metadata: metadata
+            )
+        }
+
+        controls.merge(screenshotObservation.availableControls) { current, new in current || new }
+        return LocalAppTaskObservation(
+            appIsRunning: accessibilityObservation.appIsRunning || screenshotObservation.appIsRunning,
+            appIsFocused: accessibilityObservation.appIsFocused || screenshotObservation.appIsFocused,
+            availableControls: controls,
+            visibleText: accessibilityObservation.visibleText.merging(
+                screenshotObservation.visibleText
+            ) { current, _ in current },
+            confidence: max(accessibilityObservation.confidence, screenshotObservation.confidence),
+            metadata: accessibilityObservation.metadata.merging(
+                screenshotObservation.metadata
+            ) { current, _ in current }
+        )
+    }
+
+    private func shouldUseScreenshotUnderstanding(
+        definition: LocalAppTaskDefinition,
+        observation: LocalAppTaskObservation
+    ) -> Bool {
+        guard definition.observationStrategies.contains(.screenshotForLocalModel) else {
+            return false
+        }
+
+        let expectedControls = definition.workflowSteps.compactMap { step -> String? in
+            guard step.role == .focusControl else { return nil }
+            return step.metadata["controlID"]
+        }
+        let missingExpectedControl = expectedControls.contains { observation.availableControls[$0] != true }
+        return observation.visibleText.isEmpty || missingExpectedControl || observation.confidence < 0.7
+    }
+
+    @MainActor
+    private func screenshotUnderstandingObservation(
+        definition: LocalAppTaskDefinition,
+        runningApplication: NSRunningApplication?,
+        isFocused: Bool,
+        verificationKey: String
+    ) async -> LocalAppTaskObservation? {
+        guard runningApplication != nil,
+              let target = try? MacWindowResolver().selectTarget(),
+              target.bundleIdentifier == definition.targetApp.bundleIdentifier,
+              target.safetyAssessment.status == .allowed
+        else {
+            return nil
+        }
+
+        let screenshot: CapturedWindowScreenshot
+        do {
+            screenshot = try await ScreenCaptureKitWindowScreenshotCapturer().capture(target: target)
+        } catch {
+            return nil
+        }
+
+        let imageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("donkey-ui-understanding-\(UUID().uuidString).png")
+        do {
+            try screenshot.pngData.write(to: imageURL, options: .atomic)
+        } catch {
+            return nil
+        }
+        defer {
+            try? FileManager.default.removeItem(at: imageURL)
+        }
+
+        let request = LocalUIUnderstandingRequest(
+            traceID: "local-ui-understanding-\(UUID().uuidString)",
+            targetID: LocalAppTaskAdapter(definition: definition).targetID,
+            appIsRunning: true,
+            appIsFocused: isFocused,
+            imageFileURL: imageURL,
+            cropBounds: HotLoopRect(
+                x: 0,
+                y: 0,
+                width: Double(screenshot.imageWidth),
+                height: Double(screenshot.imageHeight),
+                space: .window
+            ),
+            pixelSize: HotLoopSize(
+                width: Double(screenshot.imageWidth),
+                height: Double(screenshot.imageHeight),
+                space: .window
+            ),
+            metadata: [
+                "observer": "mac-local-app-controller",
+                "observation.source": "screenshot",
+                "verificationTextKey": verificationKey,
+                "target.windowID": String(target.windowID),
+                "capture.method": screenshot.captureMethod.rawValue
+            ]
+        )
+
+        do {
+            return try await uiUnderstandingRunner.understand(request).observation(for: request)
+        } catch {
+            return nil
+        }
     }
 
     @MainActor

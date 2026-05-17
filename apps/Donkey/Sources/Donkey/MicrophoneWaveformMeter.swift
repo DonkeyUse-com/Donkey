@@ -1,4 +1,5 @@
 import AVFoundation
+import DonkeyAI
 import DonkeyContracts
 import Foundation
 
@@ -9,6 +10,10 @@ final class MicrophoneWaveformMeter {
     private var levels = PointerPromptState.defaultVoiceWaveformLevels
     private var isRunning = false
     private var isStarting = false
+    private var isRecordingAudio = false
+    private var capturedSamples: [Float] = []
+    private var capturedSampleRateHz = 0
+    private var capturedStartedAt: Date?
 
     var onLevelsChanged: (([Double]) -> Void)?
 
@@ -38,7 +43,46 @@ final class MicrophoneWaveformMeter {
         engine.stop()
         isRunning = false
         isStarting = false
+        isRecordingAudio = false
+        capturedSamples.removeAll(keepingCapacity: true)
+        capturedStartedAt = nil
         publishSilence()
+    }
+
+    func startAudioCapture() {
+        capturedSamples.removeAll(keepingCapacity: true)
+        capturedSampleRateHz = Int(engine.inputNode.outputFormat(forBus: 0).sampleRate)
+        capturedStartedAt = Date()
+        isRecordingAudio = true
+        start()
+    }
+
+    func finishAudioCapture() -> LocalVoiceAudioBuffer? {
+        guard isRecordingAudio else { return nil }
+
+        isRecordingAudio = false
+        let sampleRateHz = capturedSampleRateHz > 0 ? capturedSampleRateHz : 48_000
+        let samples = capturedSamples
+        let startedAt = capturedStartedAt
+        capturedSamples.removeAll(keepingCapacity: true)
+        capturedStartedAt = nil
+        guard !samples.isEmpty else { return nil }
+
+        let durationMS = startedAt.map { Date().timeIntervalSince($0) * 1_000 }
+            ?? (Double(samples.count) / Double(sampleRateHz) * 1_000)
+        return LocalVoiceAudioBuffer(
+            id: "pointer-prompt-audio-\(UUID().uuidString)",
+            format: "pcm_f32le",
+            sampleRateHz: sampleRateHz,
+            channelCount: 1,
+            durationMS: durationMS,
+            data: Self.float32LittleEndianData(from: samples),
+            metadata: [
+                "source": "pointer-prompt",
+                "encoding": "pcm_f32le",
+                "sampleLayout": "mono"
+            ]
+        )
     }
 
     private func startEngine() {
@@ -83,6 +127,12 @@ final class MicrophoneWaveformMeter {
         publishLevels()
     }
 
+    private func appendAudioSamples(_ samples: [Float]) {
+        guard isRecordingAudio, !samples.isEmpty else { return }
+
+        capturedSamples.append(contentsOf: samples)
+    }
+
     private func publishSilence() {
         levels = Array(repeating: 0.08, count: barCount)
         publishLevels()
@@ -95,11 +145,33 @@ final class MicrophoneWaveformMeter {
     nonisolated private static func makeTapBlock(meter: MicrophoneWaveformMeter) -> AVAudioNodeTapBlock {
         { [weak meter] buffer, _ in
             let level = Self.normalizedLevel(from: buffer)
+            let samples = Self.monoSamples(from: buffer)
 
             Task { @MainActor in
+                meter?.appendAudioSamples(samples)
                 meter?.append(level)
             }
         }
+    }
+
+    nonisolated private static func monoSamples(from buffer: AVAudioPCMBuffer) -> [Float] {
+        guard let channelData = buffer.floatChannelData,
+              buffer.frameLength > 0 else {
+            return []
+        }
+
+        let frameCount = Int(buffer.frameLength)
+        let firstChannel = channelData[0]
+        return Array(UnsafeBufferPointer(start: firstChannel, count: frameCount))
+    }
+
+    nonisolated private static func float32LittleEndianData(from samples: [Float]) -> Data {
+        var data = Data(capacity: samples.count * MemoryLayout<UInt32>.size)
+        for sample in samples {
+            var bits = sample.bitPattern.littleEndian
+            data.append(Data(bytes: &bits, count: MemoryLayout<UInt32>.size))
+        }
+        return data
     }
 
     nonisolated private static func normalizedLevel(from buffer: AVAudioPCMBuffer) -> Double {

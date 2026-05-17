@@ -18,6 +18,7 @@ final class PointerPromptOverlayController {
     private var completedActivationTapCount = 0
     private var lastActivationTapCompletedAt: Date?
     private var activationHoldStartedAt: Date?
+    private var isVoiceInputActive = false
 
     init(
         model: PointerPromptOverlayModel,
@@ -162,6 +163,12 @@ final class PointerPromptOverlayController {
         let isActivationModifierDown = flags.contains(activationModifierFlag)
         let isCleanActivationModifierOnly = flags == activationModifierFlag
 
+        if isVoiceInputActive, !isActivationModifierDown {
+            finishVoiceInput()
+            resetActivationTapSequence()
+            return
+        }
+
         if isCleanActivationModifierOnly {
             if activationTapStartedAt == nil {
                 let now = Date()
@@ -272,7 +279,17 @@ final class PointerPromptOverlayController {
 
     private func activateVoiceInputAtCurrentMouseLocation() {
         activateAtCurrentMouseLocation()
+        isVoiceInputActive = true
+        microphoneWaveformMeter.startAudioCapture()
         model.handle(.voiceInputRequested)
+    }
+
+    private func finishVoiceInput() {
+        guard isVoiceInputActive else { return }
+
+        isVoiceInputActive = false
+        let audio = microphoneWaveformMeter.finishAudioCapture()
+        model.submitVoiceAudio(audio)
     }
 
     private func positionAtCurrentMouseLocation() {
@@ -509,6 +526,7 @@ final class PointerPromptOverlayController {
     private func updateMouseEventPassthrough(for panel: NSPanel) {
         guard model.promptState.isActive else {
             panel.ignoresMouseEvents = true
+            isVoiceInputActive = false
             return
         }
 
@@ -533,6 +551,7 @@ final class PointerPromptOverlayController {
         }
 
         model.handle(.dismissed)
+        isVoiceInputActive = false
         microphoneWaveformMeter.stop()
         return true
     }
