@@ -35,6 +35,10 @@ Open [http://localhost:3000](http://localhost:3000). The public health route is 
 - Supabase JS client helper for server-side use.
 - Vercel-compatible `build`, `start`, and `postinstall` scripts.
 
+## Guidelines
+
+Read [Frontend and Next.js Guidelines](docs/frontend-nextjs-guidelines.md) before changing the site UI, routes, API handlers, or data access patterns.
+
 ## Database
 
 Prisma is configured in `prisma/schema.prisma` and `prisma.config.ts`. The starter schema includes a `WaitlistEntry` model as a first writable table.
