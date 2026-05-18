@@ -2,6 +2,8 @@
   "name": "site",
   "version": "0.1.0",
   "private": true,
+  "homepage": "https://donkeyuse.com",
+  "license": "Apache-2.0",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -9,7 +11,9 @@
     "lint": "eslint",
     "postinstall": "prisma generate",
     "db:generate": "prisma generate",
-    "db:pull": "prisma db pull"
+    "db:pull": "prisma db pull",
+    "prisma:dev": "dotenv -e .env.development -- npx prisma migrate dev",
+    "prisma:prod": "dotenv -e .env -- prisma db push"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -35,6 +39,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "dotenv": "^17.4.2",
+    "dotenv-cli": "^11.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
     "prisma": "^7.8.0",

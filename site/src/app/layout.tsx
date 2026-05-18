@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Site",
-  description: "Next.js site and API backed by Supabase and Prisma.",
+  title: "Donkey",
+  description: "Donkey gets work done on your Mac while you stay in control.",
 };
 
 export default function RootLayout({

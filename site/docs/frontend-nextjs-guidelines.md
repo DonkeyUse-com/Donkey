@@ -10,7 +10,6 @@ This app is the `site` Next.js project. It is intended to run the public site an
 - shadcn/ui with the `base-nova` style, Base UI primitives, `class-variance-authority`, `tailwind-merge`, and `tw-animate-css`.
 - `lucide-react` for icons.
 - Prisma `7` with `@prisma/adapter-pg`, `pg`, and generated client output in `src/generated/prisma`.
-- Supabase JS for Supabase service access.
 - Zod for request and payload validation.
 - ESLint `9` with `eslint-config-next`.
 - Vercel for hosting the site and API.
@@ -19,7 +18,9 @@ This app is the `site` Next.js project. It is intended to run the public site an
 
 - Keep route segments, layouts, pages, loading states, and route handlers in `src/app`.
 - Keep shared UI primitives in `src/components`, with shadcn components under `src/components/ui`.
-- Keep server-only helpers in `src/lib`, such as `src/lib/prisma.ts` and `src/lib/supabase/server.ts`.
+- Keep route-specific experiences in a dedicated component folder near the route, such as `src/app/_components/landing` for the home landing page.
+- Split route-specific UI into focused component files rather than placing every section, primitive, hook, and data object into one large component file.
+- Keep server-only helpers in `src/lib`, such as `src/lib/prisma.ts`.
 - Keep generated Prisma files out of hand edits. Update `prisma/schema.prisma`, then run `npm run db:generate`.
 - Use absolute imports through the `@/*` alias. Avoid barrel `index.ts` files unless a package-level public API truly needs one.
 
@@ -27,7 +28,7 @@ This app is the `site` Next.js project. It is intended to run the public site an
 
 - Treat components as Server Components by default.
 - Add `"use client"` only when a component needs state, event handlers, effects, refs, browser APIs, or client-only hooks.
-- Keep server secrets, Prisma, Supabase server helpers, and direct database access out of Client Components.
+- Keep server secrets, Prisma, and direct database access out of Client Components.
 - Pass plain serializable data from Server Components into Client Components.
 - Prefer small client boundaries around interactive controls instead of making whole pages client-rendered.
 
@@ -38,7 +39,7 @@ This app is the `site` Next.js project. It is intended to run the public site an
 - Keep API responses explicit with `NextResponse.json(...)`.
 - Do not call `fetch(...)` directly from React components. Put browser-facing API calls in a focused API client module, then import that client into components.
 - Use Prisma only from server-side code. Import the singleton from `src/lib/prisma.ts`.
-- Use Supabase environment variables from server-side code unless the variable is explicitly safe and prefixed with `NEXT_PUBLIC_`.
+- Use `DATABASE_URL` for pooled serverless runtime database access and `DIRECT_URL` for Prisma CLI operations. `prisma.config.ts` should point CLI operations at the direct URL when it is available.
 
 ## Styling and UI
 
@@ -60,7 +61,7 @@ This app is the `site` Next.js project. It is intended to run the public site an
 ## Environment and Deployment
 
 - Do not commit `.env`. Keep safe placeholders in `.env.example`.
-- Set `DATABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in Vercel.
+- Set `DATABASE_URL` and `DIRECT_URL` in Vercel.
 - Use Supabase's pooled Postgres connection string for serverless deployments.
 - Do not run Prisma migrations casually. Choose the migration workflow deliberately for the target Supabase project.
 - Run `npm run lint` and `npm run build` before shipping changes.

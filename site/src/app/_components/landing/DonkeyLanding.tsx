@@ -1,0 +1,40 @@
+"use client";
+
+import { Agents } from "@/app/_components/landing/Agents";
+import { FinalCTA } from "@/app/_components/landing/FinalCTA";
+import { Footer } from "@/app/_components/landing/Footer";
+import { Hero } from "@/app/_components/landing/Hero";
+import { HowItWorks } from "@/app/_components/landing/HowItWorks";
+import { OpenSource } from "@/app/_components/landing/OpenSource";
+import { Pricing } from "@/app/_components/landing/Pricing";
+import { Solutions } from "@/app/_components/landing/Solutions";
+import { TopNav } from "@/app/_components/landing/TopNav";
+import { TrustedBy } from "@/app/_components/landing/TrustedBy";
+import { VsThePast } from "@/app/_components/landing/VsThePast";
+import { BG, BLACK } from "@/app/_components/landing/theme";
+
+export default function DonkeyLanding() {
+  return (
+    <main
+      style={{
+        minHeight: "100vh",
+        background: BG,
+        color: BLACK,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        WebkitFontSmoothing: "antialiased",
+      }}
+    >
+      <TopNav />
+      <Hero />
+      <TrustedBy />
+      <Solutions />
+      <Agents />
+      <HowItWorks />
+      <VsThePast />
+      <OpenSource />
+      <Pricing />
+      <FinalCTA />
+      <Footer />
+    </main>
+  );
+}

@@ -4,6 +4,7 @@ import "dotenv/config";
 import { defineConfig } from "prisma/config";
 
 const databaseUrl = process.env["DATABASE_URL"];
+const directUrl = process.env["DIRECT_URL"];
 
 export default defineConfig({
   schema: "prisma/schema.prisma",
@@ -11,6 +12,6 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    url: databaseUrl,
+    url: directUrl ?? databaseUrl,
   },
 });

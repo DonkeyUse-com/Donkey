@@ -1,0 +1,150 @@
+import type { CardColor } from "@/app/_components/landing/theme";
+
+export const GITHUB_REPO_URL = "https://github.com/DonkeyUse-com/Donkey";
+
+export const solutionCards = [
+  {
+    color: "blue",
+    tag: "01 - Knowledge workers",
+    title: "Drafts, research and inbox triage on tap.",
+    body: "PMs, founders and operators get back the hour-long detours: comp research, drafting, summarising threads, scheduling.",
+  },
+  {
+    color: "yellow",
+    tag: "02 - Engineers",
+    title: "Donkey handles the un-fun half of the job.",
+    body: "Triage bug reports, scaffold migrations, run flaky tests, prepare PR descriptions. Stays on your machine, on your branch.",
+  },
+  {
+    color: "mint",
+    tag: "03 - Designers",
+    title: "Source references, version, ship.",
+    body: "Mine Pinterest and Dribbble for boards. Rename, label and version your Figma library while you focus on the next sketch.",
+  },
+  {
+    color: "pink",
+    tag: "04 - Solo operators",
+    title: "A full back office without the headcount.",
+    body: "Expense logging, invoice chasing, calendar tetris across time zones, lead enrichment. Donkey runs the chores.",
+  },
+] satisfies Array<{
+  body: string;
+  color: CardColor;
+  tag: string;
+  title: string;
+}>;
+
+export const agentCards = [
+  {
+    n: 1,
+    color: "blue",
+    tag: "Coder agent",
+    title: "Ships code while you sleep.",
+    body: "Drafts PRs, runs migrations, fixes flaky tests, writes commit messages that actually describe the change.",
+  },
+  {
+    n: 2,
+    color: "yellow",
+    tag: "Browser agent",
+    title: "Reads the web for you.",
+    body: "Comparison shopping, competitive research, scraping pricing pages, without you ever opening a tab.",
+  },
+  {
+    n: 3,
+    color: "mint",
+    tag: "Inbox agent",
+    title: "Drafts replies before you read them.",
+    body: "Knows your tone, your contacts, your past threads. Surfaces what matters; drafts everything else.",
+  },
+  {
+    n: 4,
+    color: "pink",
+    tag: "Scheduler agent",
+    title: "Finds time across time zones.",
+    body: "Books, reschedules, prep-docs. Drops the right Zoom link in the right invite without being asked twice.",
+  },
+] satisfies Array<{
+  body: string;
+  color: CardColor;
+  n: number;
+  tag: string;
+  title: string;
+}>;
+
+export const workflowSteps = [
+  {
+    n: 1,
+    color: "coral",
+    title: "Tell Donkey",
+    timing: "Seconds",
+    body: "Hit Command-K in the notch. Type or speak the task. Donkey picks the right agent and asks any clarifying questions up front.",
+  },
+  {
+    n: 2,
+    color: "blue",
+    title: "Watch it work",
+    timing: "Minutes",
+    body: "The agent runs on your Mac with your apps, your files, your accounts. You can step in any time; it pauses cleanly and waits.",
+  },
+  {
+    n: 3,
+    color: "yellow",
+    title: "Approve and ship",
+    timing: "Ongoing",
+    body: "Donkey shows you the diff: a draft, a PR, a calendar slot, and you approve. The next agent picks up where this one left off.",
+  },
+] satisfies Array<{
+  body: string;
+  color: CardColor;
+  n: number;
+  timing: string;
+  title: string;
+}>;
+
+export const comparisonRows = [
+  { label: "Runs locally on your Mac", gpts: false, donkey: true, humans: true },
+  { label: "Handles 20+ apps end-to-end", gpts: false, donkey: true, humans: true },
+  {
+    label: "Streams progress in the notch",
+    gpts: false,
+    donkey: true,
+    humans: false,
+  },
+  { label: "Pauses for your review", gpts: false, donkey: true, humans: true },
+  { label: "Works offline and on-device", gpts: false, donkey: true, humans: true },
+  { label: "24/7 availability", gpts: true, donkey: true, humans: false },
+  { label: "Predictable monthly cost", gpts: true, donkey: true, humans: false },
+  { label: "Onboarding under 5 minutes", gpts: true, donkey: true, humans: false },
+];
+
+export const openSourceReasons = [
+  {
+    color: "blue",
+    icon: "View",
+    title: "Audit every line.",
+    body: "Donkey runs on your machine and touches your files. You should know exactly what it does. Every commit is public.",
+  },
+  {
+    color: "yellow",
+    icon: "Models",
+    title: "Bring your own model.",
+    body: "Swap in any LLM provider: OpenAI, Ollama, or another local model. Donkey is the runtime, not a wrapper around one API.",
+  },
+  {
+    color: "mint",
+    icon: "SDK",
+    title: "Write your own agents.",
+    body: "Fork Coder, build a Researcher, ship it back upstream, or keep it private.",
+  },
+  {
+    color: "pink",
+    icon: "Own",
+    title: "No vendor lock-in.",
+    body: "Self-host the whole thing. Donkey runs without our cloud, our auth, or our blessing. You stay in control.",
+  },
+] satisfies Array<{
+  body: string;
+  color: CardColor;
+  icon: string;
+  title: string;
+}>;

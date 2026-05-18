@@ -7,10 +7,7 @@ export function GET() {
     ok: true,
     services: {
       databaseUrlConfigured: Boolean(process.env.DATABASE_URL),
-      supabaseUrlConfigured: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL),
-      supabaseAnonKeyConfigured: Boolean(
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-      ),
+      directUrlConfigured: Boolean(process.env.DIRECT_URL),
     },
   });
 }
