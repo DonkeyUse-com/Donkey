@@ -11,6 +11,8 @@ APP_VERSION="${DONKEY_APP_VERSION:-0.1.0}"
 APP_BUILD="${DONKEY_APP_BUILD:-1}"
 SPARKLE_FEED_URL="${DONKEY_SPARKLE_FEED_URL:-}"
 SPARKLE_PUBLIC_ED_KEY="${DONKEY_SPARKLE_PUBLIC_ED_KEY:-}"
+RUNTIME_MANIFEST_PUBLIC_KEYS="${DONKEY_RUNTIME_MANIFEST_PUBLIC_KEYS:-}"
+RUNTIME_REQUIRE_CRYPTO_SIGNATURES="${DONKEY_RUNTIME_REQUIRE_CRYPTO_SIGNATURES:-0}"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
@@ -163,6 +165,26 @@ if [ -n "$SPARKLE_FEED_URL" ] && [ -n "$SPARKLE_PUBLIC_ED_KEY" ]; then
   <string>$SPARKLE_PUBLIC_ED_KEY</string>"
 fi
 
+RUNTIME_SIGNATURE_PLIST_KEYS=""
+if [ -n "$RUNTIME_MANIFEST_PUBLIC_KEYS" ]; then
+  RUNTIME_SIGNATURE_PLIST_KEYS="  <key>DonkeyRuntimeRequiresCryptographicManifestSignatures</key>
+  <$( [ "$RUNTIME_REQUIRE_CRYPTO_SIGNATURES" = "1" ] && printf true || printf false )/>
+  <key>DonkeyRuntimeManifestPublicKeys</key>
+  <dict>"
+  IFS=',' read -r -a runtime_key_pairs <<< "$RUNTIME_MANIFEST_PUBLIC_KEYS"
+  for pair in "${runtime_key_pairs[@]}"; do
+    key_id="${pair%%=*}"
+    public_key="${pair#*=}"
+    if [ -n "$key_id" ] && [ -n "$public_key" ] && [ "$key_id" != "$public_key" ]; then
+      RUNTIME_SIGNATURE_PLIST_KEYS="$RUNTIME_SIGNATURE_PLIST_KEYS
+    <key>$key_id</key>
+    <string>$public_key</string>"
+    fi
+  done
+  RUNTIME_SIGNATURE_PLIST_KEYS="$RUNTIME_SIGNATURE_PLIST_KEYS
+  </dict>"
+fi
+
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -191,6 +213,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <key>NSAppleEventsUsageDescription</key>
   <string>Donkey uses local app automation only for user-requested actions.</string>
 $SPARKLE_PLIST_KEYS
+$RUNTIME_SIGNATURE_PLIST_KEYS
 </dict>
 </plist>
 PLIST

@@ -6,8 +6,11 @@ public enum ManualCaptureDebugCommand: Equatable, Sendable {
     case manualCapture(ManualCaptureDebugCaptureOptions)
     case dryRunLatencyReport(DryRunLatencyReportDebugOptions)
     case localRuntimeStatus
+    case localRuntimeSupport
     case localRuntimeInstructions
     case installLocalRuntime(LocalRuntimeInstallDebugOptions)
+    case repairLocalRuntime(LocalModelRuntimeID)
+    case removeLocalRuntime(LocalModelRuntimeID)
 }
 
 public struct ManualCaptureDebugCaptureOptions: Equatable, Sendable {
@@ -91,8 +94,11 @@ public enum ManualCaptureDebugCommandParser {
                 || argument == "--manual-capture"
                 || argument == "--dry-run-latency-report"
                 || argument == "--local-runtime-status"
+                || argument == "--local-runtime-support"
                 || argument == "--local-runtime-instructions"
                 || argument == "--install-local-runtime"
+                || argument == "--repair-local-runtime"
+                || argument == "--remove-local-runtime"
                 || argument == "--window-id"
                 || argument == "--run-id"
                 || argument == "--trace-id"
@@ -136,11 +142,20 @@ public enum ManualCaptureDebugCommandParser {
             case "--local-runtime-status":
                 try setMode(.localRuntimeStatus, current: &mode)
                 index += 1
+            case "--local-runtime-support":
+                try setMode(.localRuntimeSupport, current: &mode)
+                index += 1
             case "--local-runtime-instructions":
                 try setMode(.localRuntimeInstructions, current: &mode)
                 index += 1
             case "--install-local-runtime":
                 try setMode(.installLocalRuntime, current: &mode)
+                index += 1
+            case "--repair-local-runtime":
+                try setMode(.repairLocalRuntime, current: &mode)
+                index += 1
+            case "--remove-local-runtime":
+                try setMode(.removeLocalRuntime, current: &mode)
                 index += 1
             case "--window-id":
                 let value = try value(after: argument, in: arguments, at: index)
@@ -235,6 +250,15 @@ public enum ManualCaptureDebugCommandParser {
                 )
             }
             return .localRuntimeStatus
+        case .localRuntimeSupport:
+            guard windowID == nil, runID == nil, traceID == nil, frameCount == 30,
+                  benchmarkMode == .endToEndDryRun, runtimeID == nil, runtimeSource == nil
+            else {
+                throw ManualCaptureDebugCommandParseError.unsupportedOption(
+                    "runtime install options require a runtime lifecycle command"
+                )
+            }
+            return .localRuntimeSupport
         case .localRuntimeInstructions:
             guard windowID == nil, runID == nil, traceID == nil, frameCount == 30,
                   benchmarkMode == .endToEndDryRun, runtimeID == nil, runtimeSource == nil
@@ -264,6 +288,30 @@ public enum ManualCaptureDebugCommandParser {
                     sourceDirectory: runtimeSource
                 )
             )
+        case .repairLocalRuntime:
+            guard windowID == nil, runID == nil, traceID == nil, frameCount == 30,
+                  benchmarkMode == .endToEndDryRun, runtimeSource == nil
+            else {
+                throw ManualCaptureDebugCommandParseError.unsupportedOption(
+                    "capture, benchmark, or source options are not supported with --repair-local-runtime"
+                )
+            }
+            guard let runtimeID else {
+                throw ManualCaptureDebugCommandParseError.missingValue("--runtime-id")
+            }
+            return .repairLocalRuntime(runtimeID)
+        case .removeLocalRuntime:
+            guard windowID == nil, runID == nil, traceID == nil, frameCount == 30,
+                  benchmarkMode == .endToEndDryRun, runtimeSource == nil
+            else {
+                throw ManualCaptureDebugCommandParseError.unsupportedOption(
+                    "capture, benchmark, or source options are not supported with --remove-local-runtime"
+                )
+            }
+            guard let runtimeID else {
+                throw ManualCaptureDebugCommandParseError.missingValue("--runtime-id")
+            }
+            return .removeLocalRuntime(runtimeID)
         }
     }
 
@@ -421,6 +469,29 @@ public enum ManualCaptureDebugCommandFormatter {
     }
 
     public static func lines(
+        for snapshot: LocalModelRuntimeSupportSnapshot
+    ) -> [String] {
+        var lines = [
+            "local runtime support snapshot",
+            "generatedAt=\(ISO8601DateFormatter().string(from: snapshot.generatedAt))"
+        ]
+        for status in snapshot.statuses {
+            lines.append(
+                [
+                    "runtime=\(status.runtimeID.rawValue)",
+                    "state=\(status.state.rawValue)",
+                    "runtimeVersion=\(status.runtimeVersion ?? "-")",
+                    "modelID=\(status.modelID)",
+                    "protocolVersion=\(status.sidecarProtocolVersion ?? "-")",
+                    "reason=\(status.reason ?? "-")"
+                ]
+                .joined(separator: " | ")
+            )
+        }
+        return lines
+    }
+
+    public static func lines(
         for installation: LocalModelRuntimeInstallation,
         spec: LocalModelRuntimeSpec
     ) -> [String] {
@@ -459,6 +530,9 @@ private enum ManualCaptureDebugCommandMode {
     case manualCapture
     case dryRunLatencyReport
     case localRuntimeStatus
+    case localRuntimeSupport
     case localRuntimeInstructions
     case installLocalRuntime
+    case repairLocalRuntime
+    case removeLocalRuntime
 }

@@ -26,10 +26,14 @@ final class LocalRuntimeOnboardingWindowController: NSWindowController {
         Task {
             await model.refresh()
             guard model.needsSetup else { return }
-            showWindow(nil)
-            window?.center()
-            NSApp.activate(ignoringOtherApps: true)
+            showSetup()
         }
+    }
+
+    func showSetup() {
+        showWindow(nil)
+        window?.center()
+        NSApp.activate(ignoringOtherApps: true)
     }
 }
 

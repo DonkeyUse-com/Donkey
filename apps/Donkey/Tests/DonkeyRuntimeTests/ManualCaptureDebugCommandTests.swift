@@ -64,6 +64,9 @@ struct ManualCaptureDebugCommandTests {
             arguments: ["Donkey", "--local-runtime-status"]
         ) == .localRuntimeStatus)
         #expect(try ManualCaptureDebugCommandParser.parse(
+            arguments: ["Donkey", "--local-runtime-support"]
+        ) == .localRuntimeSupport)
+        #expect(try ManualCaptureDebugCommandParser.parse(
             arguments: ["Donkey", "--local-runtime-instructions"]
         ) == .localRuntimeInstructions)
 
@@ -84,6 +87,13 @@ struct ManualCaptureDebugCommandTests {
                 sourceDirectory: URL(fileURLWithPath: "/tmp/yolo-runtime")
             )
         ))
+
+        #expect(try ManualCaptureDebugCommandParser.parse(
+            arguments: ["Donkey", "--repair-local-runtime", "--runtime-id", "yolo-segmenter"]
+        ) == .repairLocalRuntime(.yoloSegmenter))
+        #expect(try ManualCaptureDebugCommandParser.parse(
+            arguments: ["Donkey", "--remove-local-runtime", "--runtime-id", "yolo-segmenter"]
+        ) == .removeLocalRuntime(.yoloSegmenter))
     }
 
     @Test
@@ -182,6 +192,12 @@ struct ManualCaptureDebugCommandTests {
         #expect(instructionLines.contains("expectedExecutable=bin/donkey-parakeet-transcriber"))
         #expect(statusLines.contains("local runtime status"))
         #expect(statusLines.contains("runtime=yolo-segmenter | state=notInstalled | env=DONKEY_YOLO_SEGMENTER | executable=- | reason=noRegisteredRuntime"))
+
+        let supportLines = ManualCaptureDebugCommandFormatter.lines(
+            for: try manager.supportSnapshot()
+        )
+        #expect(supportLines.contains("local runtime support snapshot"))
+        #expect(supportLines.contains { $0.contains("runtime=local-llm") })
     }
 
     @Test

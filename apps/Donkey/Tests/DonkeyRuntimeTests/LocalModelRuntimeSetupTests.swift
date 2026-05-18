@@ -1,4 +1,5 @@
 @testable import DonkeyRuntime
+import CryptoKit
 import Foundation
 import Testing
 
@@ -170,6 +171,111 @@ struct LocalModelRuntimeSetupTests {
     }
 
     @Test
+    func cryptographicManifestSignatureIsVerifiedWhenKeyIsTrusted() async throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executableData = Data("#!/bin/sh\necho ok\n".utf8)
+        let privateKey = Curve25519.Signing.PrivateKey()
+        let publicKeyBase64 = privateKey.publicKey.rawRepresentation.base64EncodedString()
+        var manifest = LocalModelRuntimePackageManifest(
+            runtimeID: .uiUnderstander,
+            runtimeVersion: "1.0.0",
+            modelID: "local-ui-understander",
+            executableRelativePath: "bin/donkey-ui-understander",
+            files: [
+                LocalModelRuntimePackageFile(
+                    relativePath: "bin/donkey-ui-understander",
+                    downloadURL: URL(string: "https://example.test/ui/bin")!,
+                    sha256: LocalModelRuntimeSetupManager.sha256Hex(executableData),
+                    isExecutable: true
+                )
+            ],
+            signingKeyID: "test-release-key"
+        )
+        let payload = try LocalModelRuntimeSetupManager.signaturePayloadData(for: manifest)
+        manifest.signature = try privateKey.signature(for: payload).base64EncodedString()
+        let manager = try LocalModelRuntimeSetupManager(
+            baseDirectory: root,
+            trustedManifestSigningKeys: [
+                LocalModelRuntimeManifestSigningKey(
+                    keyID: "test-release-key",
+                    publicKeyBase64: publicKeyBase64
+                )
+            ],
+            requiresCryptographicManifestSignatures: true
+        )
+
+        let result = try await manager.downloadAndInstall(
+            manifest: manifest,
+            downloader: FakeRuntimeDownloader(files: [
+                URL(string: "https://example.test/ui/bin")!: executableData
+            ])
+        )
+
+        #expect(result.state == .installed)
+    }
+
+    @Test
+    func cryptographicManifestSignatureRejectsUnknownKeyAndBadSignature() async throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executableData = Data("#!/bin/sh\necho ok\n".utf8)
+        let privateKey = Curve25519.Signing.PrivateKey()
+        var manifest = LocalModelRuntimePackageManifest(
+            runtimeID: .yoloSegmenter,
+            runtimeVersion: "1.0.0",
+            modelID: "ultralytics/yolo26n-seg",
+            executableRelativePath: "bin/donkey-yolo-segmenter",
+            files: [
+                LocalModelRuntimePackageFile(
+                    relativePath: "bin/donkey-yolo-segmenter",
+                    downloadURL: URL(string: "https://example.test/yolo/bin")!,
+                    sha256: LocalModelRuntimeSetupManager.sha256Hex(executableData),
+                    isExecutable: true
+                )
+            ],
+            signingKeyID: "unknown-key"
+        )
+        let payload = try LocalModelRuntimeSetupManager.signaturePayloadData(for: manifest)
+        manifest.signature = try privateKey.signature(for: payload).base64EncodedString()
+        let manager = try LocalModelRuntimeSetupManager(
+            baseDirectory: root,
+            requiresCryptographicManifestSignatures: true
+        )
+
+        await #expect(throws: LocalModelRuntimeSetupError.manifestUnknownSigningKey("unknown-key")) {
+            _ = try await manager.downloadAndInstall(
+                manifest: manifest,
+                downloader: FakeRuntimeDownloader(files: [
+                    URL(string: "https://example.test/yolo/bin")!: executableData
+                ])
+            )
+        }
+
+        let trustedManager = try LocalModelRuntimeSetupManager(
+            baseDirectory: root,
+            trustedManifestSigningKeys: [
+                LocalModelRuntimeManifestSigningKey(
+                    keyID: "unknown-key",
+                    publicKeyBase64: privateKey.publicKey.rawRepresentation.base64EncodedString()
+                )
+            ],
+            requiresCryptographicManifestSignatures: true
+        )
+        var tampered = manifest
+        tampered.runtimeVersion = "2.0.0"
+
+        await #expect(throws: LocalModelRuntimeSetupError.manifestInvalidSignature) {
+            _ = try await trustedManager.downloadAndInstall(
+                manifest: tampered,
+                downloader: FakeRuntimeDownloader(files: [
+                    URL(string: "https://example.test/yolo/bin")!: executableData
+                ])
+            )
+        }
+    }
+
+    @Test
     func bundledRuntimePackageInstallsWithoutNetworkDownload() async throws {
         let root = temporaryDirectory()
         let package = temporaryDirectory()
@@ -337,6 +443,47 @@ struct LocalModelRuntimeSetupTests {
         #expect(report.modelID == "local-ui-understander")
         #expect(report.cacheDirectory?.contains("/ModelWeights/ui-understander/local-ui-understander") == true)
         #expect(report.metadata["modelWeights.status"] == "downloaded")
+    }
+
+    @Test
+    func removeRuntimeClearsRegistryAndManagedFiles() throws {
+        let root = temporaryDirectory()
+        let download = root.appendingPathComponent("Packages/yolo-segmenter/1.0.0", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeExecutable(
+            root: download,
+            relativePath: "bin/donkey-yolo-segmenter"
+        )
+        let manager = try LocalModelRuntimeSetupManager(baseDirectory: root)
+        try manager.registerExecutable(
+            runtimeID: .yoloSegmenter,
+            executableURL: executable,
+            downloadedDirectory: download,
+            runtimeVersion: "1.0.0",
+            modelID: "ultralytics/yolo26n-seg"
+        )
+
+        let removed = try manager.removeRuntime(runtimeID: .yoloSegmenter)
+        let status = try manager.status(for: .yoloSegmenter)
+
+        #expect(removed)
+        #expect(status.state == .notInstalled)
+        #expect(!FileManager.default.fileExists(atPath: download.path))
+    }
+
+    @Test
+    func supportExportOmitsUserDataAndIncludesRuntimeStatus() throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let manager = try LocalModelRuntimeSetupManager(baseDirectory: root)
+
+        let snapshot = try manager.supportSnapshot()
+        let exportData = try manager.supportExportData()
+        let exportText = String(decoding: exportData, as: UTF8.self)
+
+        #expect(snapshot.statuses.count == 4)
+        #expect(exportText.contains("parakeet-transcriber"))
+        #expect(!exportText.contains(root.path))
     }
 
     private func makeExecutable(

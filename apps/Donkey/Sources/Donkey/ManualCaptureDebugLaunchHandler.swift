@@ -62,6 +62,14 @@ struct ManualCaptureDebugLaunchHandler {
                     )
                 )
                 return 0
+            case .localRuntimeSupport:
+                let manager = try LocalModelRuntimeSetupManager()
+                printLines(
+                    ManualCaptureDebugCommandFormatter.lines(
+                        for: try manager.supportSnapshot()
+                    )
+                )
+                return 0
             case .localRuntimeInstructions:
                 let manager = try LocalModelRuntimeSetupManager()
                 printLines(
@@ -83,6 +91,26 @@ struct ManualCaptureDebugLaunchHandler {
                         spec: spec
                     )
                 )
+                return 0
+            case .repairLocalRuntime(let runtimeID):
+                let manager = try LocalModelRuntimeSetupManager()
+                let report = try await manager.repairRuntime(runtimeID: runtimeID)
+                printLines([
+                    "local runtime repaired",
+                    "runtime=\(report.runtimeID.rawValue)",
+                    "download=\(report.downloadResult.state.rawValue)",
+                    "modelPreparation=\(report.modelPreparation.state.rawValue)",
+                    "health=\(report.health.state.rawValue)"
+                ])
+                return 0
+            case .removeLocalRuntime(let runtimeID):
+                let manager = try LocalModelRuntimeSetupManager()
+                let removed = try manager.removeRuntime(runtimeID: runtimeID)
+                printLines([
+                    "local runtime removed",
+                    "runtime=\(runtimeID.rawValue)",
+                    "removed=\(removed)"
+                ])
                 return 0
             }
         } catch {

@@ -26,6 +26,8 @@ public enum LocalModelRuntimeSetupError: Error, Equatable, Sendable {
     case manifestFileHashMismatch(relativePath: String)
     case manifestMissingDownloadURL(relativePath: String)
     case manifestMissingSignature
+    case manifestUnknownSigningKey(String)
+    case manifestInvalidSignature
 }
 
 public enum LocalModelRuntimeDownloadState: String, Codable, Equatable, Sendable {
@@ -282,6 +284,82 @@ public struct LocalModelRuntimeModelPreparationReport: Codable, Equatable, Senda
     }
 }
 
+public struct LocalModelRuntimeManifestSigningKey: Equatable, Sendable {
+    public var keyID: String
+    public var publicKeyBase64: String
+
+    public init(keyID: String, publicKeyBase64: String) {
+        self.keyID = keyID
+        self.publicKeyBase64 = publicKeyBase64
+    }
+}
+
+public struct LocalModelRuntimeRepairReport: Codable, Equatable, Sendable {
+    public var runtimeID: LocalModelRuntimeID
+    public var downloadResult: LocalModelRuntimeDownloadResult
+    public var modelPreparation: LocalModelRuntimeModelPreparationReport
+    public var health: LocalModelRuntimeHealthReport
+    public var metadata: [String: String]
+
+    public init(
+        runtimeID: LocalModelRuntimeID,
+        downloadResult: LocalModelRuntimeDownloadResult,
+        modelPreparation: LocalModelRuntimeModelPreparationReport,
+        health: LocalModelRuntimeHealthReport,
+        metadata: [String: String] = [:]
+    ) {
+        self.runtimeID = runtimeID
+        self.downloadResult = downloadResult
+        self.modelPreparation = modelPreparation
+        self.health = health
+        self.metadata = metadata
+    }
+}
+
+public struct LocalModelRuntimeSupportStatus: Codable, Equatable, Sendable {
+    public var runtimeID: LocalModelRuntimeID
+    public var displayName: String
+    public var state: LocalModelRuntimeInstallState
+    public var environmentVariableName: String
+    public var runtimeVersion: String?
+    public var modelID: String
+    public var sidecarProtocolVersion: String?
+    public var reason: String?
+
+    public init(
+        runtimeID: LocalModelRuntimeID,
+        displayName: String,
+        state: LocalModelRuntimeInstallState,
+        environmentVariableName: String,
+        runtimeVersion: String? = nil,
+        modelID: String,
+        sidecarProtocolVersion: String? = nil,
+        reason: String? = nil
+    ) {
+        self.runtimeID = runtimeID
+        self.displayName = displayName
+        self.state = state
+        self.environmentVariableName = environmentVariableName
+        self.runtimeVersion = runtimeVersion
+        self.modelID = modelID
+        self.sidecarProtocolVersion = sidecarProtocolVersion
+        self.reason = reason
+    }
+}
+
+public struct LocalModelRuntimeSupportSnapshot: Codable, Equatable, Sendable {
+    public var generatedAt: Date
+    public var statuses: [LocalModelRuntimeSupportStatus]
+
+    public init(
+        generatedAt: Date,
+        statuses: [LocalModelRuntimeSupportStatus]
+    ) {
+        self.generatedAt = generatedAt
+        self.statuses = statuses
+    }
+}
+
 public protocol LocalModelRuntimePackageDownloading: Sendable {
     func download(from url: URL) async throws -> Data
 }
@@ -319,19 +397,27 @@ public struct LocalModelRuntimeSetupManager: Sendable {
     public var isExecutableFile: @Sendable (String) -> Bool
     public var now: @Sendable () -> Date
     public var bundledPackageDirectory: @Sendable (LocalModelRuntimeID) -> URL?
+    public var trustedManifestSigningKeys: [String: String]
+    public var requiresCryptographicManifestSignatures: Bool
 
     public init(
         baseDirectory: URL? = nil,
         specs: [LocalModelRuntimeSpec] = Self.defaultSpecs,
         isExecutableFile: @escaping @Sendable (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) },
         now: @escaping @Sendable () -> Date = Date.init,
-        bundledPackageDirectory: @escaping @Sendable (LocalModelRuntimeID) -> URL? = Self.defaultBundledPackageDirectory
+        bundledPackageDirectory: @escaping @Sendable (LocalModelRuntimeID) -> URL? = Self.defaultBundledPackageDirectory,
+        trustedManifestSigningKeys: [LocalModelRuntimeManifestSigningKey] = Self.defaultTrustedManifestSigningKeys(),
+        requiresCryptographicManifestSignatures: Bool = Self.defaultRequiresCryptographicManifestSignatures()
     ) throws {
         self.baseDirectory = try baseDirectory ?? Self.defaultBaseDirectory()
         self.specs = specs
         self.isExecutableFile = isExecutableFile
         self.now = now
         self.bundledPackageDirectory = bundledPackageDirectory
+        self.trustedManifestSigningKeys = Dictionary(
+            uniqueKeysWithValues: trustedManifestSigningKeys.map { ($0.keyID, $0.publicKeyBase64) }
+        )
+        self.requiresCryptographicManifestSignatures = requiresCryptographicManifestSignatures
     }
 
     public static let defaultSpecs: [LocalModelRuntimeSpec] = [
@@ -424,6 +510,37 @@ public struct LocalModelRuntimeSetupManager: Sendable {
         return packageDirectory
     }
 
+    public static func defaultTrustedManifestSigningKeys() -> [LocalModelRuntimeManifestSigningKey] {
+        var keys: [LocalModelRuntimeManifestSigningKey] = []
+        if let bundledKeys = Bundle.main.object(
+            forInfoDictionaryKey: "DonkeyRuntimeManifestPublicKeys"
+        ) as? [String: String] {
+            keys.append(contentsOf: bundledKeys.map { keyID, publicKey in
+                LocalModelRuntimeManifestSigningKey(keyID: keyID, publicKeyBase64: publicKey)
+            })
+        }
+
+        keys.append(contentsOf: ProcessInfo.processInfo.environment["DONKEY_RUNTIME_MANIFEST_PUBLIC_KEYS"]?
+            .split(separator: ",")
+            .compactMap { pair -> LocalModelRuntimeManifestSigningKey? in
+                let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+                guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else {
+                    return nil
+                }
+                return LocalModelRuntimeManifestSigningKey(keyID: parts[0], publicKeyBase64: parts[1])
+            } ?? [])
+        return keys
+    }
+
+    public static func defaultRequiresCryptographicManifestSignatures() -> Bool {
+        if let bundledValue = Bundle.main.object(
+            forInfoDictionaryKey: "DonkeyRuntimeRequiresCryptographicManifestSignatures"
+        ) as? Bool {
+            return bundledValue
+        }
+        return ProcessInfo.processInfo.environment["DONKEY_RUNTIME_REQUIRE_CRYPTO_SIGNATURES"] == "1"
+    }
+
     private func bundledPackageManifest(for runtimeID: LocalModelRuntimeID) throws -> LocalModelRuntimePackageManifest? {
         guard let packageDirectory = bundledPackageDirectory(runtimeID) else { return nil }
         let manifestURL = packageDirectory.appendingPathComponent("manifest.json", isDirectory: false)
@@ -512,6 +629,7 @@ public struct LocalModelRuntimeSetupManager: Sendable {
             || manifest.signingKeyID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) {
             throw LocalModelRuntimeSetupError.manifestMissingSignature
         }
+        try verifyManifestSignatureIfConfigured(manifest, requiresSignature: requiresSignature)
     }
 
     @discardableResult
@@ -906,11 +1024,115 @@ public struct LocalModelRuntimeSetupManager: Sendable {
         try configuredEnvironment()[environmentVariableName]
     }
 
+    @discardableResult
+    public func removeRuntime(
+        runtimeID: LocalModelRuntimeID,
+        removePackageFiles: Bool = true,
+        removeModelWeights: Bool = true
+    ) throws -> Bool {
+        _ = try spec(for: runtimeID)
+        var registry = try loadRegistry()
+        guard let installation = registry.installations.removeValue(forKey: runtimeID.rawValue) else {
+            return false
+        }
+        try saveRegistry(registry)
+
+        if removePackageFiles {
+            let packageDirectory = URL(fileURLWithPath: installation.downloadedDirectoryPath, isDirectory: true)
+            if packageDirectory.path.hasPrefix(baseDirectory.path),
+               FileManager.default.fileExists(atPath: packageDirectory.path) {
+                try FileManager.default.removeItem(at: packageDirectory)
+            }
+        }
+
+        if removeModelWeights {
+            let cacheDirectory = modelCacheDirectory(for: installation)
+            if cacheDirectory.path.hasPrefix(baseDirectory.path),
+               FileManager.default.fileExists(atPath: cacheDirectory.path) {
+                try FileManager.default.removeItem(at: cacheDirectory)
+            }
+        }
+
+        return true
+    }
+
+    public func repairRuntime(
+        runtimeID: LocalModelRuntimeID,
+        downloader: any LocalModelRuntimePackageDownloading = URLSessionLocalModelRuntimePackageDownloader()
+    ) async throws -> LocalModelRuntimeRepairReport {
+        let removed = try removeRuntime(runtimeID: runtimeID)
+        let downloadResult = try await downloadAndInstall(runtimeID: runtimeID, downloader: downloader)
+        let modelPreparation = try await prepareModelWeights(runtimeID: runtimeID)
+        let health = try await recheckHealth(runtimeID: runtimeID)
+        return LocalModelRuntimeRepairReport(
+            runtimeID: runtimeID,
+            downloadResult: downloadResult,
+            modelPreparation: modelPreparation,
+            health: health,
+            metadata: ["removedExistingRuntime": String(removed)]
+        )
+    }
+
+    public func supportSnapshot() throws -> LocalModelRuntimeSupportSnapshot {
+        LocalModelRuntimeSupportSnapshot(
+            generatedAt: now(),
+            statuses: try statuses().map { status in
+                LocalModelRuntimeSupportStatus(
+                    runtimeID: status.spec.id,
+                    displayName: status.spec.displayName,
+                    state: status.state,
+                    environmentVariableName: status.spec.environmentVariableName,
+                    runtimeVersion: status.installation?.runtimeVersion,
+                    modelID: status.installation?.modelID ?? status.spec.modelName,
+                    sidecarProtocolVersion: status.installation?.sidecarProtocolVersion,
+                    reason: status.metadata["reason"]
+                )
+            }
+        )
+    }
+
+    public func supportExportData() throws -> Data {
+        try Self.encoder().encode(supportSnapshot())
+    }
+
     private func spec(for runtimeID: LocalModelRuntimeID) throws -> LocalModelRuntimeSpec {
         guard let spec = specs.first(where: { $0.id == runtimeID }) else {
             throw LocalModelRuntimeSetupError.unknownRuntime(runtimeID.rawValue)
         }
         return spec
+    }
+
+    private func verifyManifestSignatureIfConfigured(
+        _ manifest: LocalModelRuntimePackageManifest,
+        requiresSignature: Bool
+    ) throws {
+        guard requiresSignature else { return }
+        guard let signingKeyID = manifest.signingKeyID,
+              let signature = manifest.signature,
+              !signingKeyID.isEmpty,
+              !signature.isEmpty
+        else {
+            throw LocalModelRuntimeSetupError.manifestMissingSignature
+        }
+
+        guard let publicKeyBase64 = trustedManifestSigningKeys[signingKeyID] else {
+            if requiresCryptographicManifestSignatures {
+                throw LocalModelRuntimeSetupError.manifestUnknownSigningKey(signingKeyID)
+            }
+            return
+        }
+
+        guard let publicKeyData = Data(base64Encoded: publicKeyBase64),
+              let signatureData = Data(base64Encoded: signature)
+        else {
+            throw LocalModelRuntimeSetupError.manifestInvalidSignature
+        }
+
+        let publicKey = try Curve25519.Signing.PublicKey(rawRepresentation: publicKeyData)
+        let payload = try Self.signaturePayloadData(for: manifest)
+        guard publicKey.isValidSignature(signatureData, for: payload) else {
+            throw LocalModelRuntimeSetupError.manifestInvalidSignature
+        }
     }
 
     private func loadRegistry() throws -> LocalModelRuntimeRegistry {
@@ -978,6 +1200,42 @@ public struct LocalModelRuntimeSetupManager: Sendable {
             .map { String(format: "%02x", $0) }
             .joined()
     }
+
+    public static func signaturePayloadData(
+        for manifest: LocalModelRuntimePackageManifest
+    ) throws -> Data {
+        try encoder().encode(
+            LocalModelRuntimePackageManifestSignaturePayload(
+                runtimeID: manifest.runtimeID,
+                runtimeVersion: manifest.runtimeVersion,
+                modelID: manifest.modelID,
+                platform: manifest.platform,
+                architecture: manifest.architecture,
+                sidecarProtocolVersion: manifest.sidecarProtocolVersion,
+                minimumDonkeyVersion: manifest.minimumDonkeyVersion,
+                executableRelativePath: manifest.executableRelativePath,
+                files: manifest.files,
+                signingKeyID: manifest.signingKeyID,
+                releaseNotesURL: manifest.releaseNotesURL,
+                metadata: manifest.metadata
+            )
+        )
+    }
+}
+
+private struct LocalModelRuntimePackageManifestSignaturePayload: Codable, Equatable, Sendable {
+    var runtimeID: LocalModelRuntimeID
+    var runtimeVersion: String
+    var modelID: String
+    var platform: String
+    var architecture: String
+    var sidecarProtocolVersion: String
+    var minimumDonkeyVersion: String
+    var executableRelativePath: String
+    var files: [LocalModelRuntimePackageFile]
+    var signingKeyID: String?
+    var releaseNotesURL: URL?
+    var metadata: [String: String]
 }
 
 private struct LocalModelRuntimeHealthRequest: Codable, Equatable, Sendable {

@@ -11,15 +11,19 @@ Donkey now supports a normal post-install runtime setup boundary:
 - app-managed runtime registry under Application Support
 - bundled runner packages embedded in `Donkey.app`
 - manifest validation for runtime id, platform, architecture, executable path,
-  required signature metadata, and SHA-256 file hashes
+  required signature metadata, configured release-key signatures, and SHA-256
+  file hashes
 - package install into managed Application Support directories
 - setup-time model preparation before health checks
 - sidecar `healthCheck` protocol
 - retryable setup that keeps completed installs and resumes failed or missing
   runtimes
+- settings access to reopen setup
+- repair/remove lifecycle helpers
+- user-data-free support status export
 - app-registry sidecar resolution when shell environment variables are absent
-- developer debug commands for setup instructions, status, and manual runtime
-  registration
+- developer debug commands for setup instructions, status, support status,
+  repair, remove, and manual runtime registration
 
 The supported behavior is documented in:
 
@@ -29,8 +33,6 @@ The supported behavior is documented in:
 
 ## Follow-Up Work
 
-Remaining release hardening is tracked by `plans/master-plan.md`, not this
-completed plan. That includes offline wheelhouse artifacts, final backend
-packaging, cryptographic release-key verification, runtime repair/remove flows,
-a settings entry to reopen setup, support export, and the final command-parser
-LLM prerequisite decision.
+Remaining release artifact work is tracked by `plans/master-plan.md`, not this
+completed plan. That includes offline wheelhouse artifacts and the real local
+UI-understanding backend.

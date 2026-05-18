@@ -38,37 +38,18 @@ contracts, local runtime setup UI, manifest/checksum installation, model-prep
 hooks, latency reporting, memory/redaction/observability scaffolding, and
 optional slow-planner hint path are supported and documented.
 
-The milestone is not release-complete because local runtime packaging is still
-not self-contained.
+The milestone is not release-complete because local runtime model artifacts are
+still not self-contained and the live Weather benchmark still needs a recorded
+manual baseline.
 
 ## What Remains
 
-1. Ship release-grade local runtime packages:
-   - publish offline wheelhouse-backed Parakeet and YOLO bundles for supported
-     macOS targets
-   - decide whether Parakeet's NVIDIA NeMo backend ships prepared or remains an
-     optional backend
+1. Ship release-grade local runtime artifacts:
+   - publish offline wheelhouse-backed Parakeet and YOLO bundles for supported macOS targets
    - replace the UI-understanding placeholder with a real local backend
-   - replace the Ollama-backed command-parser LLM with a self-contained runner,
-     or explicitly keep Ollama as a documented prerequisite
 
-2. Harden runtime trust and lifecycle:
-   - verify runtime manifests with release-key cryptographic signatures, not
-     signature metadata alone
-   - add behind-the-scenes repair/remove flows for broken runtime installs
-   - add a settings entry to reopen runtime setup and a user-data-free support
-     export for runtime status
-   - keep the first-run setup button retryable without exposing per-runtime user
-     customization
-
-3. Clean up command parsing policy:
-   - decide whether submitted commands may keep deterministic built-in fallback
-     when the local LLM sidecar is unavailable
-   - make code, docs, and tests agree on that policy
-
-4. Prove the benchmark:
-   - run "show me the weather for SF" through a verified Weather result with no
-     remote dependency in the execution trace
+2. Prove the live benchmark:
+   - run "show me the weather for SF" through a verified Weather result with no remote dependency in the execution trace
    - compare latency against a documented manual baseline on the same machine
 
 ## Invariants
@@ -93,5 +74,5 @@ Do not move the active plans to `plans/done/` until:
   selected rule, input/backend calls, verification, and guardrails.
 - Voice commands, when enabled, transcribe locally before command parsing.
 - The hot loop keeps working when the slow AI harness is disabled or failing.
-- Runtime packaging, trust verification, and setup repair are release-grade.
+- Runtime artifacts are release-grade.
 - Guides document the supported behavior and boundaries.

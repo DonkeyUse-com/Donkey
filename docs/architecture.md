@@ -137,13 +137,13 @@ weights are not bundled in `Donkey.app`. Developer environment variables can
 override sidecar paths, while normal installs resolve through the app-managed
 runtime registry under Application Support.
 
-The supported setup boundary includes bundled runner packages, manifest and
-checksum validation, Application Support registration, health checks, model-prep
-hooks, retryable first-run setup, and optional package-local Python wheelhouses.
-Release hardening still needs actual offline wheelhouse artifacts, a real
-UI-understanding backend, a self-contained command-parser LLM or documented
-Ollama prerequisite, cryptographic release-key signature verification, and
-repair/remove lifecycle flows.
+The supported setup boundary includes bundled runner packages, manifest,
+checksum, and configured release-key signature validation, Application Support
+registration, health checks, model-prep hooks, retryable first-run setup,
+settings access, repair/remove lifecycle helpers, support status export, and
+optional package-local Python wheelhouses. Release hardening still needs actual
+offline wheelhouse artifacts and a real UI-understanding backend. The command
+parser LLM currently uses Ollama as a documented local prerequisite.
 
 ## Slower AI Harness
 
