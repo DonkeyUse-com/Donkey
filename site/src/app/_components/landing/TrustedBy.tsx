@@ -56,7 +56,7 @@ export function TrustedBy() {
             Open source
           </span>
           <span style={{ fontSize: isDesktop ? 16 : 15, fontWeight: 700 }}>
-            Donkey is Apache 2.0-licensed and built in the open.
+            Donkey is built in the open.
           </span>
         </div>
         <span

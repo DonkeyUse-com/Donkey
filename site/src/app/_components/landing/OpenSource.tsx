@@ -36,8 +36,8 @@ export function OpenSource() {
           color: "#454545",
         }}
       >
-        Donkey is Apache 2.0-licensed and built in the open. Read the source,
-        run your own build, contribute an agent: it is all on GitHub.
+        Donkey is built in the open. Read the source, run your own build,
+        contribute an agent: it is all on GitHub.
       </p>
 
       <div style={{ marginTop: 32 }}>
