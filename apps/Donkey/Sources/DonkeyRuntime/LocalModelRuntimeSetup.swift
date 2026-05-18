@@ -454,7 +454,7 @@ public struct LocalModelRuntimeSetupManager: Sendable {
             displayName: "Local UI understanding",
             environmentVariableName: "DONKEY_UI_UNDERSTANDER",
             expectedExecutableRelativePath: "bin/donkey-ui-understander",
-            modelName: "local-ui-understander",
+            modelName: "apple-vision-text-recognition",
             downloadPageURL: nil,
             installSteps: [
                 "Click Set Up in Donkey after installing the app.",

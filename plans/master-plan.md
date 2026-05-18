@@ -1,78 +1,30 @@
-# Fast Local Navigation Agent Master Plan
+# Master Plan
 
-This is the active queue for the fast local navigation milestone. Completed
-behavior belongs in `docs/guides/` and `docs/architecture.md`; do not keep
-completed implementation history here.
+This file is the permanent sequencing guide for active work. Keep it present
+even when there are no active tasks.
 
-## Goal
+## How To Process Tasks
 
-Donkey should take a short local command, resolve it to app-task knowledge,
-navigate the local desktop/app surface, perform guarded local actions, verify the
-result, and emit a replayable latency trace.
+- Start with `docs/README.md`, then read the guide that describes the supported
+  behavior being changed.
+- Treat `docs/` as supported behavior and `plans/` as task coordination context.
+- Put implementation details in focused plan files. Use this file to sequence
+  those plans, not to keep long implementation logs.
+- Work the items in `Current Sequence` from top to bottom unless the user gives
+  a newer priority.
+- Before starting an item, check whether the work is already complete in code
+  and docs.
+- When an item is complete, update the relevant guide, move completed plan files
+  to `plans/done/`, and remove the item from this sequence.
+- If there are no active tasks, leave `Current Sequence` empty and do not invent
+  new work.
 
-The benchmark command remains:
+## Current Sequence
 
-```text
-show me the weather for SF
-```
-
-Weather is only benchmark data. The same generic loop should also support app
-tasks such as media playback and review-first document form fill.
-
-## Active Plans
-
-- `plans/20-off-the-shelf-run-loop.md`
-- `plans/19-ai-harness.md`
-- `plans/01-latency-budget.md`
-- `plans/02-capture-and-perception.md`
-- `plans/03-fast-controller.md`
-- `plans/05-action-engine.md`
-- `plans/06-benchmarking.md`
-
-Treat other `plans/` files as background unless this plan names them.
-
-## Current Boundary
-
-The local navigation loop, task catalog, guarded input boundary, sidecar runner
-contracts, local runtime setup UI, manifest/checksum installation, model-prep
-hooks, latency reporting, memory/redaction/observability scaffolding, and
-optional slow-planner hint path are supported and documented.
-
-The milestone is not release-complete because local runtime model artifacts are
-still not self-contained and the live Weather benchmark still needs a recorded
-manual baseline.
-
-## What Remains
-
-1. Ship release-grade local runtime artifacts:
-   - publish offline wheelhouse-backed Parakeet and YOLO bundles for supported macOS targets
-   - replace the UI-understanding placeholder with a real local backend
-
-2. Prove the live benchmark:
-   - run "show me the weather for SF" through a verified Weather result with no remote dependency in the execution trace
-   - compare latency against a documented manual baseline on the same machine
+No active implementation tasks.
 
 ## Invariants
 
-- No remote model call, chat LLM call, or general VLM call may be required for a
-  reflex tick.
-- The reflex path uses latest-frame-wins queues, typed world state, semantic
-  controller actions, and action-engine-owned OS input.
-- Live input requires policy allowance, focus guard success, rate/hold/release
-  guardrails, and replayable traces.
-- Slow AI output can become validated intent, task definitions, app-knowledge
-  updates, observation summaries, transcripts, memory proposals, or planner
-  hints. It must not become direct input.
-- Latency claims require monotonic timestamps and p50/p95/p99 reports.
-
-## Completion Gates
-
-Do not move the active plans to `plans/done/` until:
-
-- Weather lookup completes end to end locally and verifies the Weather result.
-- Dry-run and guarded-live traces explain parsing, launch/focus, observation,
-  selected rule, input/backend calls, verification, and guardrails.
-- Voice commands, when enabled, transcribe locally before command parsing.
-- The hot loop keeps working when the slow AI harness is disabled or failing.
-- Runtime artifacts are release-grade.
-- Guides document the supported behavior and boundaries.
+- Completed behavior belongs in `docs/`, not in active plans.
+- Plans should stay brief and represent remaining work.
+- Runtime, input, and latency claims should be tied to verifiable local traces.

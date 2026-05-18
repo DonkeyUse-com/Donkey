@@ -10,6 +10,8 @@ Donkey now supports a normal post-install runtime setup boundary:
 - first-launch setup window with one primary setup button
 - app-managed runtime registry under Application Support
 - bundled runner packages embedded in `Donkey.app`
+- offline wheelhouse packaging support for Parakeet and YOLO dependencies
+- Swift UI-understanding sidecar backed by Apple Vision text recognition
 - manifest validation for runtime id, platform, architecture, executable path,
   required signature metadata, configured release-key signatures, and SHA-256
   file hashes
@@ -33,6 +35,5 @@ The supported behavior is documented in:
 
 ## Follow-Up Work
 
-Remaining release artifact work is tracked by `plans/master-plan.md`, not this
-completed plan. That includes offline wheelhouse artifacts and the real local
-UI-understanding backend.
+Remaining milestone proof is tracked by `plans/master-plan.md`, not this
+completed plan.

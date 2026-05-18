@@ -12,6 +12,10 @@ let package = Package(
             name: "Donkey",
             targets: ["Donkey"]
         ),
+        .executable(
+            name: "DonkeyUIUnderstandingSidecar",
+            targets: ["DonkeyUIUnderstandingSidecar"]
+        ),
         .library(
             name: "DonkeyContracts",
             targets: ["DonkeyContracts"]
@@ -50,6 +54,12 @@ let package = Package(
             ],
             resources: [
                 .copy("Resources/theme.json")
+            ]
+        ),
+        .executableTarget(
+            name: "DonkeyUIUnderstandingSidecar",
+            dependencies: [
+                "DonkeyRuntime"
             ]
         ),
         .testTarget(

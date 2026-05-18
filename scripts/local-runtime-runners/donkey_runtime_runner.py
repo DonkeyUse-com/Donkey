@@ -278,8 +278,8 @@ def prepare_model_weights(request: dict[str, Any]) -> dict[str, Any]:
             cache_dir,
             {
                 "modelWeights.status": "notRequired",
-                "runtime.backend": "placeholder",
-                "reason": "uiUnderstandingBackendNotConfigured",
+                "runtime.backend": "external-ui-understander",
+                "reason": "uiUnderstandingUsesPackagedAppleVisionSidecar",
             },
         )
 
@@ -709,7 +709,7 @@ def run_ui_understander(request: dict[str, Any]) -> dict[str, Any]:
         "controls": [],
         "formFields": [],
         "confidence": 0,
-        "metadata": metadata({"reason": "uiUnderstandingBackendNotConfigured"}),
+        "metadata": metadata({"reason": "uiUnderstandingRequiresPackagedAppleVisionSidecar"}),
     }
 
 

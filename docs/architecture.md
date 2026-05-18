@@ -141,9 +141,9 @@ The supported setup boundary includes bundled runner packages, manifest,
 checksum, and configured release-key signature validation, Application Support
 registration, health checks, model-prep hooks, retryable first-run setup,
 settings access, repair/remove lifecycle helpers, support status export, and
-optional package-local Python wheelhouses. Release hardening still needs actual
-offline wheelhouse artifacts and a real UI-understanding backend. The command
-parser LLM currently uses Ollama as a documented local prerequisite.
+package-local Python wheelhouses built for the release target. The UI
+understanding backend is a packaged Swift sidecar using Apple Vision, and the
+command parser LLM currently uses Ollama as a documented local prerequisite.
 
 ## Slower AI Harness
 
