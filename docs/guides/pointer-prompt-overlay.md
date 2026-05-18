@@ -4,27 +4,33 @@
 
 Donkey supports a floating macOS pointer prompt overlay:
 
-- double-tap Command and release to activate and focus a compact prompt modal at the current pointer location without clicking into the target app
+- double-tap Command and release to activate and focus a compact prompt modal centered on the current screen without clicking into the target app
+- Command-K activates and focuses the prompt input in the center of the current screen
 - double-tap Command and hold the second Command press to activate voice input
+- shows a notch-anchored black status panel flush with the top center of the current screen
+- sizes the notch status panel from `NSScreen.safeAreaInsets` and `auxiliaryTopLeftArea` / `auxiliaryTopRightArea`, with fallback dimensions for non-reporting displays
+- keeps status text below the physical notch void while the black panel visually extends the notch
+- expands the notch status panel on hover to show the agent roster and a bottom command row
+- shows an update button in the expanded notch header when Sparkle reports a valid appcast update
 - shows a black prompt modal with text input and a white voice waveform while active
 - uses a wide pill-shaped prompt for single-line text, then expands to a rounded rectangle when text wraps at the max input width or the user inserts new lines
 - places the waveform in a bottom toolbar that blends with the input background when the prompt is expanded
 - captures microphone audio while active and renders the waveform from recent live audio levels
 - on voice activation, records a bounded local audio buffer, sends it to the Parakeet-only local transcription adapter, displays transcript progress, and submits decoded transcript text through the same command path as typed input
-- keeps the prompt modal pinned where activation happened until the user drags, dismisses, or closes the modal
+- keeps the prompt modal centered until the user drags, dismisses, or closes the modal
 - dismisses the active modal when the user clicks outside it
 - closes the active modal with a small high-contrast circular x button outside the prompt surface at the top-right corner
 - supports dragging the active modal from capsule areas outside the text input
 - lets normal clicks pass through the inactive overlay and transparent active overlay space
-- opens near the user mouse at a fixed 45-degree bottom-right diagonal
-- keeps that fixed offset at screen edges instead of flipping or clamping to the visible screen bounds
+- opens the prompt input centered on the current screen instead of following the cursor
+- dismisses the centered prompt after submission and moves visible progress/result feedback into the notch status panel
 - submits typed prompt text through the local-app command pipeline while keeping model parsing, task validation, and live input outside the SwiftUI rendering path
 
 This is a visual, typed-command, and voice-command UI capability. Typed submissions go to the local-app command handler, which loads built-in plus local JSON/JSONL task definitions, prefers local-model task-intent parsing, validates the intent against the app-task catalog, and then runs the guarded local-app live runner. Voice submissions produce local transcript text through the Parakeet-only transcription boundary before entering that same command handler. Review-only document tasks can return a compact review summary such as the number of mapped fields. The overlay itself does not capture the screen, synthesize input, or require Accessibility permission. It does request microphone permission for local waveform capture and voice commands.
 
 ## Technical Guidelines
 
-- The overlay window is an `NSPanel` owned by `PointerPromptOverlayController`.
+- The overlay uses `NSPanel` surfaces owned by `PointerPromptOverlayController`: a top-center notch status panel and a separate centered prompt input panel.
 - Donkey runs with the accessory activation policy, and prompt focus must make the app active, make the panel key, then make the composer text view first responder. A blinking insertion point alone does not mean macOS is sending keyboard events to the panel.
 - SwiftUI rendering stays in `DonkeyUI`; it receives `PointerPromptState` and `PointerPromptPlacement` from `DonkeyContracts`.
 - Product state stays in `PointerPromptOverlayModel`.
@@ -36,11 +42,12 @@ This is a visual, typed-command, and voice-command UI capability. Typed submissi
 - The controller owns microphone capture and publishes normalized audio levels into product state; SwiftUI only renders the levels it receives.
 - The active prompt modal should use a capsule shape and keep transparent active overlay space passing clicks through to windows underneath after it dismisses.
 - Agent pointer drawing and theme code may remain available for future features, but the prompt overlay should not render a visible cursor.
-- The prompt should keep its retained fixed offset geometry from the real pointer on an equal x/y diagonal.
-- Runtime placement is fixed to `bottomRight`; alternate `PointerPromptPlacement` values are only rendering variants.
-- The controller must not clamp visible modal bounds to `NSScreen.visibleFrame`; cursor-relative positioning is a direct fixed-offset calculation.
-- Launch positioning and double-Command activation handling belong in `PointerPromptOverlayController`, not the SwiftUI view.
-- Double-Command is the only active shortcut today. Its default lives in `PointerPromptActivationShortcut.doubleCommand` so a future settings layer can supply a different shortcut without rewriting controller event handling.
+- Runtime placement remains fixed to `bottomRight` for compatibility with the existing view contract; the rendered input panel itself is centered and no longer uses pointer-relative geometry.
+- The notch status panel should keep its visual language aligned with the `/prototype` route: compact active-agent badge when collapsed, roster plus command row when expanded.
+- The expanded notch header may show an update button when `PointerPromptUpdateState` is actionable; clicking it should invoke Sparkle's standard update UI outside the SwiftUI view.
+- The controller should derive notch geometry from the active `NSScreen`, prefer safe-area and auxiliary-top areas over hardcoded notch sizes, and keep visible status content below the top safe-area inset.
+- Launch positioning, notch positioning, Command-K activation, and double-Command activation handling belong in `PointerPromptOverlayController`, not the SwiftUI view.
+- Command-K is the primary typed prompt activation shortcut. Double-Command remains available as a voice-friendly activation shortcut through `PointerPromptActivationShortcut.doubleCommand`.
 - Double-Command prompt activation should require two clean Command down/up taps within 450ms. Any intervening key press, mouse press, extra modifier, or overlong Command hold should reset the sequence so normal shortcuts do not summon the modal.
 - Holding the second clean Command press for the shortcut's configured hold duration should activate the prompt modal and start microphone level capture instead of waiting for the second release.
 - Keep the overlay non-invasive: no screen capture loop, input execution, Accessibility prompt, or direct model call in SwiftUI rendering. Submit text to a command handler boundary instead.
@@ -56,7 +63,7 @@ swift build
 swift run Donkey
 ```
 
-Launch Donkey and confirm the inactive overlay does not render a visible cursor. Double-tap Command and release to show the black prompt capsule with keyboard focus, grant microphone permission if prompted, then speak or tap near the microphone and confirm the waveform responds to real audio levels. Type enough text to wrap and confirm the prompt changes from a pill into a rounded rectangle, grows downward while its top edge stays fixed, and moves the waveform into a blended bottom toolbar with no divider between the toolbar and text input. Press Shift-Return and confirm it inserts a newline; press Return and confirm it submits. Move the mouse and confirm the active modal stays pinned. Double-tap Command again but hold the second Command press, and confirm the same prompt modal appears. Click outside the active modal and confirm it dismisses. Reactivate, click the high-contrast rounded x button outside the capsule, and confirm it closes and remains visible over light and dark app backgrounds. Drag the modal from non-input capsule areas. Activate near the bottom-right screen edge to confirm the prompt keeps the same fixed offset instead of flipping or clamping. Confirm Command plus another key, Command-click, and a single Command tap do not activate the modal.
+Launch Donkey and confirm the inactive overlay renders as a black notch extension at the top center, with status content below the physical notch area on notched displays. Hover the notch and confirm it expands into the agent roster with a bottom command row, then collapses after the pointer leaves. With Sparkle configured to a local appcast that contains a newer signed update, confirm the expanded header shows an update button and clicking it opens Sparkle's update UI. Press Command-K and confirm the black prompt capsule opens centered on the screen with keyboard focus, grant microphone permission if prompted, then speak or tap near the microphone and confirm the waveform responds to real audio levels. Type enough text to wrap and confirm the prompt changes from a pill into a rounded rectangle and remains centered as it grows. Press Shift-Return and confirm it inserts a newline; press Return and confirm it submits, dismisses the prompt, and shows working/result status in the notch panel. Move the mouse and confirm the active modal stays centered. Double-tap Command and release to confirm it also opens the centered prompt. Double-tap Command again but hold the second Command press, and confirm the same prompt modal appears with voice capture. Click outside the active modal and confirm it dismisses. Reactivate, click the high-contrast rounded x button outside the capsule, and confirm it closes and remains visible over light and dark app backgrounds. Drag the modal from non-input capsule areas. Confirm Command plus another key other than K, Command-click, and a single Command tap do not activate the modal.
 
 ## Source Entry Points
 

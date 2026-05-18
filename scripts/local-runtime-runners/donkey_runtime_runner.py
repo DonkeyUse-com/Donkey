@@ -25,12 +25,24 @@ from typing import Any
 
 
 RUNTIME_ID = os.environ.get("DONKEY_RUNTIME_ID", "")
+RUNTIME_VERSION = os.environ.get("DONKEY_RUNTIME_VERSION", "0.3.0-runner")
 MODEL_ID = os.environ.get("DONKEY_MODEL_ID", "")
 ROLE = os.environ.get("DONKEY_RUNTIME_ROLE", "")
 MODEL_URL = os.environ.get("DONKEY_MODEL_URL", "")
 MODEL_SHA256 = os.environ.get("DONKEY_MODEL_SHA256", "")
 MODEL_FILENAME = os.environ.get("DONKEY_MODEL_FILENAME", "model.bin")
 OLLAMA_ENDPOINT = os.environ.get("DONKEY_OLLAMA_ENDPOINT", "http://127.0.0.1:11434")
+MANAGED_PYTHON_ENV = "DONKEY_RUNTIME_MANAGED_PYTHON"
+
+DEFAULT_RUNTIME_REQUIREMENTS: dict[str, list[str]] = {
+    "parakeet-transcriber": [
+        "huggingface_hub>=0.25,<1",
+    ],
+    "yolo-segmenter": [
+        "ultralytics>=8.3,<9",
+        "opencv-python-headless>=4.10,<5",
+    ],
+}
 
 
 def main() -> int:
@@ -41,6 +53,9 @@ def main() -> int:
         return 0
 
     operation = request.get("operation")
+    managed_exit = run_with_managed_python_if_needed(operation, request)
+    if managed_exit is not None:
+        return managed_exit
     if operation == "prepareModelWeights":
         write_json(prepare_model_weights(request))
         return 0
@@ -91,6 +106,144 @@ def error_payload(reason: str, extra: dict[str, Any] | None = None) -> dict[str,
     }
 
 
+def run_with_managed_python_if_needed(operation: Any, request: dict[str, Any]) -> int | None:
+    if os.environ.get(MANAGED_PYTHON_ENV) == "1":
+        return None
+    if RUNTIME_ID not in DEFAULT_RUNTIME_REQUIREMENTS:
+        return None
+    if operation not in {"prepareModelWeights", None}:
+        return None
+
+    requirements = runtime_requirements()
+    if not requirements:
+        return None
+
+    state_dir = managed_python_state_dir(request)
+    venv_python = state_dir / ".venv" / "bin" / "python"
+    requirements_fingerprint = hashlib.sha256("\n".join(requirements).encode("utf-8")).hexdigest()
+    stamp_file = state_dir / "requirements.sha256"
+
+    try:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        if not venv_python.exists():
+            create_virtualenv(state_dir / ".venv")
+        current_fingerprint = stamp_file.read_text().strip() if stamp_file.exists() else ""
+        if current_fingerprint != requirements_fingerprint:
+            install_python_requirements(venv_python, requirements, state_dir)
+            stamp_file.write_text(requirements_fingerprint)
+    except FileNotFoundError as exc:
+        write_json(
+            error_payload(
+                "pythonRuntimeUnavailable",
+                {"dependency": "python3", "detail": str(exc), "runtimePython.stateDirectory": str(state_dir)},
+            )
+        )
+        return 0
+    except Exception as exc:  # noqa: BLE001
+        write_json(
+            error_payload(
+                "pythonDependencyInstallFailed",
+                {"detail": str(exc), "runtimePython.stateDirectory": str(state_dir)},
+            )
+        )
+        return 0
+
+    environment = os.environ.copy()
+    environment[MANAGED_PYTHON_ENV] = "1"
+    completed = subprocess.run(
+        [str(venv_python), str(Path(__file__).resolve())],
+        input=json.dumps(request),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=environment,
+        check=False,
+    )
+    if completed.returncode == 0 and completed.stdout:
+        sys.stdout.write(completed.stdout)
+        return 0
+
+    write_json(
+        error_payload(
+            "managedPythonRuntimeFailed",
+            {
+                "runtimePython.stateDirectory": str(state_dir),
+                "returnCode": completed.returncode,
+                "stderr": completed.stderr[-800:],
+            },
+        )
+    )
+    return 0
+
+
+def managed_python_state_dir(request: dict[str, Any]) -> Path:
+    configured = os.environ.get("DONKEY_RUNTIME_STATE_DIR")
+    if configured:
+        return Path(configured)
+    cache_dir = request.get("cacheDirectory")
+    if isinstance(cache_dir, str) and cache_dir:
+        return Path(cache_dir) / ".runtime-python"
+    return Path.home() / "Library" / "Application Support" / "Donkey" / "LocalModelRuntimes" / "RuntimePython" / RUNTIME_ID
+
+
+def runtime_requirements() -> list[str]:
+    package_dir = os.environ.get("DONKEY_RUNTIME_PACKAGE_DIR")
+    if package_dir:
+        requirements_path = Path(package_dir) / "requirements.txt"
+        if requirements_path.exists():
+            return [
+                line.strip()
+                for line in requirements_path.read_text().splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            ]
+    return DEFAULT_RUNTIME_REQUIREMENTS.get(RUNTIME_ID, [])
+
+
+def create_virtualenv(venv_dir: Path) -> None:
+    completed = subprocess.run(
+        [sys.executable, "-m", "venv", str(venv_dir)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"venv creation failed: {completed.stderr[-800:]}")
+
+
+def install_python_requirements(venv_python: Path, requirements: list[str], state_dir: Path) -> None:
+    requirements_path = state_dir / "requirements.txt"
+    requirements_path.write_text("\n".join(requirements) + "\n")
+    command = [str(venv_python), "-m", "pip", "install", "-r", str(requirements_path)]
+    wheelhouse = runtime_wheelhouse()
+    if wheelhouse is not None:
+        command.extend(["--no-index", "--find-links", str(wheelhouse)])
+    environment = os.environ.copy()
+    environment["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
+    completed = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=environment,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"pip install failed: {completed.stderr[-1200:]}")
+
+
+def runtime_wheelhouse() -> Path | None:
+    configured = os.environ.get("DONKEY_RUNTIME_WHEELHOUSE")
+    if configured and Path(configured).exists():
+        return Path(configured)
+    package_dir = os.environ.get("DONKEY_RUNTIME_PACKAGE_DIR")
+    if package_dir:
+        candidate = Path(package_dir) / "wheelhouse"
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def safe_model_dir(cache_dir: str | None = None, model_id: str | None = None) -> Path:
     root = Path(cache_dir or tempfile.gettempdir())
     safe_model = (model_id or MODEL_ID or RUNTIME_ID).replace("/", "-").replace(":", "-")
@@ -119,6 +272,16 @@ def prepare_model_weights(request: dict[str, Any]) -> dict[str, Any]:
 
     if RUNTIME_ID == "yolo-segmenter":
         return prepare_ultralytics_model(cache_dir)
+
+    if RUNTIME_ID == "ui-understander":
+        return prepared(
+            cache_dir,
+            {
+                "modelWeights.status": "notRequired",
+                "runtime.backend": "placeholder",
+                "reason": "uiUnderstandingBackendNotConfigured",
+            },
+        )
 
     return error_payload(
         "missingModelWeightDownloadURL",
@@ -163,12 +326,13 @@ def prepare_ollama_model(cache_dir: str) -> dict[str, Any]:
                     "modelWeights.ollamaModel": MODEL_ID,
                 },
             )
-        return error_payload(
-            "ollamaPullFailed",
+        return prepared(
+            cache_dir,
             {
-                "cacheDirectory": cache_dir,
-                "modelWeights.status": "downloadFailed",
+                "reason": "ollamaPullFailed",
+                "modelWeights.status": "externalUnavailable",
                 "modelWeights.provider": "ollama",
+                "modelWeights.ollamaModel": MODEL_ID,
                 "stderr": completed.stderr[-400:],
             },
         )
@@ -184,12 +348,13 @@ def prepare_ollama_model(cache_dir: str) -> dict[str, Any]:
             },
         )
     except Exception as exc:  # noqa: BLE001
-        return error_payload(
-            "ollamaUnavailable",
+        return prepared(
+            cache_dir,
             {
-                "cacheDirectory": cache_dir,
-                "modelWeights.status": "notConfigured",
+                "reason": "ollamaUnavailable",
+                "modelWeights.status": "externalUnavailable",
                 "modelWeights.provider": "ollama",
+                "modelWeights.ollamaModel": MODEL_ID,
                 "detail": str(exc),
             },
         )
@@ -307,7 +472,7 @@ def health_check(request: dict[str, Any]) -> dict[str, Any]:
     return {
         "status": "ok",
         "runtimeID": RUNTIME_ID,
-        "runtimeVersion": "0.2.0-runner",
+        "runtimeVersion": RUNTIME_VERSION,
         "modelID": MODEL_ID,
         "protocolVersion": "v1",
         "metadata": metadata(extra),

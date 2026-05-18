@@ -377,6 +377,28 @@ struct AIHarnessAdapterTests {
     }
 
     @Test
+    func localModelTaskIntentResolverFallsBackToDeterministicParserWhenRuntimeUnavailable() async {
+        let resolver = LocalModelTaskIntentResolver(
+            catalog: LocalAppTaskCatalog(
+                taskDefinitions: BuiltInLocalAppTaskDefinitions.defaults,
+                availabilityProvider: StaticLocalAppAvailabilityProvider(installedBundleIdentifiers: ["com.apple.weather"])
+            ),
+            adapter: UnavailableTaskIntentAdapter()
+        )
+
+        let result = await resolver.resolve(
+            command: "show me the weather for SF",
+            sourceTraceID: "trace-resolve-fallback"
+        )
+
+        #expect(result.resolution.status == .resolved)
+        #expect(result.resolution.intent?.parserSource == .deterministic)
+        #expect(result.resolution.intent?.normalizedEntities["city"] == "San Francisco")
+        #expect(result.trace.validationStatus == "deterministicFallback")
+        #expect(result.trace.metadata["fallback.reason"] == "localModelIntentUnavailable")
+    }
+
+    @Test
     func openAIAdapterBuildsResponsesRequestWithStoreFalseAndDecodesStructuredHint() async throws {
         let httpClient = FakeAIHTTPClient(
             data: responseData(
@@ -809,6 +831,28 @@ private struct FakeSidecarRunner: LocalJSONSidecarRunning {
 
     func run(_ request: LocalJSONSidecarRequest) async -> LocalJSONSidecarResult {
         result
+    }
+}
+
+private struct UnavailableTaskIntentAdapter: TaskIntentParsingAdapter {
+    func parseTaskIntent(_ request: TaskIntentAdapterRequest) async -> TaskIntentAdapterResult {
+        TaskIntentAdapterResult(
+            intent: nil,
+            trace: AIModelCallTrace(
+                id: "model-call-unavailable",
+                role: .taskIntent,
+                provider: .localRuntime,
+                modelID: "qwen3:8b",
+                promptVersion: "task-intent-v1",
+                schemaID: "task_intent_v1",
+                latencyMS: nil,
+                timeoutMS: 4_000,
+                status: .providerOutage,
+                validationStatus: "notValidated",
+                sourceTraceID: request.sourceTraceID,
+                metadata: ["reason": "runtimeUnavailable"]
+            )
+        )
     }
 }
 
