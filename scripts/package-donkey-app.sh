@@ -18,6 +18,7 @@ export SWIFTPM_CACHE_PATH="$CACHE_DIR/swiftpm"
 export HOME="$CACHE_DIR/home"
 
 cd "$BUILD_DIR"
+echo "Compiling Donkey for Mac ..."
 swift build -c release --product Donkey
 
 rm -rf "$APP_DIR"
