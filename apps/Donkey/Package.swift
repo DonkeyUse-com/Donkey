@@ -17,6 +17,9 @@ let package = Package(
             targets: ["DonkeyContracts"]
         )
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.0")
+    ],
     targets: [
         .target(
             name: "DonkeyContracts"
@@ -42,7 +45,8 @@ let package = Package(
                 "DonkeyAI",
                 "DonkeyContracts",
                 "DonkeyRuntime",
-                "DonkeyUI"
+                "DonkeyUI",
+                .product(name: "Sparkle", package: "Sparkle")
             ],
             resources: [
                 .copy("Resources/theme.json")

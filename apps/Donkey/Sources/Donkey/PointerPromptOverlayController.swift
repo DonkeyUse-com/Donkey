@@ -1,24 +1,34 @@
 import AppKit
+import Carbon.HIToolbox
 import DonkeyContracts
+import DonkeyUI
 import SwiftUI
 
 @MainActor
 final class PointerPromptOverlayController {
+    private static let commandKHotKeySignature: OSType = 0x444B4559
+    private static let commandKHotKeyID: UInt32 = 1
+
     private let model: PointerPromptOverlayModel
     private let fixedPlacement: PointerPromptPlacement = .bottomRight
     private let activationShortcut: PointerPromptActivationShortcut
     private let microphoneWaveformMeter = MicrophoneWaveformMeter()
 
-    private var panel: NSPanel?
+    private var statusPanel: NSPanel?
+    private var statusHostingView: NSHostingView<PointerPromptNotchStatusView>?
+    private var inputPanel: NSPanel?
     private var timer: Timer?
     private var globalActivationMonitor: Any?
     private var localActivationMonitor: Any?
+    private var commandKHotKeyRef: EventHotKeyRef?
+    private var commandKEventHandlerRef: EventHandlerRef?
     private var activationTapStartedAt: Date?
     private var activationTapIsClean = false
     private var completedActivationTapCount = 0
     private var lastActivationTapCompletedAt: Date?
     private var activationHoldStartedAt: Date?
     private var isVoiceInputActive = false
+    private var isStatusExpanded = false
 
     init(
         model: PointerPromptOverlayModel,
@@ -32,18 +42,23 @@ final class PointerPromptOverlayController {
     }
 
     func show() {
-        let initialContentSize = currentContentSize
-        let hostingView = makeHostingView(size: initialContentSize)
-        let panel = makePanel(size: initialContentSize, hostingView: hostingView)
+        let initialInputSize = currentContentSize
+        let inputHostingView = makeInputHostingView(size: initialInputSize)
+        let inputPanel = makeInputPanel(size: initialInputSize, hostingView: inputHostingView)
+        let statusPanel = makeStatusPanel()
 
-        self.panel = panel
+        self.inputPanel = inputPanel
+        self.statusPanel = statusPanel
         startActivationMonitoring()
-        positionAtCurrentMouseLocation()
-        panel.orderFrontRegardless()
+        startCommandKHotKeyMonitoring()
+        positionStatusPanel()
+        centerInputPanel()
+        inputPanel.orderOut(nil)
+        statusPanel.orderFrontRegardless()
         startTimer()
     }
 
-    private func makeHostingView(size: CGSize) -> NSHostingView<PointerPromptOverlayRootView> {
+    private func makeInputHostingView(size: CGSize) -> NSHostingView<PointerPromptOverlayRootView> {
         let hostingView = NSHostingView(rootView: PointerPromptOverlayRootView(model: model))
         hostingView.frame = CGRect(origin: .zero, size: size)
         hostingView.autoresizingMask = [.width, .height]
@@ -53,7 +68,7 @@ final class PointerPromptOverlayController {
         return hostingView
     }
 
-    private func makePanel(
+    private func makeInputPanel(
         size: CGSize,
         hostingView: NSHostingView<PointerPromptOverlayRootView>
     ) -> PointerPromptPanel {
@@ -72,11 +87,47 @@ final class PointerPromptOverlayController {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.becomesKeyOnlyIfNeeded = false
-        panel.ignoresMouseEvents = true
+        panel.ignoresMouseEvents = false
         panel.dragRegionProvider = { [weak self] in
             self?.composerDragRegions() ?? []
         }
-        panel.level = .floating
+        panel.level = .statusBar
+        panel.collectionBehavior = [
+            .canJoinAllSpaces,
+            .fullScreenAuxiliary,
+            .ignoresCycle,
+            .stationary
+        ]
+
+        return panel
+    }
+
+    private func makeStatusPanel() -> NSPanel {
+        let metrics = notchMetrics()
+        let hostingView = NSHostingView(rootView: notchStatusView(metrics: metrics))
+        hostingView.frame = CGRect(origin: .zero, size: metrics.surfaceSize)
+        hostingView.autoresizingMask = [.width, .height]
+        hostingView.wantsLayer = true
+        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+        statusHostingView = hostingView
+
+        let panel = NSPanel(
+            contentRect: CGRect(origin: .zero, size: metrics.surfaceSize),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+
+        panel.title = "Donkey Status"
+        panel.contentView = hostingView
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = false
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.becomesKeyOnlyIfNeeded = true
+        panel.ignoresMouseEvents = true
+        panel.level = .statusBar
         panel.collectionBehavior = [
             .canJoinAllSpaces,
             .fullScreenAuxiliary,
@@ -91,9 +142,13 @@ final class PointerPromptOverlayController {
         timer?.invalidate()
         timer = nil
         stopActivationMonitoring()
+        stopCommandKHotKeyMonitoring()
         microphoneWaveformMeter.stop()
-        panel?.close()
-        panel = nil
+        inputPanel?.close()
+        inputPanel = nil
+        statusPanel?.close()
+        statusPanel = nil
+        statusHostingView = nil
     }
 
     private func startActivationMonitoring() {
@@ -107,18 +162,14 @@ final class PointerPromptOverlayController {
             .otherMouseDown
         ]
         globalActivationMonitor = NSEvent.addGlobalMonitorForEvents(matching: activationEventMask) { [weak self] event in
-            let eventType = event.type
-            let modifierFlags = event.modifierFlags
             Task { @MainActor in
-                self?.handleActivationEvent(type: eventType, modifierFlags: modifierFlags)
+                self?.handleActivationEvent(event)
             }
         }
 
         localActivationMonitor = NSEvent.addLocalMonitorForEvents(matching: activationEventMask) { [weak self] event in
-            let eventType = event.type
-            let modifierFlags = event.modifierFlags
             Task { @MainActor in
-                self?.handleActivationEvent(type: eventType, modifierFlags: modifierFlags)
+                self?.handleActivationEvent(event)
             }
             return event
         }
@@ -136,15 +187,94 @@ final class PointerPromptOverlayController {
         }
     }
 
-    private func handleActivationEvent(
-        type: NSEvent.EventType,
-        modifierFlags: NSEvent.ModifierFlags
-    ) {
-        switch type {
+    private func startCommandKHotKeyMonitoring() {
+        stopCommandKHotKeyMonitoring()
+
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+        let userData = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        InstallEventHandler(
+            GetApplicationEventTarget(),
+            { _, event, userData in
+                guard let event,
+                      let userData else {
+                    return noErr
+                }
+
+                var hotKeyID = EventHotKeyID()
+                let status = GetEventParameter(
+                    event,
+                    EventParamName(kEventParamDirectObject),
+                    EventParamType(typeEventHotKeyID),
+                    nil,
+                    MemoryLayout<EventHotKeyID>.size,
+                    nil,
+                    &hotKeyID
+                )
+                guard status == noErr,
+                      hotKeyID.signature == PointerPromptOverlayController.commandKHotKeySignature,
+                      hotKeyID.id == PointerPromptOverlayController.commandKHotKeyID else {
+                    return noErr
+                }
+
+                let controller = Unmanaged<PointerPromptOverlayController>
+                    .fromOpaque(userData)
+                    .takeUnretainedValue()
+                Task { @MainActor in
+                    controller.handleCommandKHotKey()
+                }
+                return noErr
+            },
+            1,
+            &eventType,
+            userData,
+            &commandKEventHandlerRef
+        )
+
+        let hotKeyID = EventHotKeyID(
+            signature: Self.commandKHotKeySignature,
+            id: Self.commandKHotKeyID
+        )
+        RegisterEventHotKey(
+            UInt32(kVK_ANSI_K),
+            UInt32(cmdKey),
+            hotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &commandKHotKeyRef
+        )
+    }
+
+    private func stopCommandKHotKeyMonitoring() {
+        if let commandKHotKeyRef {
+            UnregisterEventHotKey(commandKHotKeyRef)
+            self.commandKHotKeyRef = nil
+        }
+
+        if let commandKEventHandlerRef {
+            RemoveEventHandler(commandKEventHandlerRef)
+            self.commandKEventHandlerRef = nil
+        }
+    }
+
+    private func handleCommandKHotKey() {
+        resetActivationTapSequence()
+        activateInputAtScreenCenter()
+    }
+
+    private func handleActivationEvent(_ event: NSEvent) {
+        switch event.type {
         case .flagsChanged:
-            handleModifierFlagsChanged(modifierFlags)
+            handleModifierFlagsChanged(event.modifierFlags)
         case .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown:
-            if type != .keyDown, dismissActivePromptIfClickIsOutside() {
+            if event.type == .keyDown, activateFromCommandKIfNeeded(event) {
+                resetActivationTapSequence()
+                return
+            }
+
+            if event.type != .keyDown, dismissActivePromptIfClickIsOutside() {
                 resetActivationTapSequence()
                 return
             }
@@ -153,6 +283,19 @@ final class PointerPromptOverlayController {
         default:
             break
         }
+    }
+
+    private func activateFromCommandKIfNeeded(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting(.capsLock)
+        guard flags == .command,
+              event.charactersIgnoringModifiers?.lowercased() == "k" else {
+            return false
+        }
+
+        activateInputAtScreenCenter()
+        return true
     }
 
     private func handleModifierFlagsChanged(_ modifierFlags: NSEvent.ModifierFlags) {
@@ -230,7 +373,7 @@ final class PointerPromptOverlayController {
         }
 
         resetActivationTapSequence()
-        activateAtCurrentMouseLocation()
+        activateInputAtScreenCenter()
     }
 
     private func resetActivationTapSequence() {
@@ -261,24 +404,25 @@ final class PointerPromptOverlayController {
         }
 
         resetActivationTapSequence()
-        activateVoiceInputAtCurrentMouseLocation()
+        activateVoiceInputAtScreenCenter()
     }
 
-    private func activateAtCurrentMouseLocation() {
+    private func activateInputAtScreenCenter() {
         guard !model.promptState.isActive else {
-            if let panel {
-                activateForKeyboardInput(panel)
+            if let inputPanel {
+                centerInputPanel()
+                activateForKeyboardInput(inputPanel)
             }
             focusComposerTextInput()
             microphoneWaveformMeter.start()
             return
         }
 
-        activate(at: NSEvent.mouseLocation)
+        activateInput()
     }
 
-    private func activateVoiceInputAtCurrentMouseLocation() {
-        activateAtCurrentMouseLocation()
+    private func activateVoiceInputAtScreenCenter() {
+        activateInputAtScreenCenter()
         isVoiceInputActive = true
         microphoneWaveformMeter.startAudioCapture()
         model.handle(.voiceInputRequested)
@@ -292,18 +436,14 @@ final class PointerPromptOverlayController {
         model.submitVoiceAudio(audio)
     }
 
-    private func positionAtCurrentMouseLocation() {
-        tick(mouseLocation: NSEvent.mouseLocation)
-    }
-
-    private func activate(at mouseLocation: CGPoint) {
-        guard let panel else { return }
+    private func activateInput() {
+        guard let inputPanel else { return }
 
         model.activate()
         microphoneWaveformMeter.start()
-        tick(mouseLocation: mouseLocation)
+        centerInputPanel()
 
-        activateForKeyboardInput(panel)
+        activateForKeyboardInput(inputPanel)
         focusComposerTextInput()
     }
 
@@ -318,87 +458,147 @@ final class PointerPromptOverlayController {
         self.timer = timer
     }
 
-    private func tick(mouseLocation explicitMouseLocation: CGPoint? = nil) {
-        guard let panel else { return }
+    private func tick() {
+        guard let inputPanel else { return }
 
         if !model.promptState.isActive {
             microphoneWaveformMeter.stop()
+            inputPanel.orderOut(nil)
         }
 
         activateVoiceInputIfNeeded()
-        updateMouseEventPassthrough(for: panel)
-        if model.promptState.isActive, explicitMouseLocation == nil {
-            resizeActivePanelIfNeeded(panel)
-            updateMouseEventPassthrough(for: panel)
-            return
-        }
-
-        let mouseLocation = explicitMouseLocation ?? NSEvent.mouseLocation
-        let targetFrame = frame(for: fixedPlacement, mouseLocation: mouseLocation)
-        panel.setFrame(targetFrame, display: true)
-        updateMouseEventPassthrough(for: panel)
+        positionStatusPanel()
+        updateStatusPanelView()
+        resizeActivePanelIfNeeded(inputPanel)
+        updateMouseEventPassthrough(for: inputPanel)
 
         if model.placement != fixedPlacement {
             model.placement = fixedPlacement
         }
     }
 
-    private func frame(
-        for placement: PointerPromptPlacement,
-        mouseLocation: CGPoint
-    ) -> CGRect {
-        let size = currentContentSize
-        let anchor = agentPointerTipAnchor(for: placement)
-        let agentPointerTipLocation = agentPointerTipLocation(
-            for: placement,
-            mouseLocation: mouseLocation
-        )
-
-        return CGRect(
-            x: agentPointerTipLocation.x - anchor.x,
-            y: agentPointerTipLocation.y - anchor.y,
-            width: size.width,
-            height: size.height
-        )
-    }
-
-    private func agentPointerTipLocation(
-        for placement: PointerPromptPlacement,
-        mouseLocation: CGPoint
-    ) -> CGPoint {
-        let xDirection: CGFloat = placement.placesContentOnLeft ? -1 : 1
-        let yDirection: CGFloat = placement.placesContentAbovePointer ? 1 : -1
-
-        return CGPoint(
-            x: mouseLocation.x + PointerPromptLayout.pointerDiagonalComponent * xDirection,
-            y: mouseLocation.y + PointerPromptLayout.pointerDiagonalComponent * yDirection
-        )
-    }
-
-    private func agentPointerTipAnchor(for placement: PointerPromptPlacement) -> CGPoint {
-        let pointerSlotX: CGFloat
-        if placement.placesContentOnLeft {
-            pointerSlotX = stageHorizontalInset +
-                PointerPromptLayout.stageHorizontalPadding +
-                PointerPromptLayout.composerWidth +
-                PointerPromptLayout.pointerComposerSpacing
-        } else {
-            pointerSlotX = stageHorizontalInset + PointerPromptLayout.stageHorizontalPadding
+    private func centerInputPanel() {
+        guard let inputPanel,
+              let screen = activeScreen() else {
+            return
         }
-        let pointerVisualX = pointerSlotX + pointerVisualInsetX(for: placement)
-        let pointerTipX = pointerVisualX +
-            PointerPromptLayout.pointerVisualSize.width *
-            PointerPromptLayout.pointerTipUnitPoint.x
 
-        return CGPoint(
-            x: pointerTipX,
-            y: currentContentSize.height - pointerTipYFromTop
+        let size = currentContentSize
+        inputPanel.setFrame(
+            CGRect(
+                x: screen.frame.midX - size.width / 2,
+                y: screen.frame.midY - size.height / 2,
+                width: size.width,
+                height: size.height
+            ),
+            display: true
         )
     }
 
-    private func pointerVisualInsetX(for placement: PointerPromptPlacement) -> CGFloat {
-        placement.placesContentOnLeft ? 0 :
-            PointerPromptLayout.pointerSlotSize.width - PointerPromptLayout.pointerVisualSize.width
+    private func positionStatusPanel() {
+        guard let statusPanel,
+              let screen = activeScreen() else {
+            return
+        }
+
+        let metrics = notchMetrics(for: screen)
+        if statusPanel.frame.size != metrics.surfaceSize {
+            statusHostingView?.frame = CGRect(origin: .zero, size: metrics.surfaceSize)
+        }
+
+        statusPanel.setFrame(
+            CGRect(
+                x: screen.frame.midX - metrics.surfaceSize.width / 2,
+                y: screen.frame.maxY - metrics.surfaceSize.height,
+                width: metrics.surfaceSize.width,
+                height: metrics.surfaceSize.height
+            ),
+            display: true
+        )
+    }
+
+    private func updateStatusPanelView() {
+        let metrics = notchMetrics()
+        statusHostingView?.rootView = notchStatusView(metrics: metrics)
+    }
+
+    private func notchStatusView(metrics: NotchMetrics) -> PointerPromptNotchStatusView {
+        PointerPromptNotchStatusView(
+            state: model.promptState,
+            updateState: model.updateState,
+            layout: metrics.layout,
+            surfaceWidth: metrics.surfaceSize.width,
+            surfaceHeight: metrics.surfaceSize.height,
+            isExpanded: isStatusExpanded,
+            hoverChanged: { [weak self] isHovering in
+                self?.setStatusExpanded(isHovering)
+            },
+            commandRequested: { [weak self] in
+                self?.handleCommandKHotKey()
+            },
+            updateRequested: { [weak self] in
+                self?.openAvailableUpdate()
+            }
+        )
+    }
+
+    private func openAvailableUpdate() {
+        model.showUpdateUI()
+    }
+
+    private func setStatusExpanded(_ isExpanded: Bool) {
+        guard isStatusExpanded != isExpanded else { return }
+
+        isStatusExpanded = isExpanded
+        positionStatusPanel()
+        updateStatusPanelView()
+    }
+
+    private func activeScreen() -> NSScreen? {
+        inputPanel?.screen ?? statusPanel?.screen ?? NSScreen.main ?? NSScreen.screens.first
+    }
+
+    private func notchMetrics(for screen: NSScreen? = nil) -> NotchMetrics {
+        let screen = screen ?? activeScreen()
+        guard let screen else {
+            return NotchMetrics(
+                voidWidth: NotchMetrics.fallbackVoidWidth,
+                voidHeight: NotchMetrics.fallbackVoidHeight,
+                isExpanded: isStatusExpanded,
+                screenWidth: NotchMetrics.defaultScreenWidth
+            )
+        }
+
+        let safeTop = max(0, screen.safeAreaInsets.top)
+        let measuredVoidWidth: CGFloat
+        if let leftArea = screen.auxiliaryTopLeftArea,
+           let rightArea = screen.auxiliaryTopRightArea {
+            measuredVoidWidth = max(
+                0,
+                screen.frame.width - leftArea.width - rightArea.width
+            )
+        } else {
+            measuredVoidWidth = 0
+        }
+        let hasNotch = safeTop > 0 || measuredVoidWidth > 0
+        let voidHeight = hasNotch ? max(safeTop, NotchMetrics.fallbackVoidHeight) : 0
+        let voidWidth = hasNotch ? max(measuredVoidWidth, inferredVoidWidth(for: screen, safeTop: safeTop)) : 0
+
+        return NotchMetrics(
+            voidWidth: voidWidth,
+            voidHeight: voidHeight,
+            isExpanded: isStatusExpanded,
+            screenWidth: screen.frame.width
+        )
+    }
+
+    private func inferredVoidWidth(for screen: NSScreen, safeTop: CGFloat) -> CGFloat {
+        guard safeTop > 0 else { return 0 }
+
+        return min(
+            max(NotchMetrics.fallbackVoidWidth, screen.frame.width * 0.095),
+            NotchMetrics.maximumInferredVoidWidth
+        )
     }
 
     private var stageHorizontalInset: CGFloat {
@@ -411,24 +611,12 @@ final class PointerPromptOverlayController {
 
     private var stageContentWidth: CGFloat {
         PointerPromptLayout.stageHorizontalPadding * 2 +
-            PointerPromptLayout.pointerSlotSize.width +
-            PointerPromptLayout.pointerComposerSpacing +
             PointerPromptLayout.composerWidth
     }
 
     private var stageContentHeight: CGFloat {
         PointerPromptLayout.stageVerticalPadding * 2 +
             currentComposerHeight
-    }
-
-    private var pointerTipYFromTop: CGFloat {
-        pointerVisualTopFromPanelTop +
-            PointerPromptLayout.pointerVisualSize.height *
-            PointerPromptLayout.pointerTipUnitPoint.y
-    }
-
-    private var pointerVisualTopFromPanelTop: CGFloat {
-        composerTopFromPanelTop
     }
 
     private func composerDragRegions() -> [CGRect] {
@@ -452,15 +640,7 @@ final class PointerPromptOverlayController {
     }
 
     private func composerFrame(for placement: PointerPromptPlacement) -> CGRect {
-        let x: CGFloat
-        if placement.placesContentOnLeft {
-            x = stageHorizontalInset + PointerPromptLayout.stageHorizontalPadding
-        } else {
-            x = stageHorizontalInset +
-                PointerPromptLayout.stageHorizontalPadding +
-                PointerPromptLayout.pointerSlotSize.width +
-                PointerPromptLayout.pointerComposerSpacing
-        }
+        let x = stageHorizontalInset + PointerPromptLayout.stageHorizontalPadding
 
         return CGRect(
             x: x,
@@ -541,11 +721,11 @@ final class PointerPromptOverlayController {
 
     private func dismissActivePromptIfClickIsOutside() -> Bool {
         guard model.promptState.isActive,
-              let panel else {
+              let inputPanel else {
             return false
         }
 
-        let mouseLocationInPanel = panel.convertPoint(fromScreen: NSEvent.mouseLocation)
+        let mouseLocationInPanel = inputPanel.convertPoint(fromScreen: NSEvent.mouseLocation)
         guard !composerFrame(for: fixedPlacement).contains(mouseLocationInPanel) else {
             return false
         }
@@ -580,8 +760,8 @@ final class PointerPromptOverlayController {
 
         panel.setFrame(
             CGRect(
-                x: frame.minX,
-                y: frame.maxY - size.height,
+                x: frame.midX - size.width / 2,
+                y: frame.midY - size.height / 2,
                 width: size.width,
                 height: size.height
             ),
@@ -590,7 +770,7 @@ final class PointerPromptOverlayController {
     }
 
     private func focusComposerTextInput(attempt: Int = 0) {
-        guard let panel else { return }
+        guard let panel = inputPanel else { return }
 
         activateForKeyboardInput(panel)
 
@@ -670,6 +850,55 @@ private final class PointerPromptPanel: NSPanel {
         }
 
         super.sendEvent(event)
+    }
+}
+
+private struct NotchMetrics {
+    static let fallbackVoidWidth: CGFloat = 180
+    static let fallbackVoidHeight: CGFloat = 32
+    static let maximumInferredVoidWidth: CGFloat = 220
+    static let defaultScreenWidth: CGFloat = 1512
+
+    var voidWidth: CGFloat
+    var voidHeight: CGFloat
+    var isExpanded: Bool
+    var screenWidth: CGFloat
+
+    var surfaceSize: CGSize {
+        return CGSize(
+            width: surfaceWidth,
+            height: max(layout.visibleHeight, voidHeight + layout.visibleHeight)
+        )
+    }
+
+    var layout: PointerPromptNotchLayout {
+        PointerPromptNotchLayout(
+            voidHeight: voidHeight,
+            contentHorizontalInset: max(12, surfaceWidth * 0.035),
+            visibleHeight: visibleHeight,
+            cornerRadius: isExpanded ? 28 : 14
+        )
+    }
+
+    private var surfaceWidth: CGFloat {
+        if isExpanded {
+            return min(max(360, screenWidth - 48), 690)
+        }
+
+        let contentAllowance: CGFloat = 170
+        return min(max(voidWidth + contentAllowance, 300), min(420, screenWidth - 24))
+    }
+
+    private var visibleHeight: CGFloat {
+        if isExpanded {
+            let headerHeight: CGFloat = 52
+            let rosterHeight = CGFloat(5 * 58 + 4 * 10)
+            let verticalPadding: CGFloat = 12 + 10 + 52 + 12
+
+            return headerHeight + rosterHeight + verticalPadding
+        }
+
+        return max(40, voidHeight + 14)
     }
 }
 

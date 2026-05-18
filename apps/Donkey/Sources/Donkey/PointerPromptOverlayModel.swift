@@ -10,9 +10,11 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
     @Published var placement: PointerPromptPlacement = .bottomRight
     @Published var inputTextHeight = PointerPromptLayout.composerInputTextMinimumHeight
     @Published var isInputExpanded = false
+    @Published private(set) var updateState: PointerPromptUpdateState
 
     private let commandHandler: any PointerPromptCommandHandling
     private let voiceTranscriber: LocalVoiceTranscriptionAdapter
+    private var updateChecker: any DonkeyUpdateChecking
 
     init(
         aiProvider: any AIHarnessSnapshotProviding = AIHarnessBoundary(),
@@ -20,10 +22,15 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         voiceTranscriber: LocalVoiceTranscriptionAdapter = LocalVoiceTranscriptionAdapter(
             runtime: ProcessBackedParakeetTranscriptionRuntime()
         ),
+        updateChecker: any DonkeyUpdateChecking = SparkleUpdateController(),
         theme: PointerPromptTheme = PointerPromptOverlayModel.bundledTheme()
     ) {
         self.commandHandler = commandHandler
         self.voiceTranscriber = voiceTranscriber
+        self.updateChecker = updateChecker
+        updateState = PointerPromptUpdateState(
+            currentVersion: updateChecker.currentVersion
+        )
         let aiSnapshot = aiProvider.snapshot()
         promptState = PointerPromptState(
             promptText: aiSnapshot.suggestedPromptText,
@@ -32,6 +39,11 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
             isActive: false,
             theme: theme
         )
+        self.updateChecker.updateStateChanged = { [weak self] state in
+            self?.updateState = state
+        }
+        updateChecker.start()
+        checkForUpdates()
     }
 
     func activate() {
@@ -45,6 +57,14 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         guard promptState.voiceWaveformLevels != normalizedLevels else { return }
 
         promptState.voiceWaveformLevels = normalizedLevels
+    }
+
+    func checkForUpdates() {
+        updateChecker.checkForUpdatesInBackground()
+    }
+
+    func showUpdateUI() {
+        updateChecker.showUpdateUI()
     }
 
     func handle(_ intent: PointerPromptIntent) {
@@ -111,6 +131,7 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         messageText = ""
         inputTextHeight = PointerPromptLayout.composerInputTextMinimumHeight
         isInputExpanded = false
+        promptState.isActive = false
         promptState.leadingSignalLevel = .thinking
         promptState.promptText = "Working..."
         Task { [weak self, commandHandler] in

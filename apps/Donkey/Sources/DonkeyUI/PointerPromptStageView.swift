@@ -29,26 +29,11 @@ public struct PointerPromptStageView: View {
     }
 
     public var body: some View {
-        promptContent
+        activeComposer
             .padding(.horizontal, PointerPromptLayout.stageHorizontalPadding)
             .padding(.vertical, PointerPromptLayout.stageVerticalPadding)
             .background(Color.clear)
             .accessibilityElement(children: .contain)
-    }
-
-    @ViewBuilder
-    private var promptContent: some View {
-        if placement.placesContentOnLeft {
-            HStack(alignment: .top, spacing: PointerPromptLayout.pointerComposerSpacing) {
-                activeComposer
-                pointerSlot
-            }
-        } else {
-            HStack(alignment: .top, spacing: PointerPromptLayout.pointerComposerSpacing) {
-                pointerSlot
-                activeComposer
-            }
-        }
     }
 
     @ViewBuilder

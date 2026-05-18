@@ -424,6 +424,13 @@ public struct LocalModelRuntimeSetupManager: Sendable {
         return packageDirectory
     }
 
+    private func bundledPackageManifest(for runtimeID: LocalModelRuntimeID) throws -> LocalModelRuntimePackageManifest? {
+        guard let packageDirectory = bundledPackageDirectory(runtimeID) else { return nil }
+        let manifestURL = packageDirectory.appendingPathComponent("manifest.json", isDirectory: false)
+        let manifestData = try Data(contentsOf: manifestURL)
+        return try Self.decoder().decode(LocalModelRuntimePackageManifest.self, from: manifestData)
+    }
+
     public func instructions() -> [LocalModelRuntimeInstallInstruction] {
         specs.map { spec in
             LocalModelRuntimeInstallInstruction(
@@ -447,6 +454,20 @@ public struct LocalModelRuntimeSetupManager: Sendable {
                 spec: spec,
                 state: .notInstalled,
                 metadata: ["reason": "noRegisteredRuntime"]
+            )
+        }
+
+        if let bundledManifest = try? bundledPackageManifest(for: runtimeID),
+           bundledManifest.runtimeVersion != installation.runtimeVersion {
+            return LocalModelRuntimeStatus(
+                spec: spec,
+                state: .notInstalled,
+                installation: installation,
+                metadata: [
+                    "reason": "bundledRuntimeUpdateAvailable",
+                    "installedRuntimeVersion": installation.runtimeVersion ?? "",
+                    "bundledRuntimeVersion": bundledManifest.runtimeVersion
+                ]
             )
         }
 

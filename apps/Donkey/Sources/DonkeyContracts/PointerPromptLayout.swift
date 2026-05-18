@@ -1,7 +1,7 @@
 import CoreGraphics
 
 public enum PointerPromptLayout {
-    public static let contentWidth: CGFloat = 684
+    public static let contentWidth: CGFloat = 592
     public static let contentExtraHeight: CGFloat = 8
     public static let stageHorizontalPadding: CGFloat = 8
     public static let stageVerticalPadding: CGFloat = 10

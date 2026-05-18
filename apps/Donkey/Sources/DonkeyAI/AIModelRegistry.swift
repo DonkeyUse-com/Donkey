@@ -108,7 +108,7 @@ public struct AIModelRegistry: Codable, Equatable, Sendable {
                 role: .taskIntent,
                 provider: .localRuntime,
                 modelID: "qwen3:8b",
-                endpoint: URL(string: "local://qwen3:8b/task-intent")!,
+                endpoint: URL(string: "local://qwen3-8b/task-intent")!,
                 capabilities: [.textInput, .structuredOutputs],
                 timeoutMS: 4_000,
                 promptVersion: "task-intent-v1",

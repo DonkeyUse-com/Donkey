@@ -28,7 +28,6 @@ tasks such as media playback and review-first document form fill.
 - `plans/03-fast-controller.md`
 - `plans/05-action-engine.md`
 - `plans/06-benchmarking.md`
-- `plans/22-local-runtime-onboarding.md`
 
 Treat other `plans/` files as background unless this plan names them.
 
@@ -57,6 +56,8 @@ not self-contained.
    - verify runtime manifests with release-key cryptographic signatures, not
      signature metadata alone
    - add behind-the-scenes repair/remove flows for broken runtime installs
+   - add a settings entry to reopen runtime setup and a user-data-free support
+     export for runtime status
    - keep the first-run setup button retryable without exposing per-runtime user
      customization
 

@@ -430,6 +430,14 @@ public struct LocalModelTaskIntentResolver: Sendable {
         )
 
         guard let intent = result.intent else {
+            if let fallbackIntent = LocalAppTaskIntentParser(taskDefinitions: catalog.taskDefinitions).parse(command) {
+                var fallbackTrace = result.trace
+                fallbackTrace.validationStatus = "deterministicFallback"
+                fallbackTrace.metadata["fallback.parser"] = "local-app-task-deterministic-v1"
+                fallbackTrace.metadata["fallback.reason"] = "localModelIntentUnavailable"
+                return (catalog.resolve(intent: fallbackIntent), fallbackTrace)
+            }
+
             return (
                 LocalAppTaskCatalogResolution(
                     status: .unsupportedCommand,
