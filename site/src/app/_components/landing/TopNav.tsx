@@ -21,7 +21,7 @@ export function TopNav() {
       }}
     >
       <a
-        href="#top"
+        href="https://www.donkeyuse.com"
         style={{
           display: "flex",
           alignItems: "center",
