@@ -104,6 +104,24 @@ public struct AIModelRegistry: Codable, Equatable, Sendable {
     public static let defaultHybridPlanner = AIModelRegistry(
         entries: [
             AIModelRegistryEntry(
+                id: "local-runtime-task-intent-qwen3",
+                role: .taskIntent,
+                provider: .localRuntime,
+                modelID: "qwen3:8b",
+                endpoint: URL(string: "local://qwen3:8b/task-intent")!,
+                capabilities: [.textInput, .structuredOutputs],
+                timeoutMS: 4_000,
+                promptVersion: "task-intent-v1",
+                evalStatus: .candidate,
+                docsURL: URL(string: "https://ollama.com/library/qwen3")!,
+                rollbackID: nil,
+                metadata: [
+                    "local": "true",
+                    "runtime": "donkey-local-llm-sidecar",
+                    "sidecarEnvironmentVariable": "DONKEY_LOCAL_LLM_RUNNER"
+                ]
+            ),
+            AIModelRegistryEntry(
                 id: "ollama-task-intent-local",
                 role: .taskIntent,
                 provider: .ollama,

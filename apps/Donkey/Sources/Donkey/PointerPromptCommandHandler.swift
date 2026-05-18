@@ -54,15 +54,7 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
             command: command,
             sourceTraceID: traceID
         )
-        let localModelResolution = localModelResult.resolution
-        let deterministicResolution = catalog.resolve(command: command)
-        let shouldUseDeterministicFallback = localModelResolution.status == .unsupportedCommand
-            && localModelResolution.metadata["reason"] == "localModelIntentUnavailable"
-            && deterministicResolution.status != .unsupportedCommand
-        let resolution = shouldUseDeterministicFallback
-            ? deterministicResolution
-            : localModelResolution
-        let parserSource = shouldUseDeterministicFallback ? "deterministicFallback" : "localModel"
+        let resolution = localModelResult.resolution
         let parseLatencyMS = Self.uptimeMilliseconds() - parseStartedAt
         let modelObservability = AIModelObservabilityReportBuilder.build(from: [localModelResult.trace])
 
@@ -71,7 +63,7 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
             traceID: traceID,
             resolution: resolution,
             metadata: [
-                "intentParser": parserSource,
+                "intentParser": "localModel",
                 "latency.commandParseMS": Self.formatLatency(parseLatencyMS),
                 "modelCallID": localModelResult.trace.id,
                 "modelCallStatus": localModelResult.trace.status.rawValue,

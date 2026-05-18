@@ -37,7 +37,7 @@ final class LocalRuntimeOnboardingWindowController: NSWindowController {
 final class LocalRuntimeOnboardingModel: ObservableObject {
     @Published private(set) var state: LocalRuntimeSetupViewState = .checking
     @Published private(set) var summary = "Checking Donkey setup..."
-    @Published private(set) var detail = "Donkey uses local model runtimes for voice, screenshots, and UI understanding."
+    @Published private(set) var detail = "Donkey uses local model runtimes for command parsing, voice, screenshots, and UI understanding."
 
     private let manager: LocalModelRuntimeSetupManager
     private var retryRuntimeIDs: [LocalModelRuntimeID] = []

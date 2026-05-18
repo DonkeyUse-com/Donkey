@@ -466,11 +466,21 @@ public struct MacLocalAppTaskController: LocalAppTaskAppControlling {
     public func observe(definition: LocalAppTaskDefinition) async -> LocalAppTaskObservation {
         let runningApplication = runningApplication(for: definition.targetApp)
         let isFocused = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == definition.targetApp.bundleIdentifier
-        let accessibilityIndex = accessibilityControlIndex(for: definition, runningApplication: runningApplication)
-        let visibleText = accessibilityIndex?.visibleText ?? accessibilityVisibleText(for: runningApplication)
         let verificationKey = definition.metadata["verificationTextKey"]
             ?? definition.verificationEntityName
             ?? "visibleText"
+        async let screenshotObservationTask: LocalAppTaskObservation? = shouldIncludeScreenshotUnderstanding(
+            definition: definition
+        )
+            ? screenshotUnderstandingObservation(
+                definition: definition,
+                runningApplication: runningApplication,
+                isFocused: isFocused,
+                verificationKey: verificationKey
+            )
+            : nil
+        let accessibilityIndex = accessibilityControlIndex(for: definition, runningApplication: runningApplication)
+        let visibleText = accessibilityIndex?.visibleText ?? accessibilityVisibleText(for: runningApplication)
         var controls: [String: Bool] = Dictionary(
             uniqueKeysWithValues: definition.workflowSteps.compactMap { step in
                 guard step.role == .focusControl,
@@ -503,19 +513,11 @@ public struct MacLocalAppTaskController: LocalAppTaskAppControlling {
             ]
         )
 
-        guard shouldUseScreenshotUnderstanding(
-            definition: definition,
-            observation: accessibilityObservation
-        ) else {
+        guard shouldIncludeScreenshotUnderstanding(definition: definition) else {
             return accessibilityObservation
         }
 
-        guard let screenshotObservation = await screenshotUnderstandingObservation(
-            definition: definition,
-            runningApplication: runningApplication,
-            isFocused: isFocused,
-            verificationKey: verificationKey
-        ) else {
+        guard let screenshotObservation = await screenshotObservationTask else {
             var metadata = accessibilityObservation.metadata
             metadata["screenshotUnderstanding.status"] = "unavailable"
             return LocalAppTaskObservation(
@@ -543,20 +545,10 @@ public struct MacLocalAppTaskController: LocalAppTaskAppControlling {
         )
     }
 
-    private func shouldUseScreenshotUnderstanding(
-        definition: LocalAppTaskDefinition,
-        observation: LocalAppTaskObservation
+    private func shouldIncludeScreenshotUnderstanding(
+        definition: LocalAppTaskDefinition
     ) -> Bool {
-        guard definition.observationStrategies.contains(.screenshotForLocalModel) else {
-            return false
-        }
-
-        let expectedControls = definition.workflowSteps.compactMap { step -> String? in
-            guard step.role == .focusControl else { return nil }
-            return step.metadata["controlID"]
-        }
-        let missingExpectedControl = expectedControls.contains { observation.availableControls[$0] != true }
-        return observation.visibleText.isEmpty || missingExpectedControl || observation.confidence < 0.7
+        definition.observationStrategies.contains(.screenshotForLocalModel)
     }
 
     @MainActor

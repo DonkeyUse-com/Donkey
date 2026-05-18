@@ -35,7 +35,185 @@ public struct TaskIntentAdapterResult: Equatable, Sendable {
     }
 }
 
-public struct OllamaTaskIntentAdapter: Sendable {
+public protocol TaskIntentParsingAdapter: Sendable {
+    func parseTaskIntent(_ request: TaskIntentAdapterRequest) async -> TaskIntentAdapterResult
+}
+
+public struct ProcessBackedLocalLLMTaskIntentAdapter: TaskIntentParsingAdapter {
+    public static let schemaID = "task_intent_v1"
+
+    public var router: AIModelRouter
+    public var sidecarRunner: any LocalJSONSidecarRunning
+    public var encoder: JSONEncoder
+    public var decoder: JSONDecoder
+
+    public init(
+        router: AIModelRouter = AIModelRouter(registry: .defaultHybridPlanner),
+        sidecarRunner: any LocalJSONSidecarRunning = ProcessBackedLocalJSONSidecarRunner(),
+        encoder: JSONEncoder = JSONEncoder(),
+        decoder: JSONDecoder = JSONDecoder()
+    ) {
+        self.router = router
+        self.sidecarRunner = sidecarRunner
+        self.encoder = encoder
+        self.decoder = decoder
+    }
+
+    public func parseTaskIntent(
+        _ request: TaskIntentAdapterRequest
+    ) async -> TaskIntentAdapterResult {
+        let entry: AIModelRegistryEntry
+        do {
+            entry = try router.route(request.routeRequest.limitingProviders([.localRuntime]))
+        } catch {
+            return result(
+                entry: nil,
+                request: request,
+                status: .invalidOutput,
+                validationStatus: "routingFailed",
+                latencyMS: nil,
+                metadata: ["error": String(describing: error)]
+            )
+        }
+
+        let input = LocalLLMTaskIntentSidecarRequest(
+            command: request.command,
+            taskDefinitions: request.taskDefinitions,
+            sourceTraceID: request.sourceTraceID,
+            modelID: entry.modelID,
+            metadata: [
+                "schemaID": Self.schemaID,
+                "promptVersion": entry.promptVersion
+            ]
+        )
+        let result = await sidecarRunner.run(
+            LocalJSONSidecarRequest(
+                environmentVariableName: "DONKEY_LOCAL_LLM_RUNNER",
+                inputData: (try? encoder.encode(input)) ?? Data(),
+                timeoutMS: entry.timeoutMS,
+                metadata: [
+                    "sidecar.role": "taskIntent",
+                    "modelID": entry.modelID
+                ]
+            )
+        )
+
+        guard result.status == .completed else {
+            return self.result(
+                entry: entry,
+                request: request,
+                status: result.status == .timedOut ? .timeout : .providerOutage,
+                validationStatus: "notValidated",
+                latencyMS: result.latencyMS,
+                metadata: result.metadata.merging([
+                    "sidecar.stderr": result.stderrText
+                ]) { current, _ in current }
+            )
+        }
+
+        do {
+            let response = try decoder.decode(LocalLLMTaskIntentSidecarResponse.self, from: result.outputData)
+            guard let intent = try TaskIntentWireCodec.decodeIntent(
+                response.outputText,
+                definitions: request.taskDefinitions,
+                sourceModelCallID: "model-call-\(request.sourceTraceID)",
+                parserName: "local-llm-sidecar-v1"
+            ) else {
+                return self.result(
+                    entry: entry,
+                    request: request,
+                    status: .invalidOutput,
+                    validationStatus: "invalid",
+                    latencyMS: result.latencyMS,
+                    metadata: result.metadata.merging(response.metadata) { current, _ in current }
+                )
+            }
+
+            return TaskIntentAdapterResult(
+                intent: intent,
+                trace: trace(
+                    entry: entry,
+                    request: request,
+                    status: .completed,
+                    validationStatus: "schemaDecoded",
+                    latencyMS: result.latencyMS,
+                    metadata: result.metadata.merging(response.metadata) { current, _ in current }
+                )
+            )
+        } catch {
+            return self.result(
+                entry: entry,
+                request: request,
+                status: .invalidOutput,
+                validationStatus: "invalid",
+                latencyMS: result.latencyMS,
+                metadata: result.metadata.merging([
+                    "error": String(describing: error)
+                ]) { current, _ in current }
+            )
+        }
+    }
+
+    private func result(
+        entry: AIModelRegistryEntry?,
+        request: TaskIntentAdapterRequest,
+        status: AIModelCallStatus,
+        validationStatus: String,
+        latencyMS: Double?,
+        metadata: [String: String] = [:]
+    ) -> TaskIntentAdapterResult {
+        TaskIntentAdapterResult(
+            intent: nil,
+            trace: trace(
+                entry: entry,
+                request: request,
+                status: status,
+                validationStatus: validationStatus,
+                latencyMS: latencyMS,
+                metadata: metadata
+            )
+        )
+    }
+
+    private func trace(
+        entry: AIModelRegistryEntry?,
+        request: TaskIntentAdapterRequest,
+        status: AIModelCallStatus,
+        validationStatus: String,
+        latencyMS: Double?,
+        metadata: [String: String] = [:]
+    ) -> AIModelCallTrace {
+        AIModelCallTrace(
+            id: "model-call-\(request.sourceTraceID)",
+            role: entry?.role ?? .taskIntent,
+            provider: entry?.provider ?? .localRuntime,
+            modelID: entry?.modelID ?? "unrouted",
+            promptVersion: entry?.promptVersion ?? "unrouted",
+            schemaID: Self.schemaID,
+            latencyMS: latencyMS,
+            timeoutMS: entry?.timeoutMS ?? 0,
+            status: status,
+            validationStatus: validationStatus,
+            sourceTraceID: request.sourceTraceID,
+            metadata: metadata
+        )
+    }
+}
+
+private struct LocalLLMTaskIntentSidecarRequest: Codable, Equatable, Sendable {
+    var command: String
+    var taskDefinitions: [LocalAppTaskDefinition]
+    var sourceTraceID: String
+    var modelID: String
+    var metadata: [String: String]
+}
+
+private struct LocalLLMTaskIntentSidecarResponse: Codable, Equatable, Sendable {
+    var outputText: String
+    var metadata: [String: String]
+}
+
+public struct OllamaTaskIntentAdapter: TaskIntentParsingAdapter {
     public static let schemaID = "task_intent_v1"
 
     public var router: AIModelRouter
@@ -85,7 +263,8 @@ public struct OllamaTaskIntentAdapter: Sendable {
                   let intent = try TaskIntentWireCodec.decodeIntent(
                     outputText,
                     definitions: request.taskDefinitions,
-                    sourceModelCallID: "model-call-\(request.sourceTraceID)"
+                    sourceModelCallID: "model-call-\(request.sourceTraceID)",
+                    parserName: "ollama-task-intent-v1"
                   )
             else {
                 return result(entry: entry, request: request, status: .invalidOutput, validationStatus: "invalid", latencyMS: latencyMS)
@@ -228,11 +407,11 @@ public struct OllamaTaskIntentAdapter: Sendable {
 
 public struct LocalModelTaskIntentResolver: Sendable {
     public var catalog: LocalAppTaskCatalog
-    public var adapter: OllamaTaskIntentAdapter
+    public var adapter: any TaskIntentParsingAdapter
 
     public init(
         catalog: LocalAppTaskCatalog,
-        adapter: OllamaTaskIntentAdapter = OllamaTaskIntentAdapter()
+        adapter: any TaskIntentParsingAdapter = ProcessBackedLocalLLMTaskIntentAdapter()
     ) {
         self.catalog = catalog
         self.adapter = adapter
@@ -309,7 +488,8 @@ private enum TaskIntentWireCodec {
     static func decodeIntent(
         _ outputText: String,
         definitions: [LocalAppTaskDefinition],
-        sourceModelCallID: String
+        sourceModelCallID: String,
+        parserName: String
     ) throws -> TaskIntent? {
         let data = Data(outputText.utf8)
         let wire = try JSONDecoder().decode(TaskIntentWire.self, from: data)
@@ -324,7 +504,7 @@ private enum TaskIntentWireCodec {
             rule.required && normalizedEntities[rule.name] == nil
         }
         var metadata = wire.metadata.merging(definition.metadata) { current, _ in current }
-        metadata["parser"] = "ollama-task-intent-v1"
+        metadata["parser"] = parserName
         if let missingRequiredEntity {
             metadata["missingEntity"] = missingRequiredEntity.name
         }

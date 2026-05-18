@@ -12,11 +12,13 @@ struct LocalModelRuntimeSetupTests {
         let manager = try LocalModelRuntimeSetupManager(baseDirectory: root)
         let instructions = manager.instructions()
 
-        #expect(instructions.count == 3)
+        #expect(instructions.count == 4)
         #expect(instructions.map(\.spec.id).contains(.parakeetTranscriber))
+        #expect(instructions.map(\.spec.id).contains(.localLLM))
         #expect(instructions.first { $0.spec.id == .parakeetTranscriber }?.spec.environmentVariableName == "DONKEY_PARAKEET_TRANSCRIBER")
         #expect(instructions.first { $0.spec.id == .yoloSegmenter }?.spec.environmentVariableName == "DONKEY_YOLO_SEGMENTER")
         #expect(instructions.first { $0.spec.id == .uiUnderstander }?.spec.environmentVariableName == "DONKEY_UI_UNDERSTANDER")
+        #expect(instructions.first { $0.spec.id == .localLLM }?.spec.environmentVariableName == "DONKEY_LOCAL_LLM_RUNNER")
         #expect(instructions.first?.spec.installSteps.first?.contains("Set Up") == true)
     }
 
@@ -300,6 +302,43 @@ struct LocalModelRuntimeSetupTests {
         #expect(report.modelID == "nvidia/parakeet-tdt-0.6b-v3")
     }
 
+    @Test
+    func prepareModelWeightsRunsSidecarPreparationProtocol() async throws {
+        let root = temporaryDirectory()
+        let download = temporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: download)
+        }
+        let executable = try makeModelPreparationExecutable(
+            root: download,
+            relativePath: "bin/donkey-ui-understander",
+            runtimeID: "ui-understander",
+            modelID: "local-ui-understander"
+        )
+        let manager = try LocalModelRuntimeSetupManager(baseDirectory: root)
+        try manager.registerExecutable(
+            runtimeID: .uiUnderstander,
+            executableURL: executable,
+            downloadedDirectory: download,
+            runtimeVersion: "1.0.0",
+            modelID: "local-ui-understander",
+            sidecarProtocolVersion: "v1",
+            metadata: [
+                "modelWeights.downloadURL": "https://example.test/ui/model.bin",
+                "modelWeights.sha256": "abc",
+                "modelWeights.filename": "ui.bin"
+            ]
+        )
+
+        let report = try await manager.prepareModelWeights(runtimeID: .uiUnderstander)
+
+        #expect(report.state == .prepared)
+        #expect(report.modelID == "local-ui-understander")
+        #expect(report.cacheDirectory?.contains("/ModelWeights/ui-understander/local-ui-understander") == true)
+        #expect(report.metadata["modelWeights.status"] == "downloaded")
+    }
+
     private func makeExecutable(
         root: URL,
         relativePath: String
@@ -349,6 +388,36 @@ struct LocalModelRuntimeSetupTests {
         #!/bin/sh
         cat >/dev/null
         printf '{"status":"ok","runtimeID":"\(runtimeID)","runtimeVersion":"\(runtimeVersion)","modelID":"\(modelID)","protocolVersion":"v1","metadata":{"health":"ok"}}'
+        """
+        let url = relativePath
+            .split(separator: "/")
+            .reduce(root) { partialURL, component in
+                partialURL.appendingPathComponent(String(component), isDirectory: false)
+            }
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data(script.utf8).write(to: url)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: url.path
+        )
+        return url
+    }
+
+    private func makeModelPreparationExecutable(
+        root: URL,
+        relativePath: String,
+        runtimeID: String,
+        modelID: String
+    ) throws -> URL {
+        let script = """
+        #!/bin/sh
+        REQUEST="$(cat)"
+        CACHE="$(printf '%s' "$REQUEST" | sed -n 's/.*"cacheDirectory"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' | head -n 1)"
+        mkdir -p "$CACHE"
+        printf '{"status":"ok","runtimeID":"\(runtimeID)","modelID":"\(modelID)","cacheDirectory":"%s","metadata":{"modelWeights.status":"downloaded"}}' "$CACHE"
         """
         let url = relativePath
             .split(separator: "/")

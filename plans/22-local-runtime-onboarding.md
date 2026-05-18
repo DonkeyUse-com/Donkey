@@ -157,8 +157,11 @@ Already supported:
 
 - `LocalModelRuntimeSetupManager` runtime specs, setup instructions, registration, status, and app-managed executable resolution.
 - First-run local runtime setup window with one setup button that drives download, validation, install, registration, and health checks.
-- Package-time bundled bootstrap sidecar runtime packages embedded under `Donkey.app/Contents/Resources/LocalRuntimePackages/`.
+- Package-time bundled sidecar runner packages embedded under `Donkey.app/Contents/Resources/LocalRuntimePackages/`.
+- Shared packaged runner entrypoint for local LLM, Parakeet, YOLO, and UI-understanding sidecars, with real backend hooks and explicit missing-backend states instead of hardcoded fake runtime output.
 - Setup manager installation from bundled package manifests before remote manifest download.
+- Setup-time `prepareModelWeights` sidecar operation that downloads/caches configured model files into Application Support before health checks.
+- Setup-managed `local-llm` sidecar for the command parser; it pulls `qwen3:8b` through Ollama by default and submitted commands route through this sidecar.
 - Manifest-backed package download and managed cache install under Application Support.
 - SHA-256 package file validation and required signature metadata.
 - Sidecar health-check protocol through the existing JSON process runner.
@@ -170,7 +173,7 @@ Already supported:
 
 Still needed:
 
-- Replace bootstrap sidecar packages with real model-weight runner packages.
+- Package or bootstrap the remaining local backend dependencies behind the one setup button: NVIDIA NeMo/Python for Parakeet, Ultralytics-compatible execution for YOLO, a real local UI-understanding backend, and either an accepted Ollama prerequisite or a self-contained local LLM runner.
 - Finalize cryptographic signature verification with release signing keys.
 - Settings-menu entry to reopen the setup window after first launch.
 - Behind-the-scenes upgrade/repair/remove flows.

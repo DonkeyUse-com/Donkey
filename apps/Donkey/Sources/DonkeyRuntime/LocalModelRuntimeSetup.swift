@@ -5,6 +5,7 @@ public enum LocalModelRuntimeID: String, Codable, CaseIterable, Equatable, Senda
     case parakeetTranscriber = "parakeet-transcriber"
     case yoloSegmenter = "yolo-segmenter"
     case uiUnderstander = "ui-understander"
+    case localLLM = "local-llm"
 }
 
 public enum LocalModelRuntimeInstallState: String, Codable, Equatable, Sendable {
@@ -375,6 +376,24 @@ public struct LocalModelRuntimeSetupManager: Sendable {
                 "Donkey records bin/donkey-ui-understander in Application Support."
             ],
             metadata: ["sidecar.role": "uiUnderstanding"]
+        ),
+        LocalModelRuntimeSpec(
+            id: .localLLM,
+            displayName: "Local command parser LLM",
+            environmentVariableName: "DONKEY_LOCAL_LLM_RUNNER",
+            expectedExecutableRelativePath: "bin/donkey-local-llm",
+            modelName: "qwen3:8b",
+            downloadPageURL: URL(string: "https://ollama.com/library/qwen3"),
+            installSteps: [
+                "Click Set Up in Donkey after installing the app.",
+                "Donkey asks the local LLM runner to download and cache qwen3:8b.",
+                "Donkey records bin/donkey-local-llm in Application Support."
+            ],
+            metadata: [
+                "sidecar.role": "localLLM",
+                "modelWeights.provider": "ollama",
+                "modelWeights.ollamaModel": "qwen3:8b"
+            ]
         )
     ]
 
@@ -651,7 +670,13 @@ public struct LocalModelRuntimeSetupManager: Sendable {
         let requestData = try Self.encoder().encode(
             LocalModelRuntimeHealthRequest(
                 operation: "healthCheck",
-                protocolVersion: installation.sidecarProtocolVersion ?? "v1"
+                protocolVersion: installation.sidecarProtocolVersion ?? "v1",
+                runtimeID: runtimeID.rawValue,
+                runtimeVersion: installation.runtimeVersion,
+                modelID: installation.modelID ?? status.spec.modelName,
+                cacheDirectory: modelCacheDirectory(for: installation).path,
+                metadata: status.spec.metadata
+                    .merging(installation.metadata) { _, new in new }
             )
         )
         let runner = ProcessBackedLocalJSONSidecarRunner(
@@ -937,6 +962,11 @@ public struct LocalModelRuntimeSetupManager: Sendable {
 private struct LocalModelRuntimeHealthRequest: Codable, Equatable, Sendable {
     var operation: String
     var protocolVersion: String
+    var runtimeID: String?
+    var runtimeVersion: String?
+    var modelID: String?
+    var cacheDirectory: String?
+    var metadata: [String: String]?
 }
 
 private struct LocalModelRuntimeHealthResponse: Codable, Equatable, Sendable {

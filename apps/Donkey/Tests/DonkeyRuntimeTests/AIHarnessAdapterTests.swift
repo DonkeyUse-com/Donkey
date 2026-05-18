@@ -79,9 +79,9 @@ struct AIHarnessAdapterTests {
             )
         )
 
-        #expect(selected.id == "ollama-task-intent-local")
+        #expect(selected.id == "local-runtime-task-intent-qwen3")
         #expect(selected.role == .taskIntent)
-        #expect(selected.provider == .ollama)
+        #expect(selected.provider == .localRuntime)
     }
 
     @Test
@@ -296,6 +296,39 @@ struct AIHarnessAdapterTests {
         #expect(body["stream"] as? Bool == false)
         #expect(body["format"] as? [String: Any] != nil)
         #expect((body["prompt"] as? String)?.contains("Use only the provided task definitions") == true)
+    }
+
+    @Test
+    func processBackedLocalLLMTaskIntentAdapterDecodesValidatedIntent() async throws {
+        let adapter = ProcessBackedLocalLLMTaskIntentAdapter(
+            router: AIModelRouter(registry: .defaultHybridPlanner),
+            sidecarRunner: FakeSidecarRunner(
+                result: LocalJSONSidecarResult(
+                    status: .completed,
+                    outputData: Data("""
+                    {"outputText":"{\\"taskType\\":\\"media_playback\\",\\"targetAppName\\":\\"Music\\",\\"entities\\":{\\"query\\":\\"cold play\\"},\\"normalizedEntities\\":{\\"query\\":\\"Cold Play\\"},\\"confidence\\":0.91,\\"needsConfirmation\\":false,\\"metadata\\":{\\"source\\":\\"test\\"}}","metadata":{"local.provider":"ollama-sidecar"}}
+                    """.utf8),
+                    latencyMS: 14,
+                    metadata: ["sidecar.role": "taskIntent"]
+                )
+            )
+        )
+
+        let result = await adapter.parseTaskIntent(
+            TaskIntentAdapterRequest(
+                command: "play cold play",
+                taskDefinitions: BuiltInLocalAppTaskDefinitions.defaults,
+                sourceTraceID: "trace-local-llm"
+            )
+        )
+
+        #expect(result.intent?.taskType == "media_playback")
+        #expect(result.intent?.targetApp.appName == "Music")
+        #expect(result.intent?.normalizedEntities["query"] == "Cold Play")
+        #expect(result.intent?.metadata["parser"] == "local-llm-sidecar-v1")
+        #expect(result.trace.provider == .localRuntime)
+        #expect(result.trace.status == .completed)
+        #expect(result.trace.metadata["local.provider"] == "ollama-sidecar")
     }
 
     @Test
