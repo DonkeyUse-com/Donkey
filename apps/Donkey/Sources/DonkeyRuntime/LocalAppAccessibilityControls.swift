@@ -333,16 +333,27 @@ public struct LocalAppAccessibilityActionPlanner: Sendable {
 }
 
 public struct MacAccessibilityActionEngineInputBackend: ActionEngineInputBackend {
-    public init() {}
+    public var actionTimeoutNanoseconds: UInt64
+
+    public init(actionTimeoutNanoseconds: UInt64 = 200_000_000) {
+        self.actionTimeoutNanoseconds = actionTimeoutNanoseconds
+    }
 
     public func execute(_ command: ActionEngineCommand) async -> ActionEngineInputBackendResult {
-        await MainActor.run {
-            executeOnMainActor(command)
+        do {
+            return try await MacAccessibilityTimeout.run(
+                timeoutNanoseconds: actionTimeoutNanoseconds
+            ) {
+                executeSynchronously(command)
+            }
+        } catch MacAccessibilityTimeoutError.timedOut {
+            return result(command, executed: false, reason: "accessibilityTimedOut")
+        } catch {
+            return result(command, executed: false, reason: String(describing: error))
         }
     }
 
-    @MainActor
-    private func executeOnMainActor(_ command: ActionEngineCommand) -> ActionEngineInputBackendResult {
+    private func executeSynchronously(_ command: ActionEngineCommand) -> ActionEngineInputBackendResult {
         guard AXIsProcessTrusted() else {
             return result(command, executed: false, reason: "accessibilityNotTrusted")
         }
@@ -352,7 +363,7 @@ public struct MacAccessibilityActionEngineInputBackend: ActionEngineInputBackend
             return result(command, executed: false, reason: "missingAccessibilityTarget")
         }
         guard let bundleIdentifier = command.metadata["bundleIdentifier"],
-              let application = NSWorkspace.shared.frontmostApplication,
+              let application = frontmostApplication(),
               application.bundleIdentifier == bundleIdentifier
         else {
             return result(command, executed: false, reason: "targetAppNotFrontmost")
@@ -382,7 +393,12 @@ public struct MacAccessibilityActionEngineInputBackend: ActionEngineInputBackend
         }
     }
 
-    @MainActor
+    private func frontmostApplication() -> FrontmostAccessibilityApplication? {
+        Thread.isMainThread
+            ? FrontmostAccessibilityApplication.current()
+            : DispatchQueue.main.sync { FrontmostAccessibilityApplication.current() }
+    }
+
     private func resolveElement(nodeID: String, application: AXUIElement) -> AXUIElement? {
         let indexes = nodeID
             .split(separator: ".")
@@ -398,7 +414,6 @@ public struct MacAccessibilityActionEngineInputBackend: ActionEngineInputBackend
         }
     }
 
-    @MainActor
     private func windows(from appElement: AXUIElement) -> [AXUIElement] {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(
@@ -411,7 +426,6 @@ public struct MacAccessibilityActionEngineInputBackend: ActionEngineInputBackend
         return value as? [AXUIElement] ?? []
     }
 
-    @MainActor
     private func children(from element: AXUIElement) -> [AXUIElement] {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(
@@ -436,6 +450,22 @@ public struct MacAccessibilityActionEngineInputBackend: ActionEngineInputBackend
                 "liveInputBackend": "mac-accessibility",
                 "accessibility.result": reason
             ]
+        )
+    }
+}
+
+private struct FrontmostAccessibilityApplication: Sendable {
+    var processIdentifier: pid_t
+    var bundleIdentifier: String?
+
+    static func current() -> FrontmostAccessibilityApplication? {
+        guard let application = NSWorkspace.shared.frontmostApplication else {
+            return nil
+        }
+
+        return FrontmostAccessibilityApplication(
+            processIdentifier: application.processIdentifier,
+            bundleIdentifier: application.bundleIdentifier
         )
     }
 }

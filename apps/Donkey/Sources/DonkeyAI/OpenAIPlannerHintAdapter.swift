@@ -1,4 +1,5 @@
 import DonkeyContracts
+import DonkeyRuntime
 import Foundation
 
 public enum AIModelCallStatus: String, Codable, Equatable, Sendable {
@@ -85,13 +86,16 @@ public struct PlannerHintAdapterRequest: Equatable, Sendable {
 public struct PlannerHintAdapterResult: Equatable, Sendable {
     public var hint: StructuredPlannerHint?
     public var trace: AIModelCallTrace
+    public var memoryWriteDecisions: [RunMemoryWriteDecision]
 
     public init(
         hint: StructuredPlannerHint?,
-        trace: AIModelCallTrace
+        trace: AIModelCallTrace,
+        memoryWriteDecisions: [RunMemoryWriteDecision] = []
     ) {
         self.hint = hint
         self.trace = trace
+        self.memoryWriteDecisions = memoryWriteDecisions
     }
 }
 
@@ -121,15 +125,18 @@ public struct OpenAIPlannerHintAdapter: Sendable {
     public var router: AIModelRouter
     public var httpClient: any AIHTTPClient
     public var environment: [String: String]
+    public var targetMemoryStore: TargetMemoryJSONLStore?
 
     public init(
         router: AIModelRouter = AIModelRouter(),
         httpClient: any AIHTTPClient = URLSessionAIHTTPClient(),
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        targetMemoryStore: TargetMemoryJSONLStore? = try? TargetMemoryJSONLStore()
     ) {
         self.router = router
         self.httpClient = httpClient
         self.environment = environment
+        self.targetMemoryStore = targetMemoryStore
     }
 
     public func generatePlannerHint(
@@ -179,18 +186,28 @@ public struct OpenAIPlannerHintAdapter: Sendable {
             }
 
             guard (200..<300).contains(response.statusCode),
-                  let outputText = try Self.outputText(from: data),
-                  let hint = try Self.decodeHint(
-                    outputText,
-                    sourceTraceID: request.sourceTraceID,
-                    sourceFrameID: request.sourceFrameID,
-                    sourceStateID: request.sourceStateID,
-                    modelCallID: "model-call-\(request.sourceTraceID)",
-                    now: request.now
-                  )
+                  let outputText = try Self.outputText(from: data)
             else {
                 return result(entry: entry, request: request, status: .invalidOutput, validationStatus: "invalid", latencyMS: latencyMS)
             }
+
+            let providerOutput = try PlannerHintWireCodec.decodeProviderOutput(
+                outputText,
+                sourceTraceID: request.sourceTraceID,
+                sourceFrameID: request.sourceFrameID,
+                sourceStateID: request.sourceStateID,
+                modelCallID: "model-call-\(request.sourceTraceID)",
+                now: request.now
+            )
+            guard let hint = providerOutput.hint else {
+                return result(entry: entry, request: request, status: .invalidOutput, validationStatus: "invalid", latencyMS: latencyMS)
+            }
+
+            let proposalProcessing = await ProviderDecodedMemoryProposalHandler.process(
+                proposals: providerOutput.memoryWriteProposals,
+                decidedAt: request.now,
+                targetMemoryStore: targetMemoryStore
+            )
 
             return PlannerHintAdapterResult(
                 hint: hint,
@@ -204,7 +221,10 @@ public struct OpenAIPlannerHintAdapter: Sendable {
                         "http.status": String(response.statusCode),
                         "privacy.store": "false"
                     ]
-                )
+                    .merging(providerOutput.metadata) { current, _ in current }
+                    .merging(proposalProcessing.metadata) { current, _ in current }
+                ),
+                memoryWriteDecisions: proposalProcessing.decisions
             )
         } catch is CancellationError {
             return result(entry: entry, request: request, status: .cancelled, validationStatus: "notValidated", latencyMS: nil)
@@ -243,7 +263,7 @@ public struct OpenAIPlannerHintAdapter: Sendable {
         [
             "model": entry.modelID,
             "store": false,
-            "instructions": "Return one planner hint as strict JSON. Hints are advisory and never direct input.",
+            "instructions": "Return strict JSON with a planner hint and memoryWriteProposals. Hints are advisory and never direct input. Leave memoryWriteProposals empty unless a source-linked target memory should be proposed.",
             "input": [
                 [
                     "role": "user",
@@ -279,7 +299,8 @@ public struct OpenAIPlannerHintAdapter: Sendable {
             "source_state_id: \(request.sourceStateID ?? "none")",
             "valid_hints: \(request.context.activeHints.map(\.summary).joined(separator: " | "))",
             "recent_failures: \(request.context.recentFailures.map(\.summary).joined(separator: " | "))",
-            "memory: \(memoryText(for: request.context.memorySnapshot))"
+            "memory: \(memoryText(for: request.context.memorySnapshot))",
+            "semantic_memory: \(semanticMemoryText(for: request.context.semanticMemoryResults))"
         ]
         .joined(separator: "\n")
     }
@@ -302,6 +323,14 @@ public struct OpenAIPlannerHintAdapter: Sendable {
     private func nonEmpty(_ label: String, _ values: [String]) -> String? {
         guard !values.isEmpty else { return nil }
         return "\(label)=\(values.joined(separator: "; "))"
+    }
+
+    private func semanticMemoryText(for results: [RunMemorySemanticResult]) -> String {
+        guard !results.isEmpty else { return "none" }
+        return results.map { result in
+            "\(result.record.id)(\(String(format: "%.2f", result.relevance))): \(result.record.value)"
+        }
+        .joined(separator: " | ")
     }
 
     private func plannerHintJSONSchema() -> [String: Any] {
@@ -387,8 +416,33 @@ struct PlannerHintWireOutput: Decodable {
     var expiryMilliseconds: UInt64
 }
 
+struct PlannerProviderWireOutput: Equatable, Sendable {
+    var hint: StructuredPlannerHint?
+    var memoryWriteProposals: [RunMemoryWriteProposal]
+    var metadata: [String: String]
+}
+
 enum PlannerHintWireCodec {
     static func jsonSchema() -> [String: Any] {
+        providerOutputJSONSchema()
+    }
+
+    static func providerOutputJSONSchema() -> [String: Any] {
+        [
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["hint", "memoryWriteProposals"],
+            "properties": [
+                "hint": hintJSONSchema(),
+                "memoryWriteProposals": [
+                    "type": "array",
+                    "items": memoryWriteProposalJSONSchema()
+                ]
+            ]
+        ]
+    }
+
+    static func hintJSONSchema() -> [String: Any] {
         [
             "type": "object",
             "additionalProperties": false,
@@ -406,6 +460,74 @@ enum PlannerHintWireCodec {
         ]
     }
 
+    static func decodeProviderOutput(
+        _ text: String,
+        sourceTraceID: String,
+        sourceFrameID: String?,
+        sourceStateID: String?,
+        modelCallID: String,
+        now: RunTraceTimestamp
+    ) throws -> PlannerProviderWireOutput {
+        guard let data = text.data(using: .utf8) else {
+            return PlannerProviderWireOutput(
+                hint: nil,
+                memoryWriteProposals: [],
+                metadata: ["providerOutput.decodeStatus": "invalidUTF8"]
+            )
+        }
+
+        if let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let hintObject = object["hint"] {
+            let hintData = try JSONSerialization.data(withJSONObject: hintObject)
+            let hint = try decodeHintData(
+                hintData,
+                sourceTraceID: sourceTraceID,
+                sourceFrameID: sourceFrameID,
+                sourceStateID: sourceStateID,
+                modelCallID: modelCallID,
+                now: now
+            )
+            var proposals: [RunMemoryWriteProposal] = []
+            var metadata = [
+                "providerOutput.shape": "hintWithMemoryProposals",
+                "memoryProposal.decodeStatus": "notPresent"
+            ]
+
+            if let proposalsObject = object["memoryWriteProposals"] {
+                let proposalData = try JSONSerialization.data(withJSONObject: proposalsObject)
+                do {
+                    proposals = try JSONDecoder().decode([RunMemoryWriteProposal].self, from: proposalData)
+                    metadata["memoryProposal.decodeStatus"] = "decoded"
+                } catch {
+                    metadata["memoryProposal.decodeStatus"] = "invalid"
+                    metadata["memoryProposal.decodeError"] = String(describing: error)
+                }
+            }
+
+            return PlannerProviderWireOutput(
+                hint: hint,
+                memoryWriteProposals: proposals,
+                metadata: metadata
+            )
+        }
+
+        return PlannerProviderWireOutput(
+            hint: try decodeHintData(
+                data,
+                sourceTraceID: sourceTraceID,
+                sourceFrameID: sourceFrameID,
+                sourceStateID: sourceStateID,
+                modelCallID: modelCallID,
+                now: now
+            ),
+            memoryWriteProposals: [],
+            metadata: [
+                "providerOutput.shape": "legacyHintOnly",
+                "memoryProposal.decodeStatus": "notPresent"
+            ]
+        )
+    }
+
     static func decodeHint(
         _ text: String,
         sourceTraceID: String,
@@ -415,6 +537,24 @@ enum PlannerHintWireCodec {
         now: RunTraceTimestamp
     ) throws -> StructuredPlannerHint? {
         guard let data = text.data(using: .utf8) else { return nil }
+        return try decodeHintData(
+            data,
+            sourceTraceID: sourceTraceID,
+            sourceFrameID: sourceFrameID,
+            sourceStateID: sourceStateID,
+            modelCallID: modelCallID,
+            now: now
+        )
+    }
+
+    private static func decodeHintData(
+        _ data: Data,
+        sourceTraceID: String,
+        sourceFrameID: String?,
+        sourceStateID: String?,
+        modelCallID: String,
+        now: RunTraceTimestamp
+    ) throws -> StructuredPlannerHint? {
         let wire = try JSONDecoder().decode(PlannerHintWireOutput.self, from: data)
         guard let preferredActions = actions(from: wire.preferredActions),
               let avoidActions = actions(from: wire.avoidActions)
@@ -437,6 +577,97 @@ enum PlannerHintWireCodec {
             sourceStateID: sourceStateID,
             sourceModelCallID: modelCallID
         )
+    }
+
+    private static func memoryWriteProposalJSONSchema() -> [String: Any] {
+        [
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "proposedBy", "record", "rationale"],
+            "properties": [
+                "id": ["type": "string"],
+                "proposedBy": ["type": "string", "enum": RunMemoryAuthor.allCasesRawValues],
+                "record": memoryRecordJSONSchema(),
+                "rationale": ["type": "string"]
+            ]
+        ]
+    }
+
+    private static func memoryRecordJSONSchema() -> [String: Any] {
+        [
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "id",
+                "scope",
+                "kind",
+                "targetID",
+                "runID",
+                "userID",
+                "value",
+                "createdAt",
+                "expiresAt",
+                "durable",
+                "source",
+                "metadata"
+            ],
+            "properties": [
+                "id": ["type": "string"],
+                "scope": ["type": "string", "enum": RunMemoryScope.allCasesRawValues],
+                "kind": ["type": "string", "enum": RunMemoryKind.allCasesRawValues],
+                "targetID": ["type": ["string", "null"]],
+                "runID": ["type": ["string", "null"]],
+                "userID": ["type": ["string", "null"]],
+                "value": ["type": "string"],
+                "createdAt": timestampJSONSchema(),
+                "expiresAt": ["anyOf": [timestampJSONSchema(), ["type": "null"]]],
+                "durable": ["type": "boolean"],
+                "source": memorySourceJSONSchema(),
+                "metadata": [
+                    "type": "object",
+                    "additionalProperties": ["type": "string"]
+                ]
+            ]
+        ]
+    }
+
+    private static func memorySourceJSONSchema() -> [String: Any] {
+        [
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "traceID",
+                "frameID",
+                "stateID",
+                "actionID",
+                "plannerHintID",
+                "modelCallID",
+                "eventSequence",
+                "summary"
+            ],
+            "properties": [
+                "traceID": ["type": ["string", "null"]],
+                "frameID": ["type": ["string", "null"]],
+                "stateID": ["type": ["string", "null"]],
+                "actionID": ["type": ["string", "null"]],
+                "plannerHintID": ["type": ["string", "null"]],
+                "modelCallID": ["type": ["string", "null"]],
+                "eventSequence": ["type": ["integer", "null"]],
+                "summary": ["type": "string"]
+            ]
+        ]
+    }
+
+    private static func timestampJSONSchema() -> [String: Any] {
+        [
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["wallClock", "monotonicUptimeNanoseconds"],
+            "properties": [
+                "wallClock": ["type": "number"],
+                "monotonicUptimeNanoseconds": ["type": "integer"]
+            ]
+        ]
     }
 
     private static func actions(from rawValues: [String]) -> [HotLoopActionKind]? {
@@ -489,5 +720,31 @@ private extension RunTraceTimestamp {
             wallClock: wallClock.addingTimeInterval(Double(milliseconds) / 1_000),
             monotonicUptimeNanoseconds: monotonicUptimeNanoseconds + milliseconds * 1_000_000
         )
+    }
+}
+
+private extension RunMemoryAuthor {
+    static var allCasesRawValues: [String] {
+        ["deterministicRuntime", "user", "model"]
+    }
+}
+
+private extension RunMemoryScope {
+    static var allCasesRawValues: [String] {
+        ["run", "target", "user"]
+    }
+}
+
+private extension RunMemoryKind {
+    static var allCasesRawValues: [String] {
+        [
+            "currentGoal",
+            "activeHint",
+            "recentState",
+            "failure",
+            "userInstruction",
+            "safetyStop",
+            "targetFact"
+        ]
     }
 }

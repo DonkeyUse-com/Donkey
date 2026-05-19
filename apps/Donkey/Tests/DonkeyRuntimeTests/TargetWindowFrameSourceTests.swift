@@ -88,6 +88,43 @@ struct TargetWindowFrameSourceTests {
     }
 
     @Test
+    func iPhoneMirroringFramesDefaultToCenteredPhoneContentCrop() async throws {
+        let service = makeService(
+            windows: [
+                fixtureWindow(
+                    windowID: 33,
+                    processID: 300,
+                    appName: "iPhone Mirroring",
+                    bundleIdentifier: "com.apple.ScreenContinuity"
+                )
+            ],
+            frontmostProcessID: 300,
+            capturer: FakeTargetWindowFrameCapturer(
+                imageWidth: 500,
+                imageHeight: 1_000
+            )
+        )
+
+        let result = try await service.captureFrames(
+            request: TargetWindowFrameCaptureRequest(
+                selection: MacWindowSelectionRequest(windowID: 33),
+                targetID: "target-iphone",
+                traceID: "trace-iphone",
+                maxFrameCount: 1
+            )
+        )
+
+        let crop = try #require(result.frames.first?.crop)
+        #expect(crop.id == "target-window-content")
+        #expect(abs(crop.bounds.origin.x - 19.230_769) < 0.001)
+        #expect(crop.bounds.origin.y == 0)
+        #expect(abs(crop.bounds.size.width - 461.538_461) < 0.001)
+        #expect(crop.bounds.size.height == 1_000)
+        #expect(result.frames.first?.metadata["contentCalibration.mode"] == "centeredAspectFit")
+        #expect(result.frames.first?.metadata["contentCalibration.target.isIPhoneMirroring"] == "true")
+    }
+
+    @Test
     func unsafeTargetRefusesBeforeCapturingFrames() async throws {
         let capturer = FakeTargetWindowFrameCapturer()
         let service = makeService(
@@ -188,6 +225,43 @@ struct TargetWindowFrameSourceTests {
         #expect(batches.count == 2)
         #expect(batches.allSatisfy { $0.count == 1 })
         #expect(batches.flatMap { $0 }.map(\.id) == ["source-frame-1", "source-frame-2"])
+    }
+
+    @Test
+    func continuousTargetWindowFrameSourceStreamsLatestFrameBatches() async {
+        let capturer = FakeTargetWindowFrameCapturer()
+        let service = makeService(
+            windows: [
+                fixtureWindow(windowID: 31, processID: 301, appName: "Game")
+            ],
+            frontmostProcessID: 301,
+            capturer: capturer
+        )
+        let source = ContinuousTargetWindowFrameSource(
+            service: service,
+            request: TargetWindowFrameCaptureRequest(
+                selection: MacWindowSelectionRequest(windowID: 31),
+                targetID: "target-game",
+                traceID: "trace-stream",
+                frameIDPrefix: "stream-frame",
+                maxFrameCount: 1
+            ),
+            minimumFrameIntervalNanoseconds: 0,
+            maximumFrameCount: 3
+        )
+
+        var frames: [HotLoopFrame] = []
+        for await batch in source.frameBatchStream() {
+            frames.append(contentsOf: batch)
+        }
+
+        #expect(frames.count == 3)
+        #expect(frames.map(\.id) == [
+            "stream-frame-stream-1-1",
+            "stream-frame-stream-2-1",
+            "stream-frame-stream-3-1"
+        ])
+        #expect(capturer.capturedWindowIDs == [31, 31, 31])
     }
 
     private func makeService(

@@ -29,6 +29,30 @@ struct RunMemoryStoreTests {
     }
 
     @Test
+    func deterministicApproverRejectsSensitiveMemoryContent() {
+        let proposal = RunMemoryWriteProposal(
+            id: "proposal-sensitive",
+            proposedBy: .model,
+            record: RunMemoryRecord(
+                id: "memory-sensitive",
+                scope: .target,
+                kind: .targetFact,
+                targetID: "target-1",
+                value: "user email david@example.com",
+                createdAt: timestamp(10),
+                expiresAt: timestamp(1_000),
+                source: RunMemorySource(traceID: "trace-1", summary: "sensitive fixture")
+            ),
+            rationale: "bad provider proposal"
+        )
+
+        let approval = RunMemoryApprover.evaluate(proposal, decidedAt: timestamp(20))
+
+        #expect(approval.approved == false)
+        #expect(approval.issues == [.sensitiveContent])
+    }
+
+    @Test
     func targetMemoryJsonlStoresListsAndDeletesApprovedRecords() async throws {
         let root = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -134,6 +158,28 @@ struct RunMemoryStoreTests {
 
         #expect(context.memorySnapshot?.currentGoal == "avoid hazards")
         #expect(context.memorySnapshot?.targetRecords.map(\.id) == ["memory-1"])
+    }
+
+    @Test
+    func contextAssemblerCarriesBoundedSemanticMemoryResults() {
+        let assembler = RunContextAssembler()
+        let session = RunSession(id: "run-1", userGoal: "avoid hazards", targetID: "target-1")
+        let results = [
+            RunMemorySemanticResult(
+                record: targetRecord(id: "memory-1", runID: "run-1", userID: "user-1"),
+                relevance: 0.9,
+                embeddingModelID: "test-embedding"
+            )
+        ]
+
+        let context = assembler.build(
+            session: session,
+            transcriptSummary: "",
+            semanticMemoryResults: results
+        )
+
+        #expect(context.semanticMemoryResults.map(\.record.id) == ["memory-1"])
+        #expect(context.semanticMemoryResults.first?.embeddingModelID == "test-embedding")
     }
 
     private func targetRecord(id: String, runID: String, userID: String) -> RunMemoryRecord {

@@ -97,6 +97,7 @@ struct LocalAppTaskTests {
             .focusControl,
             .enterText,
             .submit,
+            .submit,
             .verifyResult
         ])
         #expect(plan.steps.last?.status == .blocked)
@@ -109,8 +110,8 @@ struct LocalAppTaskTests {
             for: intent,
             issuedAt: timestamp(100)
         )
-        #expect(commands.map(\.kind) == [.key, .key, .key])
-        #expect(commands.map(\.key) == ["Command+F", "San Francisco", "Return"])
+        #expect(commands.map(\.kind) == [.key, .key, .key, .key])
+        #expect(commands.map(\.key) == ["Command+F", "San Francisco", "Return", "Return"])
         #expect(commands[1].metadata["workflowStepRole"] == "enterText")
         #expect(commands[1].metadata["text"] == "San Francisco")
         #expect(commands[1].metadata["bundleIdentifier"] == "com.apple.weather")
@@ -422,11 +423,138 @@ struct LocalAppTaskTests {
 
         #expect(result.status == .completed)
         #expect(result.finalPlan?.terminalState == .completed)
-        #expect(result.actionTraces.count == 3)
+        #expect(result.actionTraces.count == 4)
         #expect(result.actionTraces.allSatisfy { $0.executed })
-        #expect(await backend.executedKeys() == ["Command+F", "San Francisco", "Return"])
+        #expect(await backend.executedKeys() == ["Command+F", "San Francisco", "Return", "Return"])
         #expect(controller.launchCount == 1)
         #expect(controller.observeCount == 1)
+    }
+
+    @Test @MainActor
+    func liveRunnerPublishesCoordinatorEventsForGuardedRun() async throws {
+        let backend = RecordingLocalAppTaskInputBackend()
+        let controller = FakeLocalAppTaskAppController(
+            launchObservation: LocalAppTaskObservation(
+                appIsRunning: true,
+                appIsFocused: true,
+                availableControls: ["search": true],
+                confidence: 0.5
+            ),
+            finalObservation: LocalAppTaskObservation(
+                appIsRunning: true,
+                appIsFocused: true,
+                availableControls: ["search": true],
+                visibleText: ["city": "San Francisco, CA"],
+                confidence: 0.92
+            )
+        )
+        let coordinator = RunCoordinator()
+        let catalog = LocalAppTaskCatalog(
+            taskDefinitions: BuiltInLocalAppTaskDefinitions.defaults,
+            availabilityProvider: StaticLocalAppAvailabilityProvider(installedBundleIdentifiers: ["com.apple.weather"])
+        )
+        let runner = LocalAppTaskLiveRunner(
+            catalog: catalog,
+            appController: controller,
+            actionEngineFactory: { _ in
+                ActionEngineGuardrail(
+                    configuration: ActionEngineConfiguration(liveInputEnabled: true),
+                    inputBackend: backend
+                )
+            },
+            permissionPolicy: ToolCallPolicy(deniedCapabilities: []),
+            coordinator: coordinator
+        )
+
+        let result = await runner.run(command: "show me the weather for SF", traceID: "trace-live-task-events")
+        let events = await coordinator.events()
+
+        #expect(result.status == .completed)
+        #expect(events.contains { $0.stream == .lifecycle })
+        #expect(events.contains { $0.stream == .tool && $0.summary == "Launching or focusing local app" })
+        #expect(events.contains { $0.stream == .tool && $0.summary == "Executing guarded keyboard command" })
+        #expect(events.last?.summary == "Run completed")
+    }
+
+    @Test
+    func screenshotUnderstandingIsOnlyUsedWhenAccessibilityIsInsufficient() {
+        let definition = BuiltInLocalAppTaskDefinitions.weatherLookup
+
+        #expect(LocalAppTaskObservationFallbackPolicy.shouldUseScreenshotUnderstanding(
+            definition: definition,
+            accessibilityObservation: LocalAppTaskObservation(
+                appIsRunning: true,
+                appIsFocused: true,
+                availableControls: ["search": true],
+                visibleText: ["city": "San Francisco"],
+                confidence: 0.9
+            ),
+            verificationKey: "city"
+        ) == false)
+
+        #expect(LocalAppTaskObservationFallbackPolicy.shouldUseScreenshotUnderstanding(
+            definition: definition,
+            accessibilityObservation: LocalAppTaskObservation(
+                appIsRunning: true,
+                appIsFocused: true,
+                availableControls: [:],
+                visibleText: [:],
+                confidence: 0.4
+            ),
+            verificationKey: "city"
+        ) == true)
+    }
+
+    @Test @MainActor
+    func documentApprovalRunnerExecutesOnlyApprovedFields() async throws {
+        let backend = RecordingLocalAppTaskInputBackend()
+        let controller = FakeLocalAppTaskAppController(
+            launchObservation: LocalAppTaskObservation(appIsRunning: true, appIsFocused: true),
+            finalObservation: LocalAppTaskObservation(appIsRunning: true, appIsFocused: true)
+        )
+        let plan = DocumentFormFillPlan(
+            status: .readyForReview,
+            proposals: [
+                DocumentFormFillProposal(
+                    fieldID: "ax-1.1",
+                    fieldLabel: "Name",
+                    proposedValue: "Ada Lovelace",
+                    sourceKey: "Name",
+                    confidence: 0.94
+                ),
+                DocumentFormFillProposal(
+                    fieldID: "ax-1.2",
+                    fieldLabel: "Address",
+                    proposedValue: "12 Algorithm Ave",
+                    sourceKey: "Address",
+                    confidence: 0.94
+                )
+            ]
+        )
+        let coordinator = RunCoordinator()
+        let runner = DocumentFormFillApprovalLiveRunner(
+            appController: controller,
+            availabilityProvider: StaticLocalAppAvailabilityProvider(installedBundleIdentifiers: ["com.apple.Preview"]),
+            coordinator: coordinator,
+            actionEngineFactory: { _ in
+                ActionEngineGuardrail(
+                    configuration: ActionEngineConfiguration(liveInputEnabled: true),
+                    inputBackend: backend
+                )
+            }
+        )
+
+        let result = await runner.run(
+            plan: plan,
+            definition: BuiltInLocalAppTaskDefinitions.documentFormFill,
+            traceID: "trace-document-approval",
+            approvedFieldIDs: ["ax-1.1"]
+        )
+
+        #expect(result.status == .completed)
+        #expect(result.approval.approvedProposals.map(\.fieldID) == ["ax-1.1"])
+        #expect(await backend.executedKeys() == ["Ada Lovelace"])
+        #expect(controller.launchCount == 1)
     }
 
     private func parser() -> LocalAppTaskIntentParser {

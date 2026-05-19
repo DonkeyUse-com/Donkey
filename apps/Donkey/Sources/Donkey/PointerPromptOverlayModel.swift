@@ -15,6 +15,7 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
     private let commandHandler: any PointerPromptCommandHandling
     private let voiceTranscriber: LocalVoiceTranscriptionAdapter
     private var updateChecker: any DonkeyUpdateChecking
+    private let documentReviewController: DocumentFormFillReviewWindowController
 
     init(
         aiProvider: any AIHarnessSnapshotProviding = AIHarnessBoundary(),
@@ -23,11 +24,13 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
             runtime: ProcessBackedParakeetTranscriptionRuntime()
         ),
         updateChecker: any DonkeyUpdateChecking = SparkleUpdateController(),
+        documentReviewController: DocumentFormFillReviewWindowController = DocumentFormFillReviewWindowController(),
         theme: PointerPromptTheme = PointerPromptOverlayModel.bundledTheme()
     ) {
         self.commandHandler = commandHandler
         self.voiceTranscriber = voiceTranscriber
         self.updateChecker = updateChecker
+        self.documentReviewController = documentReviewController
         updateState = PointerPromptUpdateState(
             currentVersion: updateChecker.currentVersion
         )
@@ -140,6 +143,9 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
                 guard let self else { return }
                 self.promptState.leadingSignalLevel = result.status == .completed ? .ready : .idle
                 self.promptState.promptText = result.summary
+                if let documentReviewRequest = result.documentReviewRequest {
+                    self.documentReviewController.show(request: documentReviewRequest)
+                }
             }
         }
     }

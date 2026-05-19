@@ -10,6 +10,7 @@ public enum MacAccessibilitySnapshotCaptureError: Error, Equatable, Sendable {
         status: WindowTargetSafetyStatus
     )
     case accessibilityNotTrusted(windowID: UInt32)
+    case captureTimedOut(windowID: UInt32, timeoutNanoseconds: UInt64)
     case captureFailed(windowID: UInt32, reason: String)
 }
 
@@ -47,7 +48,7 @@ public enum MacAccessibilitySnapshotCaptureOutcome: Equatable, Sendable {
     case permissionDenied(MacAccessibilityPermissionDeniedResult)
 }
 
-protocol MacAccessibilitySnapshotCapturing {
+protocol MacAccessibilitySnapshotCapturing: Sendable {
     func trustStatus() -> MacAccessibilityTrustStatus
     func captureTree(
         target: MacWindowTargetCandidate,
@@ -59,6 +60,7 @@ public final class MacAccessibilitySnapshotCaptureService {
     private let artifactStore: LocalRunArtifactStore
     private let windowResolver: MacWindowResolver
     private let capturer: any MacAccessibilitySnapshotCapturing
+    private let captureTimeoutNanoseconds: UInt64
 
     public convenience init(artifactStore: LocalRunArtifactStore) {
         self.init(
@@ -71,11 +73,13 @@ public final class MacAccessibilitySnapshotCaptureService {
     init(
         artifactStore: LocalRunArtifactStore,
         windowResolver: MacWindowResolver,
-        capturer: any MacAccessibilitySnapshotCapturing
+        capturer: any MacAccessibilitySnapshotCapturing,
+        captureTimeoutNanoseconds: UInt64 = 250_000_000
     ) {
         self.artifactStore = artifactStore
         self.windowResolver = windowResolver
         self.capturer = capturer
+        self.captureTimeoutNanoseconds = captureTimeoutNanoseconds
     }
 
     public func captureSnapshot(
@@ -125,12 +129,14 @@ public final class MacAccessibilitySnapshotCaptureService {
 
         let tree: MacAccessibilitySnapshotTree
         do {
-            tree = try capturer.captureTree(
-                target: target,
-                limits: limits
-            )
+            tree = try await captureTreeWithTimeout(target: target, limits: limits)
         } catch let error as MacAccessibilitySnapshotCaptureError {
             throw error
+        } catch MacAccessibilityTimeoutError.timedOut(let timeoutNanoseconds) {
+            throw MacAccessibilitySnapshotCaptureError.captureTimedOut(
+                windowID: target.windowID,
+                timeoutNanoseconds: timeoutNanoseconds
+            )
         } catch {
             throw MacAccessibilitySnapshotCaptureError.captureFailed(
                 windowID: target.windowID,
@@ -145,6 +151,12 @@ public final class MacAccessibilitySnapshotCaptureService {
             totalNodeCount: tree.totalNodeCount,
             isTreeTruncated: tree.isTreeTruncated
         )
+        if let dialogAssessment = MacAccessibilityNativeDialogDetector().safetyAssessment(for: snapshot) {
+            throw MacAccessibilitySnapshotCaptureError.unsafeTarget(
+                windowID: target.windowID,
+                status: dialogAssessment.status
+            )
+        }
         let snapshotData = try Self.encoder().encode(snapshot)
         let reservedPath = try await artifactStore.reserveArtifactPath(
             runID: runID,
@@ -176,6 +188,19 @@ public final class MacAccessibilitySnapshotCaptureService {
                 snapshot: snapshot
             )
         )
+    }
+
+    private func captureTreeWithTimeout(
+        target: MacWindowTargetCandidate,
+        limits: MacAccessibilitySnapshotLimits
+    ) async throws -> MacAccessibilitySnapshotTree {
+        let capturer = capturer
+        let captureTimeoutNanoseconds = captureTimeoutNanoseconds
+        return try await MacAccessibilityTimeout.run(
+            timeoutNanoseconds: captureTimeoutNanoseconds
+        ) {
+            try capturer.captureTree(target: target, limits: limits)
+        }
     }
 
     private func permissionDeniedEvent(
@@ -272,7 +297,115 @@ public final class MacAccessibilitySnapshotCaptureService {
     }
 }
 
+public struct MacAccessibilityNativeDialogDetector: Sendable {
+    public init() {}
+
+    public func safetyAssessment(
+        for snapshot: MacAccessibilitySnapshot
+    ) -> WindowTargetSafetyAssessment? {
+        guard let dialogText = dialogTexts(in: snapshot.root).first else {
+            return nil
+        }
+
+        var reasons: [WindowTargetSafetyReason] = [.systemSurface]
+        let haystack = dialogText.lowercased()
+
+        if containsAny(haystack, [
+            "permission",
+            "privacy",
+            "accessibility",
+            "screen recording",
+            "allow",
+            "deny"
+        ]) {
+            reasons.append(.permissionSurface)
+        }
+
+        if containsAny(haystack, [
+            "sign in",
+            "signin",
+            "sign-in",
+            "log in",
+            "login",
+            "authentication",
+            "unlock"
+        ]) {
+            reasons.append(.loginSurface)
+        }
+
+        if containsAny(haystack, [
+            "password",
+            "passcode",
+            "credential",
+            "keychain"
+        ]) {
+            reasons.append(.passwordSurface)
+        }
+
+        if containsAny(haystack, [
+            "payment",
+            "checkout",
+            "billing",
+            "credit card",
+            "apple pay",
+            "purchase"
+        ]) {
+            reasons.append(.paymentSurface)
+        }
+
+        return WindowTargetSafetyAssessment(
+            status: .blocked,
+            reasons: reasons.uniqued(),
+            summary: "Native macOS dialog detected in Accessibility tree"
+        )
+    }
+
+    private func dialogTexts(in node: MacAccessibilitySnapshotNode) -> [String] {
+        let ownText = [node.role, node.title, node.label, node.valueSummary]
+            .compactMap { $0 }
+            .joined(separator: " ")
+        let descendantText = node.children.flatMap(dialogTexts(in:)).joined(separator: " ")
+        let combined = [ownText, descendantText]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+
+        if isDialogRole(node.role) || isDialogText(combined) {
+            return [combined]
+        }
+
+        return node.children.flatMap(dialogTexts(in:))
+    }
+
+    private func isDialogRole(_ role: String?) -> Bool {
+        guard let role else { return false }
+        return role == "AXSheet"
+            || role == "AXDialog"
+            || role == "AXSystemDialog"
+            || role == "AXPopover"
+    }
+
+    private func isDialogText(_ text: String) -> Bool {
+        let normalized = text.lowercased()
+        return normalized.contains("system dialog")
+            || normalized.contains("permission")
+            || normalized.contains("wants to access")
+            || normalized.contains("would like to access")
+            || normalized.contains("screen recording")
+            || normalized.contains("accessibility")
+    }
+
+    private func containsAny(_ value: String, _ needles: [String]) -> Bool {
+        needles.contains { value.contains($0) }
+    }
+}
+
 final class ApplicationServicesMacAccessibilitySnapshotCapturer: MacAccessibilitySnapshotCapturing {
+    private let maximumTraversalNanoseconds: UInt64
+
+    init(maximumTraversalNanoseconds: UInt64 = 200_000_000) {
+        self.maximumTraversalNanoseconds = maximumTraversalNanoseconds
+    }
+
     func trustStatus() -> MacAccessibilityTrustStatus {
         AXIsProcessTrusted() ? .trusted : .notTrusted
     }
@@ -282,6 +415,8 @@ final class ApplicationServicesMacAccessibilitySnapshotCapturer: MacAccessibilit
         limits: MacAccessibilitySnapshotLimits
     ) throws -> MacAccessibilitySnapshotTree {
         let application = AXUIElementCreateApplication(target.processID)
+        let deadlineUptime = ProcessInfo.processInfo.systemUptime
+            + Double(maximumTraversalNanoseconds) / 1_000_000_000
         let rootElement = resolveWindowElement(
             for: target,
             in: application
@@ -292,6 +427,7 @@ final class ApplicationServicesMacAccessibilitySnapshotCapturer: MacAccessibilit
             rootElement,
             depth: 0,
             limits: limits,
+            deadlineUptime: deadlineUptime,
             remainingNodeCount: &remainingNodeCount,
             isTreeTruncated: &isTreeTruncated
         ) ?? RawMacAccessibilitySnapshotNode(
@@ -335,9 +471,15 @@ final class ApplicationServicesMacAccessibilitySnapshotCapturer: MacAccessibilit
         _ element: AXUIElement,
         depth: Int,
         limits: MacAccessibilitySnapshotLimits,
+        deadlineUptime: TimeInterval,
         remainingNodeCount: inout Int,
         isTreeTruncated: inout Bool
     ) -> RawMacAccessibilitySnapshotNode? {
+        guard !hasTimedOut(deadlineUptime) else {
+            isTreeTruncated = true
+            return nil
+        }
+
         guard remainingNodeCount > 0 else {
             isTreeTruncated = true
             return nil
@@ -348,6 +490,7 @@ final class ApplicationServicesMacAccessibilitySnapshotCapturer: MacAccessibilit
             for: element,
             depth: depth,
             limits: limits,
+            deadlineUptime: deadlineUptime,
             remainingNodeCount: &remainingNodeCount,
             isTreeTruncated: &isTreeTruncated
         )
@@ -369,9 +512,15 @@ final class ApplicationServicesMacAccessibilitySnapshotCapturer: MacAccessibilit
         for element: AXUIElement,
         depth: Int,
         limits: MacAccessibilitySnapshotLimits,
+        deadlineUptime: TimeInterval,
         remainingNodeCount: inout Int,
         isTreeTruncated: inout Bool
     ) -> [RawMacAccessibilitySnapshotNode] {
+        guard !hasTimedOut(deadlineUptime) else {
+            isTreeTruncated = true
+            return []
+        }
+
         let childCount = elementArrayCount(
             kAXChildrenAttribute as CFString,
             from: element
@@ -398,10 +547,15 @@ final class ApplicationServicesMacAccessibilitySnapshotCapturer: MacAccessibilit
                     child,
                     depth: depth + 1,
                     limits: limits,
+                    deadlineUptime: deadlineUptime,
                     remainingNodeCount: &remainingNodeCount,
                     isTreeTruncated: &isTreeTruncated
                 )
             }
+    }
+
+    private func hasTimedOut(_ deadlineUptime: TimeInterval) -> Bool {
+        ProcessInfo.processInfo.systemUptime >= deadlineUptime
     }
 
     private func matches(
@@ -631,5 +785,12 @@ final class ApplicationServicesMacAccessibilitySnapshotCapturer: MacAccessibilit
         }
 
         return value
+    }
+}
+
+private extension Array where Element: Hashable {
+    func uniqued() -> [Element] {
+        var seen = Set<Element>()
+        return filter { seen.insert($0).inserted }
     }
 }

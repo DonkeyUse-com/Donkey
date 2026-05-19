@@ -258,6 +258,7 @@ public struct RunContextPackage: Codable, Equatable, Sendable {
     public var activeHints: [RunPlannerHint]
     public var recentFailures: [RunFailureSummary]
     public var memorySnapshot: RunMemorySnapshot?
+    public var semanticMemoryResults: [RunMemorySemanticResult]
 
     public init(
         sessionID: String,
@@ -269,7 +270,8 @@ public struct RunContextPackage: Codable, Equatable, Sendable {
         droppedTranscriptCharacterCount: Int = 0,
         activeHints: [RunPlannerHint] = [],
         recentFailures: [RunFailureSummary] = [],
-        memorySnapshot: RunMemorySnapshot? = nil
+        memorySnapshot: RunMemorySnapshot? = nil,
+        semanticMemoryResults: [RunMemorySemanticResult] = []
     ) {
         self.sessionID = sessionID
         self.userGoal = userGoal
@@ -281,6 +283,7 @@ public struct RunContextPackage: Codable, Equatable, Sendable {
         self.activeHints = activeHints
         self.recentFailures = recentFailures
         self.memorySnapshot = memorySnapshot
+        self.semanticMemoryResults = semanticMemoryResults
     }
 }
 

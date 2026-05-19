@@ -1,4 +1,5 @@
 import DonkeyContracts
+import DonkeyRuntime
 import Foundation
 
 public enum AIHarnessRedactionSurface: String, Codable, Equatable, Sendable {
@@ -163,5 +164,88 @@ public enum ProviderDecodedMemoryProposalHandler {
                 storedRecord: approval.approved ? proposal.record : nil
             )
         }
+    }
+
+    public static func process(
+        proposals: [RunMemoryWriteProposal],
+        decidedAt: RunTraceTimestamp,
+        targetMemoryStore: TargetMemoryJSONLStore?
+    ) async -> ProviderMemoryProposalProcessingResult {
+        var decisions: [RunMemoryWriteDecision] = []
+        var approvedCount = 0
+        var rejectedCount = 0
+        var persistedCount = 0
+        var persistenceErrorCount = 0
+
+        for proposal in proposals {
+            let approval = RunMemoryApprover.evaluate(proposal, decidedAt: decidedAt)
+            guard approval.approved else {
+                rejectedCount += 1
+                decisions.append(
+                    RunMemoryWriteDecision(
+                        proposal: proposal,
+                        approval: approval,
+                        storedRecord: nil
+                    )
+                )
+                continue
+            }
+
+            approvedCount += 1
+            if let targetMemoryStore,
+               proposal.record.scope == .target {
+                do {
+                    let decision = try await targetMemoryStore.appendApprovedProposal(
+                        proposal,
+                        decidedAt: decidedAt
+                    )
+                    if decision.storedRecord != nil {
+                        persistedCount += 1
+                    }
+                    decisions.append(decision)
+                } catch {
+                    persistenceErrorCount += 1
+                    decisions.append(
+                        RunMemoryWriteDecision(
+                            proposal: proposal,
+                            approval: approval,
+                            storedRecord: nil
+                        )
+                    )
+                }
+            } else {
+                decisions.append(
+                    RunMemoryWriteDecision(
+                        proposal: proposal,
+                        approval: approval,
+                        storedRecord: nil
+                    )
+                )
+            }
+        }
+
+        return ProviderMemoryProposalProcessingResult(
+            decisions: decisions,
+            metadata: [
+                "memoryProposal.count": String(proposals.count),
+                "memoryProposal.approvedCount": String(approvedCount),
+                "memoryProposal.rejectedCount": String(rejectedCount),
+                "memoryProposal.persistedCount": String(persistedCount),
+                "memoryProposal.persistenceErrorCount": String(persistenceErrorCount)
+            ]
+        )
+    }
+}
+
+public struct ProviderMemoryProposalProcessingResult: Equatable, Sendable {
+    public var decisions: [RunMemoryWriteDecision]
+    public var metadata: [String: String]
+
+    public init(
+        decisions: [RunMemoryWriteDecision],
+        metadata: [String: String]
+    ) {
+        self.decisions = decisions
+        self.metadata = metadata
     }
 }

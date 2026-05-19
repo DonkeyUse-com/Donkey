@@ -223,6 +223,117 @@ struct MacWindowResolverTests {
     }
 
     @Test
+    func iPhoneMirroringHintCanComeFromRuntimeAppIdentity() {
+        let resolver = MacWindowResolver(
+            provider: FixtureWindowProvider(
+                windows: [
+                    fixtureWindow(
+                        windowID: 8,
+                        processID: 800,
+                        appName: nil,
+                        bundleIdentifier: nil,
+                        title: nil,
+                        knownApplication: MacKnownApplicationIdentity(
+                            processID: 800,
+                            bundleIdentifier: "com.apple.ScreenContinuity",
+                            localizedName: "iPhone Mirroring",
+                            executableName: "ScreenContinuity"
+                        )
+                    )
+                ],
+                frontmostProcessID: 800
+            )
+        )
+
+        let candidate = resolver.enumerateCandidates().first
+
+        #expect(candidate?.windowID == 8)
+        #expect(candidate?.isIPhoneMirroring == true)
+        #expect(candidate?.safetyAssessment.status == .allowed)
+    }
+
+    @Test
+    func targetWindowFocusGuardAllowsOnlySameFocusedSafeWindow() async {
+        let resolver = MacWindowResolver(
+            provider: FixtureWindowProvider(
+                windows: [
+                    fixtureWindow(
+                        windowID: 44,
+                        processID: 440,
+                        appName: "iPhone Mirroring",
+                        bundleIdentifier: "com.apple.ScreenContinuity",
+                        bounds: WindowTargetBounds(x: 10, y: 20, width: 300, height: 600)
+                    )
+                ],
+                frontmostProcessID: 440,
+                focusedWindowID: 44
+            )
+        )
+        let guardrail = MacTargetWindowFocusGuard(
+            targetID: "target-iphone",
+            windowID: 44,
+            processID: 440,
+            expectedBundleIdentifier: "com.apple.ScreenContinuity",
+            expectedBounds: WindowTargetBounds(x: 10, y: 20, width: 300, height: 600),
+            windowResolver: resolver
+        )
+
+        #expect(await guardrail.targetIsSafeForInput(targetID: "target-iphone"))
+        #expect(!(await guardrail.targetIsSafeForInput(targetID: "other-target")))
+    }
+
+    @Test
+    func targetWindowFocusGuardRejectsFocusLossAndMovedWindow() async {
+        let unfocusedResolver = MacWindowResolver(
+            provider: FixtureWindowProvider(
+                windows: [
+                    fixtureWindow(
+                        windowID: 44,
+                        processID: 440,
+                        appName: "iPhone Mirroring",
+                        bundleIdentifier: "com.apple.ScreenContinuity",
+                        bounds: WindowTargetBounds(x: 10, y: 20, width: 300, height: 600)
+                    )
+                ],
+                frontmostProcessID: nil,
+                focusedWindowID: nil
+            )
+        )
+        let movedResolver = MacWindowResolver(
+            provider: FixtureWindowProvider(
+                windows: [
+                    fixtureWindow(
+                        windowID: 44,
+                        processID: 440,
+                        appName: "iPhone Mirroring",
+                        bundleIdentifier: "com.apple.ScreenContinuity",
+                        bounds: WindowTargetBounds(x: 60, y: 20, width: 300, height: 600)
+                    )
+                ],
+                frontmostProcessID: 440,
+                focusedWindowID: 44
+            )
+        )
+
+        #expect(!(await MacTargetWindowFocusGuard(
+            targetID: "target-iphone",
+            windowID: 44,
+            processID: 440,
+            expectedBundleIdentifier: "com.apple.ScreenContinuity",
+            expectedBounds: WindowTargetBounds(x: 10, y: 20, width: 300, height: 600),
+            windowResolver: unfocusedResolver
+        ).targetIsSafeForInput(targetID: "target-iphone")))
+        #expect(!(await MacTargetWindowFocusGuard(
+            targetID: "target-iphone",
+            windowID: 44,
+            processID: 440,
+            expectedBundleIdentifier: "com.apple.ScreenContinuity",
+            expectedBounds: WindowTargetBounds(x: 10, y: 20, width: 300, height: 600),
+            windowResolver: movedResolver
+        ).targetIsSafeForInput(targetID: "target-iphone")))
+    }
+
+    @Test
     func safetyClassificationMarksSensitiveAndUnknownSurfaces() {
         let resolver = MacWindowResolver(
             provider: FixtureWindowProvider(
@@ -307,6 +418,7 @@ struct MacWindowResolverTests {
         appName: String? = nil,
         bundleIdentifier: String? = nil,
         title: String? = nil,
+        knownApplication: MacKnownApplicationIdentity? = nil,
         bounds: WindowTargetBounds = WindowTargetBounds(
             x: 0,
             y: 0,
@@ -323,6 +435,7 @@ struct MacWindowResolverTests {
             appName: appName,
             bundleIdentifier: bundleIdentifier,
             title: title,
+            knownApplication: knownApplication,
             bounds: bounds,
             alpha: alpha,
             layer: layer,

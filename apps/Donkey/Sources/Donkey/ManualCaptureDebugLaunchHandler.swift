@@ -112,6 +112,18 @@ struct ManualCaptureDebugLaunchHandler {
                     "removed=\(removed)"
                 ])
                 return 0
+            case .localAppTask(let options):
+                let result = await LocalAppPointerPromptCommandHandler()
+                    .handleSubmittedCommand(options.command)
+                printLines(
+                    ManualCaptureDebugCommandFormatter.lines(
+                        status: result.status.rawValue,
+                        summary: result.summary,
+                        traceID: result.traceID,
+                        metadata: result.metadata
+                    )
+                )
+                return result.status == .completed || result.status == .needsUserReview ? 0 : 2
             }
         } catch {
             printError(ManualCaptureDebugCommandFormatter.errorLine(for: error))

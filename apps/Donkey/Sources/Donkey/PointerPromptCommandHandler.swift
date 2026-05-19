@@ -8,6 +8,13 @@ struct PointerPromptCommandHandlingResult: Equatable, Sendable {
     var summary: String
     var traceID: String
     var metadata: [String: String]
+    var documentReviewRequest: DocumentFormFillReviewRequest?
+}
+
+struct DocumentFormFillReviewRequest: Equatable, Sendable {
+    var plan: DocumentFormFillPlan
+    var definition: LocalAppTaskDefinition
+    var traceID: String
 }
 
 protocol PointerPromptCommandHandling: Sendable {
@@ -20,31 +27,30 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
     var liveRunner: LocalAppTaskLiveRunner
     var redactor: AIHarnessRedactor
     var memoryRetriever: SemanticRunMemoryRetriever
+    var coordinator: RunCoordinator
+    var targetMemoryStore: TargetMemoryJSONLStore?
 
     init(
         catalog: LocalAppTaskCatalog = .defaultLocal(),
         localModelResolver: LocalModelTaskIntentResolver? = nil,
         liveRunner: LocalAppTaskLiveRunner? = nil,
         redactor: AIHarnessRedactor = AIHarnessRedactor(),
-        memoryRetriever: SemanticRunMemoryRetriever = SemanticRunMemoryRetriever()
+        memoryRetriever: SemanticRunMemoryRetriever = SemanticRunMemoryRetriever(),
+        coordinator: RunCoordinator = RunCoordinator(),
+        targetMemoryStore: TargetMemoryJSONLStore? = try? TargetMemoryJSONLStore()
     ) {
         self.catalog = catalog
+        self.coordinator = coordinator
         self.localModelResolver = localModelResolver ?? LocalModelTaskIntentResolver(catalog: catalog)
-        self.liveRunner = liveRunner ?? LocalAppTaskLiveRunner(catalog: catalog)
+        self.liveRunner = liveRunner ?? LocalAppTaskLiveRunner(catalog: catalog, coordinator: coordinator)
         self.redactor = redactor
         self.memoryRetriever = memoryRetriever
+        self.targetMemoryStore = targetMemoryStore
     }
 
     func handleSubmittedCommand(_ command: String) async -> PointerPromptCommandHandlingResult {
         let traceID = "pointer-prompt-\(UUID().uuidString)"
         let redaction = redactor.redact(command, surface: .modelContext)
-        let semanticMemoryResults = await memoryRetriever.retrieve(
-            query: RunMemorySemanticQuery(
-                text: command,
-                budget: RunMemoryRetrievalBudget(maxRecords: 3, maxPromptCharacters: 800)
-            ),
-            records: []
-        )
         let memoryProposalDecisions = (try? ProviderDecodedMemoryProposalHandler.decisions(
             from: Data("[]".utf8),
             decidedAt: Self.now()
@@ -56,6 +62,10 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
         )
         let resolution = localModelResult.resolution
         let parseLatencyMS = Self.uptimeMilliseconds() - parseStartedAt
+        let semanticMemoryResults = await retrieveSemanticMemory(
+            command: command,
+            resolution: resolution
+        )
         let modelObservability = AIModelObservabilityReportBuilder.build(from: [localModelResult.trace])
 
         let result = await liveRunner.run(
@@ -73,7 +83,21 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
                 "modelObservability.recoverySuccessCount": String(modelObservability.recoverySuccessCount),
                 "redaction.modelContext.count": String(redaction.redactionCount),
                 "semanticMemory.resultCount": String(semanticMemoryResults.count),
+                "semanticMemory.recordIDs": semanticMemoryResults.map(\.record.id).joined(separator: ","),
+                "semanticMemory.targetID": semanticMemoryTargetID(for: resolution) ?? "",
                 "memoryProposal.decisionCount": String(memoryProposalDecisions.count)
+            ]
+        )
+        await coordinator.recordToolEvent(
+            capability: .model,
+            decision: .allow,
+            toolName: "local-task-intent-parser",
+            summary: "Parsed local app command",
+            traceID: traceID,
+            metadata: [
+                "modelCallID": localModelResult.trace.id,
+                "modelCallStatus": localModelResult.trace.status.rawValue,
+                "modelValidationStatus": localModelResult.trace.validationStatus
             ]
         )
 
@@ -81,7 +105,59 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
             status: result.status,
             summary: summary(for: result),
             traceID: traceID,
-            metadata: result.metadata
+            metadata: result.metadata,
+            documentReviewRequest: documentReviewRequest(
+                traceID: traceID,
+                result: result
+            )
+        )
+    }
+
+    private func retrieveSemanticMemory(
+        command: String,
+        resolution: LocalAppTaskCatalogResolution
+    ) async -> [RunMemorySemanticResult] {
+        guard let targetMemoryStore,
+              let targetID = semanticMemoryTargetID(for: resolution),
+              let records = try? await targetMemoryStore.records(targetID: targetID),
+              !records.isEmpty
+        else {
+            return []
+        }
+
+        return await memoryRetriever.retrieve(
+            query: RunMemorySemanticQuery(
+                text: command,
+                targetID: targetID,
+                scope: .target,
+                budget: RunMemoryRetrievalBudget(maxRecords: 3, maxPromptCharacters: 800)
+            ),
+            records: records
+        )
+    }
+
+    private func semanticMemoryTargetID(
+        for resolution: LocalAppTaskCatalogResolution
+    ) -> String? {
+        guard let definition = resolution.definition else { return nil }
+        return LocalAppTaskAdapter(definition: definition).targetID
+    }
+
+    private func documentReviewRequest(
+        traceID: String,
+        result: LocalAppTaskLiveRunResult
+    ) -> DocumentFormFillReviewRequest? {
+        guard result.status == .needsUserReview,
+              let plan = result.documentFormFillPlan,
+              let definition = result.resolution.definition
+        else {
+            return nil
+        }
+
+        return DocumentFormFillReviewRequest(
+            plan: plan,
+            definition: definition,
+            traceID: traceID
         )
     }
 

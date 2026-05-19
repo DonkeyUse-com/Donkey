@@ -246,6 +246,12 @@ public enum BuiltInLocalAppTaskDefinitions {
                     metadata: ["key": "Return"]
                 ),
                 LocalAppTaskWorkflowStepDefinition(
+                    id: "select-city-result",
+                    role: .submit,
+                    summary: "Select the matching city result",
+                    metadata: ["key": "Return"]
+                ),
+                LocalAppTaskWorkflowStepDefinition(
                     id: "verify-city",
                     role: .verifyResult,
                     summary: "Verify the visible result"

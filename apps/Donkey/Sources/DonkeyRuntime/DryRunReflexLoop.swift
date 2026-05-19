@@ -5,6 +5,28 @@ public protocol DryRunFrameSource: Sendable {
     func frameBatches() async -> [[HotLoopFrame]]
 }
 
+public protocol DryRunStreamingFrameSource: DryRunFrameSource {
+    func frameBatchStream() -> AsyncStream<[HotLoopFrame]>
+}
+
+public extension DryRunFrameSource {
+    func frameBatchStream() -> AsyncStream<[HotLoopFrame]> {
+        if let streamingSource = self as? any DryRunStreamingFrameSource {
+            return streamingSource.frameBatchStream()
+        }
+
+        return AsyncStream { continuation in
+            Task {
+                for batch in await frameBatches() {
+                    guard !Task.isCancelled else { break }
+                    continuation.yield(batch)
+                }
+                continuation.finish()
+            }
+        }
+    }
+}
+
 public protocol DryRunPerceptionAdapting: Sendable {
     func perceive(frame: HotLoopFrame) async -> [HotLoopPerceptionSignal]
 }
@@ -123,7 +145,7 @@ public struct DryRunReflexLoop: Sendable {
         var latestWorldState: HotLoopWorldState?
         var latestAction: HotLoopControllerAction?
 
-        for batch in await frameSource.frameBatches() {
+        for await batch in frameSource.frameBatchStream() {
             for frame in batch {
                 await buffer.offer(frame)
             }

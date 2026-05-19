@@ -69,6 +69,7 @@ public struct LocalAppTaskLiveRunner: Sendable {
     public var documentFormFillPlanner: DocumentFormFillPlanner
     public var actionEngineFactory: ActionEngineFactory
     public var permissionPolicy: ToolCallPolicy
+    public var coordinator: RunCoordinator?
 
     public init(
         catalog: LocalAppTaskCatalog = .defaultLocal(),
@@ -76,7 +77,11 @@ public struct LocalAppTaskLiveRunner: Sendable {
         contextProvider: any LocalAppTaskContextProviding = MacLocalAppTaskContextProvider(),
         documentFormFillPlanner: DocumentFormFillPlanner = DocumentFormFillPlanner(),
         actionEngineFactory: @escaping ActionEngineFactory = Self.defaultActionEngine(for:),
-        permissionPolicy: ToolCallPolicy = ToolCallPolicy(deniedCapabilities: [])
+        permissionPolicy: ToolCallPolicy = ToolCallPolicy(
+            allowedCapabilities: ToolCallPolicy.defaultAllowedCapabilities.union([.input]),
+            deniedCapabilities: []
+        ),
+        coordinator: RunCoordinator? = nil
     ) {
         self.catalog = catalog
         self.appController = appController
@@ -84,6 +89,7 @@ public struct LocalAppTaskLiveRunner: Sendable {
         self.documentFormFillPlanner = documentFormFillPlanner
         self.actionEngineFactory = actionEngineFactory
         self.permissionPolicy = permissionPolicy
+        self.coordinator = coordinator
     }
 
     public func run(
@@ -107,6 +113,11 @@ public struct LocalAppTaskLiveRunner: Sendable {
         let runStartedAt = Self.uptimeMilliseconds()
         var runMetadata = metadata
         guard resolution.status == .resolved else {
+            await publishUnresolvedRun(
+                command: command,
+                traceID: traceID,
+                resolution: resolution
+            )
             return unresolvedResult(
                 command: command,
                 traceID: traceID,
@@ -121,6 +132,20 @@ public struct LocalAppTaskLiveRunner: Sendable {
               var intent = resolution.intent,
               let availability = resolution.availability
         else {
+            await publishRunStart(
+                command: command,
+                traceID: traceID,
+                targetID: "local-app-task-incomplete-resolution"
+            )
+            await coordinator?.recordToolEvent(
+                capability: .controller,
+                decision: .deny(reason: "local app task resolution was incomplete"),
+                toolName: "local-app-task-live-runner",
+                summary: "Local app task resolution incomplete",
+                traceID: traceID,
+                metadata: ["reason": "incompleteResolution"]
+            )
+            await coordinator?.fail(reason: "Local app task resolution incomplete")
             return LocalAppTaskLiveRunResult(
                 command: command,
                 traceID: traceID,
@@ -135,8 +160,20 @@ public struct LocalAppTaskLiveRunner: Sendable {
 
         intent.metadata["traceID"] = traceID
         let adapter = catalog.adapter(for: definition)
+        await publishRunStart(
+            command: command,
+            traceID: traceID,
+            targetID: adapter.targetID
+        )
         if definition.metadata["guardedLiveDefault"] == "reviewOnly" {
             let contextStartedAt = Self.uptimeMilliseconds()
+            await coordinator?.recordToolEvent(
+                capability: .capture,
+                decision: permissionPolicy.decision(for: .capture),
+                toolName: "local-app-task-context",
+                summary: "Captured local app task context",
+                traceID: traceID
+            )
             let context = await contextProvider.snapshot()
             runMetadata["latency.observationMS"] = Self.formatLatency(
                 Self.uptimeMilliseconds() - contextStartedAt
@@ -162,6 +199,7 @@ public struct LocalAppTaskLiveRunner: Sendable {
                 ]
             )
             let initialPlan = adapter.dryRunPlan(for: intent, observation: observation)
+            await coordinator?.complete(reason: "Local app task requires document review")
             return LocalAppTaskLiveRunResult(
                 command: command,
                 traceID: traceID,
@@ -181,6 +219,17 @@ public struct LocalAppTaskLiveRunner: Sendable {
         }
 
         let launchStartedAt = Self.uptimeMilliseconds()
+        await coordinator?.recordToolEvent(
+            capability: .input,
+            decision: permissionPolicy.decision(for: .input),
+            toolName: "mac-launch-focus",
+            summary: "Launching or focusing local app",
+            traceID: traceID,
+            metadata: [
+                "targetApp": definition.targetApp.appName,
+                "bundleIdentifier": definition.targetApp.bundleIdentifier ?? ""
+            ]
+        )
         let launchObservation = await appController.launchOrFocus(
             definition: definition,
             availability: availability
@@ -188,6 +237,7 @@ public struct LocalAppTaskLiveRunner: Sendable {
         runMetadata["latency.launchFocusMS"] = Self.formatLatency(Self.uptimeMilliseconds() - launchStartedAt)
         let initialPlan = adapter.dryRunPlan(for: intent, observation: launchObservation)
         guard initialPlan.canAttemptGuardedLive else {
+            await coordinator?.pause(reason: "Local app task dry-run plan blocked live input")
             return LocalAppTaskLiveRunResult(
                 command: command,
                 traceID: traceID,
@@ -213,6 +263,17 @@ public struct LocalAppTaskLiveRunner: Sendable {
             for (index, actionCommand) in accessibilityCommands.enumerated() {
                 let spacedCommand = actionCommand.withIssuedAt(Self.now(advancedByMilliseconds: Double(index) * 60))
                 let actionStartedAt = Self.uptimeMilliseconds()
+                await coordinator?.recordToolEvent(
+                    capability: .accessibility,
+                    decision: permissionPolicy.decision(for: .accessibility),
+                    toolName: "mac-accessibility-action-engine",
+                    summary: "Executing guarded Accessibility command",
+                    traceID: traceID,
+                    metadata: [
+                        "commandID": spacedCommand.id,
+                        "workflowStepID": spacedCommand.metadata["workflowStepID"] ?? ""
+                    ]
+                )
                 let trace = await accessibilityEngine.handle(
                     spacedCommand,
                     permissionPolicy: permissionPolicy
@@ -229,8 +290,9 @@ public struct LocalAppTaskLiveRunner: Sendable {
         let engine = actionEngineFactory(definition)
         let accessibilityHandledStepIDs: Set<String> = Set(actionTraces.compactMap { trace -> String? in
             guard trace.executed || trace.decision == ActionEngineCommandDecision.projectedDryRun else { return nil }
-            return trace.command.metadata["workflowStepID"]
+            return workflowStepID(from: trace.command)
         })
+        runMetadata["accessibilityHandledStepIDs"] = accessibilityHandledStepIDs.sorted().joined(separator: ",")
         let commands = adapter.guardedKeyboardCommandTemplates(
             for: intent,
             issuedAt: Self.now()
@@ -243,15 +305,45 @@ public struct LocalAppTaskLiveRunner: Sendable {
         for (index, actionCommand) in commands.enumerated() {
             let spacedCommand = actionCommand.withIssuedAt(Self.now(advancedByMilliseconds: Double(index) * 40))
             let actionStartedAt = Self.uptimeMilliseconds()
-            let trace = await engine.handle(
+            await coordinator?.recordToolEvent(
+                capability: .input,
+                decision: permissionPolicy.decision(for: .input),
+                toolName: "mac-keyboard-action-engine",
+                summary: "Executing guarded keyboard command",
+                traceID: traceID,
+                metadata: [
+                    "commandID": spacedCommand.id,
+                    "workflowStepID": spacedCommand.metadata["workflowStepID"] ?? ""
+                ]
+            )
+            var trace = await engine.handle(
                 spacedCommand,
                 permissionPolicy: permissionPolicy
             )
             keyboardActionMS += Self.uptimeMilliseconds() - actionStartedAt
             actionTraces.append(trace)
+            if trace.decision == .denied(reason: "focus guard failed") {
+                _ = await appController.launchOrFocus(
+                    definition: definition,
+                    availability: availability
+                )
+                let retryCommand = spacedCommand.withIssuedAt(Self.now(advancedByMilliseconds: Double(index) * 40 + 25))
+                trace = await engine.handle(
+                    retryCommand,
+                    permissionPolicy: permissionPolicy
+                )
+                actionTraces.append(trace)
+            }
 
             guard trace.executed || trace.decision == ActionEngineCommandDecision.projectedDryRun else {
                 let observationStartedAt = Self.uptimeMilliseconds()
+                await coordinator?.recordToolEvent(
+                    capability: .perception,
+                    decision: permissionPolicy.decision(for: .perception),
+                    toolName: "local-app-observation",
+                    summary: "Observing local app after denied action",
+                    traceID: traceID
+                )
                 let finalObservation = await appController.observe(definition: definition)
                 runMetadata["latency.observationMS"] = Self.formatLatency(
                     Self.uptimeMilliseconds() - observationStartedAt
@@ -261,6 +353,7 @@ public struct LocalAppTaskLiveRunner: Sendable {
                 runMetadata["latency.verificationMS"] = Self.formatLatency(
                     Self.uptimeMilliseconds() - verificationStartedAt
                 )
+                await coordinator?.fail(reason: "Local app task action was denied")
                 return LocalAppTaskLiveRunResult(
                     command: command,
                     traceID: traceID,
@@ -272,6 +365,9 @@ public struct LocalAppTaskLiveRunner: Sendable {
                     actionTraces: actionTraces,
                     metadata: runMetadata.merging([
                         "reason": "actionDenied",
+                        "actionDeniedReason": decisionReason(trace.decision),
+                        "actionDeniedCommandID": trace.command.id,
+                        "actionDeniedFocusGuardPassed": String(trace.focusGuardPassed),
                         "latency.keyboardActionMS": Self.formatLatency(keyboardActionMS),
                         "latency.totalMS": Self.formatLatency(Self.uptimeMilliseconds() - runStartedAt)
                     ]) { current, _ in current }
@@ -282,16 +378,36 @@ public struct LocalAppTaskLiveRunner: Sendable {
 
         try? await Task.sleep(nanoseconds: 700_000_000)
         let observationStartedAt = Self.uptimeMilliseconds()
+        await coordinator?.recordToolEvent(
+            capability: .perception,
+            decision: permissionPolicy.decision(for: .perception),
+            toolName: "local-app-observation",
+            summary: "Observing local app for result verification",
+            traceID: traceID
+        )
         let finalObservation = await appController.observe(definition: definition)
         runMetadata["latency.observationMS"] = Self.formatLatency(Self.uptimeMilliseconds() - observationStartedAt)
         let verificationStartedAt = Self.uptimeMilliseconds()
         let finalPlan = adapter.dryRunPlan(for: intent, observation: finalObservation)
         runMetadata["latency.verificationMS"] = Self.formatLatency(Self.uptimeMilliseconds() - verificationStartedAt)
         runMetadata["latency.totalMS"] = Self.formatLatency(Self.uptimeMilliseconds() - runStartedAt)
+        if let verificationStep = finalPlan.steps.first(where: { $0.role == .verifyResult }) {
+            runMetadata["verification.summary"] = verificationStep.summary
+            runMetadata["verification.status"] = verificationStep.status.rawValue
+            for (key, value) in verificationStep.metadata {
+                runMetadata["verification.\(key)"] = value
+            }
+        }
+        let status = status(for: finalPlan.terminalState)
+        if status == .completed {
+            await coordinator?.complete(reason: "Local app task completed")
+        } else {
+            await coordinator?.pause(reason: "Local app task needs user review")
+        }
         return LocalAppTaskLiveRunResult(
             command: command,
             traceID: traceID,
-            status: status(for: finalPlan.terminalState),
+            status: status,
             resolution: resolution,
             initialPlan: initialPlan,
             finalPlan: finalPlan,
@@ -353,6 +469,54 @@ public struct LocalAppTaskLiveRunner: Sendable {
         )
     }
 
+    private func publishUnresolvedRun(
+        command: String,
+        traceID: String,
+        resolution: LocalAppTaskCatalogResolution
+    ) async {
+        await publishRunStart(
+            command: command,
+            traceID: traceID,
+            targetID: resolution.definition.map { LocalAppTaskAdapter(definition: $0).targetID }
+                ?? "local-app-task-unresolved"
+        )
+        await coordinator?.recordToolEvent(
+            capability: .controller,
+            decision: .deny(reason: resolution.metadata["reason"] ?? resolution.status.rawValue),
+            toolName: "local-app-task-catalog",
+            summary: "Local app task could not be resolved",
+            traceID: traceID,
+            metadata: resolution.metadata.merging([
+                "resolution.status": resolution.status.rawValue
+            ]) { current, _ in current }
+        )
+
+        switch resolution.status {
+        case .needsConfirmation:
+            await coordinator?.pause(reason: "Local app task needs confirmation")
+        case .unsupportedCommand, .appUnavailable, .resolved:
+            await coordinator?.fail(reason: "Local app task could not be resolved")
+        }
+    }
+
+    private func publishRunStart(
+        command: String,
+        traceID: String,
+        targetID: String
+    ) async {
+        guard let coordinator else { return }
+
+        await coordinator.setTraceID(traceID)
+        _ = await coordinator.start(
+            RunSession(
+                userGoal: command,
+                targetID: targetID,
+                runtimeProfile: "local-app-task",
+                permissionPolicy: permissionPolicy
+            )
+        )
+    }
+
     @MainActor
     private func accessibilityCommandTemplates(
         intent: TaskIntent,
@@ -397,6 +561,29 @@ public struct LocalAppTaskLiveRunner: Sendable {
         case .failedSafe, .timedOut:
             return .failedSafe
         }
+    }
+
+    private func decisionReason(_ decision: ActionEngineCommandDecision) -> String {
+        switch decision {
+        case .denied(let reason):
+            return reason
+        case .projectedDryRun:
+            return "projectedDryRun"
+        case .executedLive:
+            return "executedLive"
+        }
+    }
+
+    private func workflowStepID(from command: ActionEngineCommand) -> String? {
+        if let workflowStepID = command.metadata["workflowStepID"] {
+            return workflowStepID
+        }
+
+        guard let markerRange = command.id.range(of: "-ax-") else {
+            return command.metadata["workflowStepRole"]
+        }
+
+        return String(command.id[markerRange.upperBound...])
     }
 
     private static func now(advancedByMilliseconds milliseconds: Double = 0) -> RunTraceTimestamp {
@@ -452,13 +639,13 @@ public struct MacLocalAppTaskController: LocalAppTaskAppControlling {
         definition: LocalAppTaskDefinition,
         availability: LocalAppAvailability
     ) async -> LocalAppTaskObservation {
-        if let runningApplication = runningApplication(for: definition.targetApp) {
-            runningApplication.activate(options: [.activateAllWindows])
-        } else if let appURL = availability.appURL {
+        if let appURL = availability.appURL {
             await openApplication(at: appURL)
+        } else if let runningApplication = runningApplication(for: definition.targetApp) {
+            runningApplication.activate(options: [.activateAllWindows])
         }
 
-        try? await Task.sleep(nanoseconds: 350_000_000)
+        await waitForFrontmostApplication(definition.targetApp)
         return await observe(definition: definition)
     }
 
@@ -469,16 +656,6 @@ public struct MacLocalAppTaskController: LocalAppTaskAppControlling {
         let verificationKey = definition.metadata["verificationTextKey"]
             ?? definition.verificationEntityName
             ?? "visibleText"
-        async let screenshotObservationTask: LocalAppTaskObservation? = shouldIncludeScreenshotUnderstanding(
-            definition: definition
-        )
-            ? screenshotUnderstandingObservation(
-                definition: definition,
-                runningApplication: runningApplication,
-                isFocused: isFocused,
-                verificationKey: verificationKey
-            )
-            : nil
         let accessibilityIndex = accessibilityControlIndex(for: definition, runningApplication: runningApplication)
         let visibleText = accessibilityIndex?.visibleText ?? accessibilityVisibleText(for: runningApplication)
         var controls: [String: Bool] = Dictionary(
@@ -513,11 +690,20 @@ public struct MacLocalAppTaskController: LocalAppTaskAppControlling {
             ]
         )
 
-        guard shouldIncludeScreenshotUnderstanding(definition: definition) else {
+        guard shouldIncludeScreenshotUnderstanding(
+            definition: definition,
+            accessibilityObservation: accessibilityObservation,
+            verificationKey: verificationKey
+        ) else {
             return accessibilityObservation
         }
 
-        guard let screenshotObservation = await screenshotObservationTask else {
+        guard let screenshotObservation = await screenshotUnderstandingObservation(
+            definition: definition,
+            runningApplication: runningApplication,
+            isFocused: isFocused,
+            verificationKey: verificationKey
+        ) else {
             var metadata = accessibilityObservation.metadata
             metadata["screenshotUnderstanding.status"] = "unavailable"
             return LocalAppTaskObservation(
@@ -546,9 +732,15 @@ public struct MacLocalAppTaskController: LocalAppTaskAppControlling {
     }
 
     private func shouldIncludeScreenshotUnderstanding(
-        definition: LocalAppTaskDefinition
+        definition: LocalAppTaskDefinition,
+        accessibilityObservation: LocalAppTaskObservation,
+        verificationKey: String
     ) -> Bool {
-        definition.observationStrategies.contains(.screenshotForLocalModel)
+        LocalAppTaskObservationFallbackPolicy.shouldUseScreenshotUnderstanding(
+            definition: definition,
+            accessibilityObservation: accessibilityObservation,
+            verificationKey: verificationKey
+        )
     }
 
     @MainActor
@@ -667,6 +859,17 @@ public struct MacLocalAppTaskController: LocalAppTaskAppControlling {
             ) { _, _ in
                 continuation.resume()
             }
+        }
+    }
+
+    @MainActor
+    private func waitForFrontmostApplication(_ target: LocalAppTarget) async {
+        let bundleIdentifier = target.bundleIdentifier
+        for _ in 0..<16 {
+            if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleIdentifier {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 125_000_000)
         }
     }
 

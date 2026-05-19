@@ -10,6 +10,7 @@ public struct TargetWindowFrameCaptureRequest: Equatable, Sendable {
     public var frameIDPrefix: String
     public var maxFrameCount: Int
     public var cropBoundsInWindow: HotLoopRect?
+    public var contentCalibration: TargetWindowContentCalibrationRequest?
     public var plannerHintID: String?
 
     public init(
@@ -19,6 +20,7 @@ public struct TargetWindowFrameCaptureRequest: Equatable, Sendable {
         frameIDPrefix: String = "target-frame",
         maxFrameCount: Int,
         cropBoundsInWindow: HotLoopRect? = nil,
+        contentCalibration: TargetWindowContentCalibrationRequest? = nil,
         plannerHintID: String? = nil
     ) {
         self.selection = selection
@@ -27,6 +29,7 @@ public struct TargetWindowFrameCaptureRequest: Equatable, Sendable {
         self.frameIDPrefix = frameIDPrefix
         self.maxFrameCount = maxFrameCount
         self.cropBoundsInWindow = cropBoundsInWindow
+        self.contentCalibration = contentCalibration
         self.plannerHintID = plannerHintID
     }
 }
@@ -163,6 +166,16 @@ public final class TargetWindowFrameCaptureService: @unchecked Sendable {
 
         let captureEnd = timestampProvider.now()
         let copyStart = timestampProvider.now()
+        let pixelSize = HotLoopSize(
+            width: Double(captured.imageWidth),
+            height: Double(captured.imageHeight),
+            space: .window
+        )
+        let calibratedContent = calibratedContent(
+            request: request,
+            target: target,
+            capturedImageSize: pixelSize
+        )
         let frame = HotLoopFrame(
             id: "\(request.frameIDPrefix)-\(frameIndex + 1)",
             traceID: request.traceID,
@@ -176,20 +189,13 @@ public final class TargetWindowFrameCaptureService: @unchecked Sendable {
                 height: target.bounds.height,
                 space: .screen
             ),
-            crop: crop(
-                request.cropBoundsInWindow,
-                fallbackWidth: captured.imageWidth,
-                fallbackHeight: captured.imageHeight
-            ),
-            pixelSize: HotLoopSize(
-                width: Double(captured.imageWidth),
-                height: Double(captured.imageHeight),
-                space: .window
-            ),
+            crop: calibratedContent?.crop,
+            pixelSize: pixelSize,
             plannerHintID: request.plannerHintID,
             metadata: metadata(
                 target: target,
                 captured: captured,
+                contentCalibrationMetadata: calibratedContent?.metadata ?? [:],
                 captureStart: captureStart,
                 captureEnd: captureEnd,
                 copyStart: copyStart,
@@ -198,6 +204,32 @@ public final class TargetWindowFrameCaptureService: @unchecked Sendable {
         )
 
         return frame
+    }
+
+    private func calibratedContent(
+        request: TargetWindowFrameCaptureRequest,
+        target: MacWindowTargetCandidate,
+        capturedImageSize: HotLoopSize
+    ) -> TargetWindowContentCalibrationResult? {
+        if let cropBoundsInWindow = request.cropBoundsInWindow {
+            return TargetWindowContentCalibrationResult(
+                crop: crop(cropBoundsInWindow),
+                metadata: [
+                    "contentCalibration.enabled": "false",
+                    "contentCalibration.mode": "explicitCrop"
+                ]
+            )
+        }
+
+        let calibration = request.contentCalibration
+            ?? (target.isIPhoneMirroring ? .iPhonePortrait : nil)
+        guard let calibration else { return nil }
+
+        return TargetWindowContentCalibrator().calibrate(
+            target: target,
+            capturedImageSize: capturedImageSize,
+            request: calibration
+        )
     }
 
     private func selectTarget(
@@ -254,19 +286,13 @@ public final class TargetWindowFrameCaptureService: @unchecked Sendable {
         return .clear
     }
 
-    private func crop(
-        _ cropBoundsInWindow: HotLoopRect?,
-        fallbackWidth: Int,
-        fallbackHeight: Int
-    ) -> HotLoopCrop? {
-        guard let cropBoundsInWindow else { return nil }
-
+    private func crop(_ cropBoundsInWindow: HotLoopRect) -> HotLoopCrop {
         return HotLoopCrop(
             id: "target-window-crop",
             bounds: cropBoundsInWindow,
             outputSize: HotLoopSize(
-                width: min(Double(fallbackWidth), cropBoundsInWindow.size.width),
-                height: min(Double(fallbackHeight), cropBoundsInWindow.size.height),
+                width: cropBoundsInWindow.size.width,
+                height: cropBoundsInWindow.size.height,
                 space: .crop
             )
         )
@@ -275,6 +301,7 @@ public final class TargetWindowFrameCaptureService: @unchecked Sendable {
     private func metadata(
         target: MacWindowTargetCandidate,
         captured: CapturedTargetWindowFrame,
+        contentCalibrationMetadata: [String: String],
         captureStart: RunTraceTimestamp,
         captureEnd: RunTraceTimestamp,
         copyStart: RunTraceTimestamp,
@@ -298,6 +325,7 @@ public final class TargetWindowFrameCaptureService: @unchecked Sendable {
             "capture.encoded": "false",
             "capture.artifactWritten": "false"
         ]
+        metadata.merge(contentCalibrationMetadata) { current, _ in current }
 
         if let appName = target.appName {
             metadata["target.appName"] = appName
@@ -332,6 +360,71 @@ public struct TargetWindowFrameSource: DryRunFrameSource {
             return try await service.captureFrames(request: request).frames.map { [$0] }
         } catch {
             return []
+        }
+    }
+}
+
+public struct ContinuousTargetWindowFrameSource: DryRunStreamingFrameSource {
+    public let service: TargetWindowFrameCaptureService
+    public let request: TargetWindowFrameCaptureRequest
+    public let minimumFrameIntervalNanoseconds: UInt64
+    public let maximumFrameCount: Int?
+
+    public init(
+        service: TargetWindowFrameCaptureService = TargetWindowFrameCaptureService(),
+        request: TargetWindowFrameCaptureRequest,
+        minimumFrameIntervalNanoseconds: UInt64 = 33_000_000,
+        maximumFrameCount: Int? = nil
+    ) {
+        self.service = service
+        self.request = request
+        self.minimumFrameIntervalNanoseconds = minimumFrameIntervalNanoseconds
+        self.maximumFrameCount = maximumFrameCount
+    }
+
+    public func frameBatches() async -> [[HotLoopFrame]] {
+        guard let maximumFrameCount else { return [] }
+
+        var batches: [[HotLoopFrame]] = []
+        batches.reserveCapacity(maximumFrameCount)
+        for await batch in frameBatchStream() {
+            batches.append(batch)
+            if batches.count >= maximumFrameCount {
+                break
+            }
+        }
+        return batches
+    }
+
+    public func frameBatchStream() -> AsyncStream<[HotLoopFrame]> {
+        AsyncStream { continuation in
+            Task {
+                var emittedFrameCount = 0
+                while !Task.isCancelled {
+                    if let maximumFrameCount, emittedFrameCount >= maximumFrameCount {
+                        break
+                    }
+
+                    var frameRequest = request
+                    frameRequest.maxFrameCount = 1
+                    frameRequest.frameIDPrefix = "\(request.frameIDPrefix)-stream-\(emittedFrameCount + 1)"
+
+                    do {
+                        let result = try await service.captureFrames(request: frameRequest)
+                        for frame in result.frames {
+                            continuation.yield([frame])
+                            emittedFrameCount += 1
+                        }
+                    } catch {
+                        break
+                    }
+
+                    if minimumFrameIntervalNanoseconds > 0 {
+                        try? await Task.sleep(nanoseconds: minimumFrameIntervalNanoseconds)
+                    }
+                }
+                continuation.finish()
+            }
         }
     }
 }

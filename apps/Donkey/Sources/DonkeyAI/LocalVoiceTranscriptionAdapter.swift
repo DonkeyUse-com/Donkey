@@ -204,6 +204,142 @@ private struct ParakeetSidecarResponse: Codable, Equatable, Sendable {
     }
 }
 
+public enum LocalVoiceAudioNormalizer {
+    public static func parakeetCompatibleAudio(
+        from audio: LocalVoiceAudioBuffer
+    ) -> LocalVoiceAudioBuffer {
+        let normalizedFormat = audio.format.lowercased()
+        if ["wav", "flac"].contains(normalizedFormat),
+           audio.sampleRateHz == 16_000,
+           audio.channelCount == 1 {
+            return audio.withMetadata([
+                "audio.normalization.status": "notRequired",
+                "audio.normalization.target": "parakeet-16khz-mono"
+            ])
+        }
+
+        guard normalizedFormat == "pcm_f32le",
+              audio.channelCount == 1,
+              audio.sampleRateHz > 0,
+              !audio.data.isEmpty
+        else {
+            return audio.withMetadata([
+                "audio.normalization.status": "unsupportedInputFormat",
+                "audio.normalization.target": "parakeet-16khz-mono",
+                "audio.normalization.sourceFormat": audio.format,
+                "audio.normalization.sourceSampleRateHz": String(audio.sampleRateHz),
+                "audio.normalization.sourceChannelCount": String(audio.channelCount)
+            ])
+        }
+
+        let samples = float32Samples(from: audio.data)
+        guard !samples.isEmpty else {
+            return audio.withMetadata([
+                "audio.normalization.status": "emptyPCM",
+                "audio.normalization.target": "parakeet-16khz-mono"
+            ])
+        }
+
+        let resampled = resample(samples, sourceRate: audio.sampleRateHz, targetRate: 16_000)
+        let wavData = wavPCM16Data(samples: resampled, sampleRateHz: 16_000)
+        let durationMS = Double(resampled.count) / 16_000 * 1_000
+        return LocalVoiceAudioBuffer(
+            id: audio.id,
+            format: "wav",
+            sampleRateHz: 16_000,
+            channelCount: 1,
+            durationMS: durationMS,
+            data: wavData,
+            metadata: audio.metadata.merging([
+                "audio.normalization.status": "converted",
+                "audio.normalization.target": "parakeet-16khz-mono-wav",
+                "audio.normalization.sourceFormat": audio.format,
+                "audio.normalization.sourceSampleRateHz": String(audio.sampleRateHz),
+                "audio.normalization.sourceChannelCount": String(audio.channelCount),
+                "audio.normalization.sourceByteCount": String(audio.data.count),
+                "audio.normalization.outputByteCount": String(wavData.count)
+            ]) { current, _ in current }
+        )
+    }
+
+    private static func float32Samples(from data: Data) -> [Float] {
+        let sampleCount = data.count / MemoryLayout<UInt32>.size
+        guard sampleCount > 0 else { return [] }
+
+        var samples: [Float] = []
+        samples.reserveCapacity(sampleCount)
+        for index in 0..<sampleCount {
+            let offset = index * MemoryLayout<UInt32>.size
+            let bits = data[offset..<(offset + MemoryLayout<UInt32>.size)].reduce(UInt32(0)) { value, byte in
+                (value >> 8) | (UInt32(byte) << 24)
+            }
+            samples.append(Float(bitPattern: UInt32(littleEndian: bits)))
+        }
+        return samples
+    }
+
+    private static func resample(
+        _ samples: [Float],
+        sourceRate: Int,
+        targetRate: Int
+    ) -> [Float] {
+        guard sourceRate != targetRate else { return samples }
+        let outputCount = max(1, Int((Double(samples.count) * Double(targetRate) / Double(sourceRate)).rounded()))
+        guard samples.count > 1 else {
+            return Array(repeating: samples.first ?? 0, count: outputCount)
+        }
+
+        let sourceStep = Double(sourceRate) / Double(targetRate)
+        return (0..<outputCount).map { outputIndex in
+            let sourcePosition = Double(outputIndex) * sourceStep
+            let lowerIndex = min(samples.count - 1, Int(sourcePosition.rounded(.down)))
+            let upperIndex = min(samples.count - 1, lowerIndex + 1)
+            let fraction = Float(sourcePosition - Double(lowerIndex))
+            return samples[lowerIndex] + (samples[upperIndex] - samples[lowerIndex]) * fraction
+        }
+    }
+
+    private static func wavPCM16Data(samples: [Float], sampleRateHz: Int) -> Data {
+        var pcmData = Data(capacity: samples.count * MemoryLayout<Int16>.size)
+        for sample in samples {
+            let clamped = min(max(sample, -1), 1)
+            var value = Int16(clamped * Float(Int16.max)).littleEndian
+            pcmData.append(Data(bytes: &value, count: MemoryLayout<Int16>.size))
+        }
+
+        var data = Data()
+        appendASCII("RIFF", to: &data)
+        appendUInt32(UInt32(36 + pcmData.count), to: &data)
+        appendASCII("WAVE", to: &data)
+        appendASCII("fmt ", to: &data)
+        appendUInt32(16, to: &data)
+        appendUInt16(1, to: &data)
+        appendUInt16(1, to: &data)
+        appendUInt32(UInt32(sampleRateHz), to: &data)
+        appendUInt32(UInt32(sampleRateHz * 2), to: &data)
+        appendUInt16(2, to: &data)
+        appendUInt16(16, to: &data)
+        appendASCII("data", to: &data)
+        appendUInt32(UInt32(pcmData.count), to: &data)
+        data.append(pcmData)
+        return data
+    }
+
+    private static func appendASCII(_ value: String, to data: inout Data) {
+        data.append(contentsOf: value.utf8)
+    }
+
+    private static func appendUInt16(_ value: UInt16, to data: inout Data) {
+        var littleEndian = value.littleEndian
+        data.append(Data(bytes: &littleEndian, count: MemoryLayout<UInt16>.size))
+    }
+
+    private static func appendUInt32(_ value: UInt32, to data: inout Data) {
+        var littleEndian = value.littleEndian
+        data.append(Data(bytes: &littleEndian, count: MemoryLayout<UInt32>.size))
+    }
+}
+
 public struct LocalVoiceTranscriptionAdapter: Sendable {
     public var router: AIModelRouter
     public var runtime: any LocalVoiceTranscriptionRuntime
@@ -238,8 +374,9 @@ public struct LocalVoiceTranscriptionAdapter: Sendable {
             )
         }
 
+        let preparedAudio = LocalVoiceAudioNormalizer.parakeetCompatibleAudio(from: request.audio)
         do {
-            let transcript = try await runtime.transcribe(audio: request.audio, model: entry)
+            let transcript = try await runtime.transcribe(audio: preparedAudio, model: entry)
             guard !transcript.text.isEmpty else {
                 throw LocalVoiceTranscriptionRuntimeError.emptyTranscript
             }
@@ -251,7 +388,7 @@ public struct LocalVoiceTranscriptionAdapter: Sendable {
                     startedAt: startedAt,
                     status: .completed,
                     validationStatus: "transcriptDecoded",
-                    metadata: metadata(for: request.audio, transcript: transcript)
+                    metadata: metadata(for: request.audio, preparedAudio: preparedAudio, transcript: transcript)
                 )
             )
         } catch is CancellationError {
@@ -263,7 +400,7 @@ public struct LocalVoiceTranscriptionAdapter: Sendable {
                     startedAt: startedAt,
                     status: .cancelled,
                     validationStatus: "notValidated",
-                    metadata: metadata(for: request.audio)
+                    metadata: metadata(for: request.audio, preparedAudio: preparedAudio)
                 )
             )
         } catch {
@@ -275,7 +412,7 @@ public struct LocalVoiceTranscriptionAdapter: Sendable {
                     startedAt: startedAt,
                     status: .providerOutage,
                     validationStatus: "notValidated",
-                    metadata: metadata(for: request.audio).merging([
+                    metadata: metadata(for: request.audio, preparedAudio: preparedAudio).merging([
                         "reason": String(describing: error)
                     ]) { current, _ in current }
                 )
@@ -313,6 +450,7 @@ public struct LocalVoiceTranscriptionAdapter: Sendable {
 
     private func metadata(
         for audio: LocalVoiceAudioBuffer,
+        preparedAudio: LocalVoiceAudioBuffer? = nil,
         transcript: LocalVoiceTranscript? = nil
     ) -> [String: String] {
         var values = [
@@ -323,6 +461,16 @@ public struct LocalVoiceTranscriptionAdapter: Sendable {
             "audio.durationMS": String(audio.durationMS),
             "audio.byteCount": String(audio.data.count)
         ]
+        if let preparedAudio {
+            values["audio.prepared.format"] = preparedAudio.format
+            values["audio.prepared.sampleRateHz"] = String(preparedAudio.sampleRateHz)
+            values["audio.prepared.channelCount"] = String(preparedAudio.channelCount)
+            values["audio.prepared.durationMS"] = String(preparedAudio.durationMS)
+            values["audio.prepared.byteCount"] = String(preparedAudio.data.count)
+            values.merge(preparedAudio.metadata.filter { key, _ in
+                key.hasPrefix("audio.normalization.")
+            }) { current, _ in current }
+        }
         if let transcript {
             values["transcript.confidence"] = String(transcript.confidence)
             values["transcript.language"] = transcript.language ?? ""
@@ -335,6 +483,20 @@ public struct LocalVoiceTranscriptionAdapter: Sendable {
         RunTraceTimestamp(
             wallClock: Date(),
             monotonicUptimeNanoseconds: UInt64(ProcessInfo.processInfo.systemUptime * 1_000_000_000)
+        )
+    }
+}
+
+private extension LocalVoiceAudioBuffer {
+    func withMetadata(_ values: [String: String]) -> LocalVoiceAudioBuffer {
+        LocalVoiceAudioBuffer(
+            id: id,
+            format: format,
+            sampleRateHz: sampleRateHz,
+            channelCount: channelCount,
+            durationMS: durationMS,
+            data: data,
+            metadata: metadata.merging(values) { current, _ in current }
         )
     }
 }

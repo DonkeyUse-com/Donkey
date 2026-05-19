@@ -350,6 +350,7 @@ public struct LocalAppTaskAdapter: Sendable {
                 "taskType": intent.taskType,
                 "targetApp": definition.targetApp.appName,
                 "bundleIdentifier": definition.targetApp.bundleIdentifier ?? "",
+                "workflowStepID": idSuffix,
                 "workflowStepRole": role.rawValue
             ]) { current, _ in current }
         )

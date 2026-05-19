@@ -351,12 +351,108 @@ struct MacAccessibilitySnapshotCaptureServiceTests {
         #expect(capturer.capturedWindowIDs == [10])
     }
 
+    @Test
+    func captureTimeoutFailsWithoutWaitingForBlockedAccessibilityRead() async throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = try LocalRunArtifactStore(baseDirectory: root)
+        _ = try await store.prepareRun(
+            session: RunSession(id: "run-ax-timeout", userGoal: "capture", targetID: "target-1"),
+            traceID: "trace-ax-timeout"
+        )
+        let capturer = FakeMacAccessibilitySnapshotCapturer(delayNanoseconds: 75_000_000)
+        let service = makeService(
+            store: store,
+            windows: [
+                fixtureWindow(windowID: 10, processID: 100, appName: "Notes")
+            ],
+            frontmostProcessID: 100,
+            capturer: capturer,
+            captureTimeoutNanoseconds: 1_000_000
+        )
+        let started = ProcessInfo.processInfo.systemUptime
+
+        do {
+            _ = try await service.captureSnapshot(
+                runID: "run-ax-timeout",
+                artifactID: "accessibility-timeout"
+            )
+            Issue.record("Expected capture timeout")
+        } catch MacAccessibilitySnapshotCaptureError.captureTimedOut(let windowID, let timeoutNanoseconds) {
+            #expect(windowID == 10)
+            #expect(timeoutNanoseconds == 1_000_000)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(ProcessInfo.processInfo.systemUptime - started < 0.05)
+        let summary = try await store.summary(runID: "run-ax-timeout")
+        #expect(summary.artifacts.isEmpty)
+    }
+
+    @Test
+    func nativeDialogInAccessibilityTreeFailsAsSafetyStop() async throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = try LocalRunArtifactStore(baseDirectory: root)
+        _ = try await store.prepareRun(
+            session: RunSession(id: "run-ax-dialog", userGoal: "capture", targetID: "target-1"),
+            traceID: "trace-ax-dialog"
+        )
+        let tree = MacAccessibilitySnapshotTreeBuilder.build(
+            root: RawMacAccessibilitySnapshotNode(
+                role: "AXWindow",
+                title: "Game",
+                children: [
+                    RawMacAccessibilitySnapshotNode(
+                        role: "AXSheet",
+                        title: "Screen Recording Permission",
+                        children: [
+                            RawMacAccessibilitySnapshotNode(role: "AXButton", title: "Allow"),
+                            RawMacAccessibilitySnapshotNode(role: "AXButton", title: "Deny")
+                        ]
+                    )
+                ]
+            ),
+            limits: MacAccessibilitySnapshotLimits(maxDepth: 3)
+        )
+        let capturer = FakeMacAccessibilitySnapshotCapturer(tree: tree)
+        let service = makeService(
+            store: store,
+            windows: [
+                fixtureWindow(windowID: 10, processID: 100, appName: "Game")
+            ],
+            frontmostProcessID: 100,
+            capturer: capturer
+        )
+
+        do {
+            _ = try await service.captureSnapshot(
+                runID: "run-ax-dialog",
+                artifactID: "accessibility-dialog"
+            )
+            Issue.record("Expected native dialog to be refused")
+        } catch MacAccessibilitySnapshotCaptureError.unsafeTarget(let windowID, let status) {
+            #expect(windowID == 10)
+            #expect(status == .blocked)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        let summary = try await store.summary(runID: "run-ax-dialog")
+        #expect(summary.artifacts.isEmpty)
+        #expect(capturer.capturedWindowIDs == [10])
+    }
+
     private func makeService(
         store: LocalRunArtifactStore,
         windows: [MacWindowProviderWindow],
         frontmostProcessID: Int32? = nil,
         focusedWindowID: UInt32? = nil,
-        capturer: FakeMacAccessibilitySnapshotCapturer
+        capturer: FakeMacAccessibilitySnapshotCapturer,
+        captureTimeoutNanoseconds: UInt64 = 250_000_000
     ) -> MacAccessibilitySnapshotCaptureService {
         MacAccessibilitySnapshotCaptureService(
             artifactStore: store,
@@ -367,7 +463,8 @@ struct MacAccessibilitySnapshotCaptureServiceTests {
                     focusedWindowID: focusedWindowID
                 )
             ),
-            capturer: capturer
+            capturer: capturer,
+            captureTimeoutNanoseconds: captureTimeoutNanoseconds
         )
     }
 
@@ -446,10 +543,11 @@ struct MacAccessibilitySnapshotCaptureServiceTests {
     }
 }
 
-private final class FakeMacAccessibilitySnapshotCapturer: MacAccessibilitySnapshotCapturing {
+private final class FakeMacAccessibilitySnapshotCapturer: MacAccessibilitySnapshotCapturing, @unchecked Sendable {
     var trust: MacAccessibilityTrustStatus
     var tree: MacAccessibilitySnapshotTree
     var error: Error?
+    var delayNanoseconds: UInt64
     var capturedWindowIDs: [UInt32] = []
 
     init(
@@ -458,11 +556,13 @@ private final class FakeMacAccessibilitySnapshotCapturer: MacAccessibilitySnapsh
             root: RawMacAccessibilitySnapshotNode(role: "AXWindow", title: "Window"),
             limits: .default
         ),
-        error: Error? = nil
+        error: Error? = nil,
+        delayNanoseconds: UInt64 = 0
     ) {
         self.trust = trustStatus
         self.tree = tree
         self.error = error
+        self.delayNanoseconds = delayNanoseconds
     }
 
     func trustStatus() -> MacAccessibilityTrustStatus {
@@ -474,6 +574,9 @@ private final class FakeMacAccessibilitySnapshotCapturer: MacAccessibilitySnapsh
         limits: MacAccessibilitySnapshotLimits
     ) throws -> MacAccessibilitySnapshotTree {
         capturedWindowIDs.append(target.windowID)
+        if delayNanoseconds > 0 {
+            Thread.sleep(forTimeInterval: Double(delayNanoseconds) / 1_000_000_000)
+        }
         if let error {
             throw error
         }

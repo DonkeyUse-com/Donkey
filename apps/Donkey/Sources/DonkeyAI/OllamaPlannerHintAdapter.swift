@@ -7,13 +7,16 @@ public struct OllamaPlannerHintAdapter: Sendable {
 
     public var router: AIModelRouter
     public var httpClient: any AIHTTPClient
+    public var targetMemoryStore: TargetMemoryJSONLStore?
 
     public init(
         router: AIModelRouter = AIModelRouter(registry: .defaultHybridPlanner),
-        httpClient: any AIHTTPClient = URLSessionAIHTTPClient()
+        httpClient: any AIHTTPClient = URLSessionAIHTTPClient(),
+        targetMemoryStore: TargetMemoryJSONLStore? = try? TargetMemoryJSONLStore()
     ) {
         self.router = router
         self.httpClient = httpClient
+        self.targetMemoryStore = targetMemoryStore
     }
 
     public func generatePlannerHint(
@@ -48,18 +51,27 @@ public struct OllamaPlannerHintAdapter: Sendable {
             }
 
             guard (200..<300).contains(response.statusCode),
-                  let outputText = try Self.outputText(from: data),
-                  let hint = try PlannerHintWireCodec.decodeHint(
-                    outputText,
-                    sourceTraceID: request.sourceTraceID,
-                    sourceFrameID: request.sourceFrameID,
-                    sourceStateID: request.sourceStateID,
-                    modelCallID: "model-call-\(request.sourceTraceID)",
-                    now: request.now
-                  )
+                  let outputText = try Self.outputText(from: data)
             else {
                 return result(entry: entry, request: request, status: .invalidOutput, validationStatus: "invalid", latencyMS: latencyMS)
             }
+
+            let providerOutput = try PlannerHintWireCodec.decodeProviderOutput(
+                outputText,
+                sourceTraceID: request.sourceTraceID,
+                sourceFrameID: request.sourceFrameID,
+                sourceStateID: request.sourceStateID,
+                modelCallID: "model-call-\(request.sourceTraceID)",
+                now: request.now
+            )
+            guard let hint = providerOutput.hint else {
+                return result(entry: entry, request: request, status: .invalidOutput, validationStatus: "invalid", latencyMS: latencyMS)
+            }
+            let proposalProcessing = await ProviderDecodedMemoryProposalHandler.process(
+                proposals: providerOutput.memoryWriteProposals,
+                decidedAt: request.now,
+                targetMemoryStore: targetMemoryStore
+            )
 
             return PlannerHintAdapterResult(
                 hint: hint,
@@ -73,7 +85,10 @@ public struct OllamaPlannerHintAdapter: Sendable {
                         "http.status": String(response.statusCode),
                         "local.provider": "ollama"
                     ]
-                )
+                    .merging(providerOutput.metadata) { current, _ in current }
+                    .merging(proposalProcessing.metadata) { current, _ in current }
+                ),
+                memoryWriteDecisions: proposalProcessing.decisions
             )
         } catch is CancellationError {
             return result(entry: entry, request: request, status: .cancelled, validationStatus: "notValidated", latencyMS: nil)
@@ -120,16 +135,25 @@ public struct OllamaPlannerHintAdapter: Sendable {
 
     private func promptText(for request: PlannerHintAdapterRequest) -> String {
         [
-            "Return one planner hint as strict JSON. Hints are advisory and never direct input.",
+            "Return strict JSON with a planner hint and memoryWriteProposals. Hints are advisory and never direct input.",
             "goal: \(request.context.userGoal)",
             "target: \(request.context.targetID)",
             "runtime: \(request.context.runtimeProfile)",
             "latest_state: \(request.context.latestWorldState?.summary ?? "none")",
             "source_state_id: \(request.sourceStateID ?? "none")",
             "valid_hints: \(request.context.activeHints.map(\.summary).joined(separator: " | "))",
-            "recent_failures: \(request.context.recentFailures.map(\.summary).joined(separator: " | "))"
+            "recent_failures: \(request.context.recentFailures.map(\.summary).joined(separator: " | "))",
+            "semantic_memory: \(semanticMemoryText(for: request.context.semanticMemoryResults))"
         ]
         .joined(separator: "\n")
+    }
+
+    private func semanticMemoryText(for results: [RunMemorySemanticResult]) -> String {
+        guard !results.isEmpty else { return "none" }
+        return results.map { result in
+            "\(result.record.id)(\(String(format: "%.2f", result.relevance))): \(result.record.value)"
+        }
+        .joined(separator: " | ")
     }
 
     private func result(

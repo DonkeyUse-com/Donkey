@@ -14,7 +14,8 @@ public struct RunContextAssembler: Equatable, Sendable {
         transcriptSummary: String = "",
         activeHints: [RunPlannerHint] = [],
         recentFailures: [RunFailureSummary] = [],
-        memorySnapshot: RunMemorySnapshot? = nil
+        memorySnapshot: RunMemorySnapshot? = nil,
+        semanticMemoryResults: [RunMemorySemanticResult] = []
     ) -> RunContextPackage {
         let boundedTranscript = bounded(transcriptSummary)
         let validHints = activeHints.filter(\.isValid)
@@ -29,7 +30,8 @@ public struct RunContextAssembler: Equatable, Sendable {
             droppedTranscriptCharacterCount: boundedTranscript.droppedCount,
             activeHints: validHints,
             recentFailures: recentFailures,
-            memorySnapshot: boundedMemorySnapshot(memorySnapshot, fallbackHints: validHints, fallbackFailures: recentFailures)
+            memorySnapshot: boundedMemorySnapshot(memorySnapshot, fallbackHints: validHints, fallbackFailures: recentFailures),
+            semanticMemoryResults: boundedSemanticMemoryResults(semanticMemoryResults)
         )
     }
 
@@ -64,5 +66,19 @@ public struct RunContextAssembler: Equatable, Sendable {
         snapshot.targetRecords = Array(snapshot.targetRecords.suffix(10))
 
         return snapshot
+    }
+
+    private func boundedSemanticMemoryResults(
+        _ results: [RunMemorySemanticResult]
+    ) -> [RunMemorySemanticResult] {
+        var promptCharacters = 0
+        var bounded: [RunMemorySemanticResult] = []
+        for result in results.prefix(6) {
+            let nextCharacters = promptCharacters + result.record.value.count
+            guard nextCharacters <= 2_000 else { break }
+            promptCharacters = nextCharacters
+            bounded.append(result)
+        }
+        return bounded
     }
 }

@@ -15,6 +15,7 @@ struct MacWindowProviderWindow: Equatable, Sendable {
     var appName: String?
     var bundleIdentifier: String?
     var title: String?
+    var knownApplication: MacKnownApplicationIdentity?
     var bounds: WindowTargetBounds
     var alpha: Double
     var layer: Int
@@ -26,6 +27,7 @@ struct MacWindowProviderWindow: Equatable, Sendable {
         appName: String? = nil,
         bundleIdentifier: String? = nil,
         title: String? = nil,
+        knownApplication: MacKnownApplicationIdentity? = nil,
         bounds: WindowTargetBounds,
         alpha: Double = 1,
         layer: Int = 0,
@@ -36,11 +38,35 @@ struct MacWindowProviderWindow: Equatable, Sendable {
         self.appName = appName
         self.bundleIdentifier = bundleIdentifier
         self.title = title
+        self.knownApplication = knownApplication
         self.bounds = bounds
         self.alpha = alpha
         self.layer = layer
         self.isOnScreen = isOnScreen
     }
+}
+
+struct MacKnownApplicationIdentity: Equatable, Sendable {
+    var processID: Int32
+    var bundleIdentifier: String?
+    var localizedName: String?
+    var executableName: String?
+
+    init(
+        processID: Int32,
+        bundleIdentifier: String? = nil,
+        localizedName: String? = nil,
+        executableName: String? = nil
+    ) {
+        self.processID = processID
+        self.bundleIdentifier = bundleIdentifier
+        self.localizedName = localizedName
+        self.executableName = executableName
+    }
+}
+
+protocol MacKnownApplicationIdentityProviding {
+    func identitiesByProcessIdentifier() -> [Int32: MacKnownApplicationIdentity]
 }
 
 protocol MacWindowMetadataProviding {
@@ -225,13 +251,19 @@ public final class MacWindowResolver: @unchecked Sendable {
         normalizedOptional(window.appName) == nil
             && normalizedOptional(window.bundleIdentifier) == nil
             && normalizedOptional(window.title) == nil
+            && normalizedOptional(window.knownApplication?.bundleIdentifier) == nil
+            && normalizedOptional(window.knownApplication?.localizedName) == nil
+            && normalizedOptional(window.knownApplication?.executableName) == nil
     }
 
     private static func searchableText(for window: MacWindowProviderWindow) -> String {
         [
             window.appName,
             window.bundleIdentifier,
-            window.title
+            window.title,
+            window.knownApplication?.bundleIdentifier,
+            window.knownApplication?.localizedName,
+            window.knownApplication?.executableName
         ]
         .compactMap(normalizedOptional)
         .joined(separator: " ")
@@ -250,6 +282,14 @@ public final class MacWindowResolver: @unchecked Sendable {
 }
 
 private struct CoreGraphicsMacWindowMetadataProvider: MacWindowMetadataProviding {
+    var applicationIdentityProvider: any MacKnownApplicationIdentityProviding
+
+    init(
+        applicationIdentityProvider: any MacKnownApplicationIdentityProviding = NSWorkspaceMacKnownApplicationIdentityProvider()
+    ) {
+        self.applicationIdentityProvider = applicationIdentityProvider
+    }
+
     func windows() -> [MacWindowProviderWindow] {
         guard let rawWindows = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements],
@@ -258,6 +298,7 @@ private struct CoreGraphicsMacWindowMetadataProvider: MacWindowMetadataProviding
             return []
         }
 
+        let knownApplications = applicationIdentityProvider.identitiesByProcessIdentifier()
         return rawWindows.compactMap { rawWindow in
             guard let windowID = rawWindow.uint32Value(for: kCGWindowNumber),
                   let processID = rawWindow.int32Value(for: kCGWindowOwnerPID),
@@ -266,16 +307,17 @@ private struct CoreGraphicsMacWindowMetadataProvider: MacWindowMetadataProviding
                 return nil
             }
 
-            let bundleIdentifier = NSRunningApplication(
-                processIdentifier: processID
-            )?.bundleIdentifier
+            let knownApplication = knownApplications[processID]
 
             return MacWindowProviderWindow(
                 windowID: windowID,
                 processID: processID,
-                appName: rawWindow.stringValue(for: kCGWindowOwnerName),
-                bundleIdentifier: bundleIdentifier,
+                appName: rawWindow.stringValue(for: kCGWindowOwnerName)
+                    ?? knownApplication?.localizedName
+                    ?? knownApplication?.executableName,
+                bundleIdentifier: knownApplication?.bundleIdentifier,
                 title: rawWindow.stringValue(for: kCGWindowName),
+                knownApplication: knownApplication,
                 bounds: bounds,
                 alpha: rawWindow.doubleValue(for: kCGWindowAlpha) ?? 1,
                 layer: rawWindow.intValue(for: kCGWindowLayer) ?? 0,
@@ -290,6 +332,25 @@ private struct CoreGraphicsMacWindowMetadataProvider: MacWindowMetadataProviding
 
     func focusedWindowIdentifier() -> UInt32? {
         nil
+    }
+}
+
+private struct NSWorkspaceMacKnownApplicationIdentityProvider: MacKnownApplicationIdentityProviding {
+    func identitiesByProcessIdentifier() -> [Int32: MacKnownApplicationIdentity] {
+        var identities: [Int32: MacKnownApplicationIdentity] = [:]
+        for application in NSWorkspace.shared.runningApplications {
+            let processID = application.processIdentifier
+            let executableName = application.executableURL?
+                .deletingPathExtension()
+                .lastPathComponent
+            identities[processID] = MacKnownApplicationIdentity(
+                processID: processID,
+                bundleIdentifier: application.bundleIdentifier,
+                localizedName: application.localizedName,
+                executableName: executableName
+            )
+        }
+        return identities
     }
 }
 

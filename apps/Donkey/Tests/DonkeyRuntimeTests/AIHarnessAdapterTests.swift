@@ -160,6 +160,40 @@ struct AIHarnessAdapterTests {
     }
 
     @Test
+    func localVoiceTranscriptionAdapterConvertsPCMToParakeetCompatibleWAV() async {
+        let runtime = RecordingVoiceRuntime(
+            transcript: LocalVoiceTranscript(text: "show weather", confidence: 0.9)
+        )
+        let adapter = LocalVoiceTranscriptionAdapter(
+            runtime: runtime,
+            now: fixedClock([10, 20])
+        )
+        let result = await adapter.transcribe(
+            LocalVoiceTranscriptionRequest(
+                audio: LocalVoiceAudioBuffer(
+                    id: "audio-pcm",
+                    format: "pcm_f32le",
+                    sampleRateHz: 48_000,
+                    channelCount: 1,
+                    durationMS: 4,
+                    data: float32LittleEndianData([0, 0.25, -0.25, 0.5, -0.5, 0.1])
+                ),
+                sourceTraceID: "trace-voice-pcm"
+            )
+        )
+        let prepared = await runtime.lastAudio
+
+        #expect(result.trace.status == .completed)
+        #expect(prepared?.format == "wav")
+        #expect(prepared?.sampleRateHz == 16_000)
+        #expect(prepared?.channelCount == 1)
+        #expect(prepared?.metadata["audio.normalization.status"] == "converted")
+        #expect(prepared?.data.prefix(4) == Data("RIFF".utf8))
+        #expect(result.trace.metadata["audio.normalization.status"] == "converted")
+        #expect(result.trace.metadata["audio.prepared.format"] == "wav")
+    }
+
+    @Test
     func processBackedParakeetRuntimeDecodesSidecarTranscript() async throws {
         let runtime = ProcessBackedParakeetTranscriptionRuntime(
             sidecarRunner: FakeSidecarRunner(
@@ -436,6 +470,109 @@ struct AIHarnessAdapterTests {
     }
 
     @Test
+    func openAIAdapterIncludesSelectedSemanticMemoryInPrompt() async throws {
+        let httpClient = FakeAIHTTPClient(
+            data: responseData(
+                outputText: """
+                {"id":"hint-semantic","goal":"avoid hazards","policyName":"planner-policy","priorities":["center lane"],"preferredActions":["wait"],"avoidActions":[],"confidence":0.82,"expiryMilliseconds":5000}
+                """
+            ),
+            statusCode: 200
+        )
+        let adapter = OpenAIPlannerHintAdapter(
+            router: AIModelRouter(registry: AIModelRegistry(entries: [entry(id: "planner", modelID: "gpt-5.2")])),
+            httpClient: httpClient,
+            environment: ["OPENAI_API_KEY": "test-key"],
+            targetMemoryStore: nil
+        )
+        var request = adapterRequest()
+        request.context.semanticMemoryResults = [
+            RunMemorySemanticResult(
+                record: memoryRecord(
+                    id: "memory-weather",
+                    value: "Weather app search accepts city names.",
+                    targetID: "target-1"
+                ),
+                relevance: 0.91,
+                embeddingModelID: "test-embedding"
+            )
+        ]
+
+        _ = await adapter.generatePlannerHint(request)
+
+        let body = try #require(httpClient.requests.first?.httpBodyJSONObject)
+        let input = try #require(body["input"] as? [[String: Any]])
+        let firstInput = try #require(input.first)
+        let content = try #require(firstInput["content"] as? [[String: Any]])
+        let prompt = try #require(content.first?["text"] as? String)
+        #expect(prompt.contains("semantic_memory: memory-weather(0.91): Weather app search accepts city names."))
+    }
+
+    @Test
+    func openAIAdapterPersistsProviderMemoryProposalsWithValidatedHint() async throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try TargetMemoryJSONLStore(baseDirectory: root)
+        let httpClient = FakeAIHTTPClient(
+            data: responseData(
+                outputText: providerOutput(
+                    hintID: "hint-memory",
+                    memoryWriteProposals: [
+                        providerMemoryProposalJSON(
+                            proposalID: "proposal-1",
+                            recordID: "memory-1",
+                            targetID: "target-1"
+                        )
+                    ]
+                )
+            ),
+            statusCode: 200
+        )
+        let adapter = OpenAIPlannerHintAdapter(
+            router: AIModelRouter(registry: AIModelRegistry(entries: [entry(id: "planner", modelID: "gpt-5.2")])),
+            httpClient: httpClient,
+            environment: ["OPENAI_API_KEY": "test-key"],
+            targetMemoryStore: store
+        )
+
+        let result = await adapter.generatePlannerHint(adapterRequest())
+        let records = try await store.records(targetID: "target-1")
+
+        #expect(result.hint?.id == "hint-memory")
+        #expect(result.trace.status == .completed)
+        #expect(result.memoryWriteDecisions.count == 1)
+        #expect(result.memoryWriteDecisions.first?.approval.approved == true)
+        #expect(records.map(\.id) == ["memory-1"])
+        #expect(result.trace.metadata["memoryProposal.count"] == "1")
+        #expect(result.trace.metadata["memoryProposal.persistedCount"] == "1")
+    }
+
+    @Test
+    func openAIAdapterKeepsHintWhenMemoryProposalPayloadIsMalformed() async {
+        let httpClient = FakeAIHTTPClient(
+            data: responseData(
+                outputText: """
+                {"hint":{"id":"hint-only","goal":"recover","policyName":"planner-policy","priorities":["observe"],"preferredActions":["wait"],"avoidActions":[],"confidence":0.82,"expiryMilliseconds":5000},"memoryWriteProposals":[{}]}
+                """
+            ),
+            statusCode: 200
+        )
+        let adapter = OpenAIPlannerHintAdapter(
+            router: AIModelRouter(registry: AIModelRegistry(entries: [entry(id: "planner", modelID: "gpt-5.2")])),
+            httpClient: httpClient,
+            environment: ["OPENAI_API_KEY": "test-key"],
+            targetMemoryStore: nil
+        )
+
+        let result = await adapter.generatePlannerHint(adapterRequest())
+
+        #expect(result.hint?.id == "hint-only")
+        #expect(result.trace.status == .completed)
+        #expect(result.memoryWriteDecisions.isEmpty)
+        #expect(result.trace.metadata["memoryProposal.decodeStatus"] == "invalid")
+    }
+
+    @Test
     func openAIAdapterHandlesMissingCredentialsRateLimitAndInvalidOutput() async {
         let adapter = OpenAIPlannerHintAdapter(
             router: AIModelRouter(registry: AIModelRegistry(entries: [entry(id: "planner", modelID: "gpt-5.2")])),
@@ -696,6 +833,25 @@ struct AIHarnessAdapterTests {
         return Data("{\"model\":\"qwen3:8b\",\"response\":\"\(escaped)\",\"done\":true}".utf8)
     }
 
+    private func providerOutput(
+        hintID: String,
+        memoryWriteProposals: [String]
+    ) -> String {
+        """
+        {"hint":{"id":"\(hintID)","goal":"avoid hazards","policyName":"planner-policy","priorities":["center lane"],"preferredActions":["wait"],"avoidActions":[],"confidence":0.82,"expiryMilliseconds":5000},"memoryWriteProposals":[\(memoryWriteProposals.joined(separator: ","))]}
+        """
+    }
+
+    private func providerMemoryProposalJSON(
+        proposalID: String,
+        recordID: String,
+        targetID: String
+    ) -> String {
+        """
+        {"id":"\(proposalID)","proposedBy":"model","record":{"id":"\(recordID)","scope":"target","kind":"targetFact","targetID":"\(targetID)","value":"Weather app search accepts city names.","createdAt":{"wallClock":0.01,"monotonicUptimeNanoseconds":10000000},"expiresAt":{"wallClock":1.0,"monotonicUptimeNanoseconds":1000000000},"durable":false,"source":{"traceID":"trace-1","summary":"provider proposal test"},"metadata":{}},"rationale":"provider decoded"}
+        """
+    }
+
     private func slowPlannerSnapshot() -> SlowPlannerSnapshot {
         let observedAt = timestamp(10)
         let context = RunContextPackage(
@@ -795,6 +951,22 @@ struct AIHarnessAdapterTests {
             metadata: metadata
         )
     }
+
+    private func float32LittleEndianData(_ samples: [Float]) -> Data {
+        var data = Data(capacity: samples.count * MemoryLayout<UInt32>.size)
+        for sample in samples {
+            var bits = sample.bitPattern.littleEndian
+            data.append(Data(bytes: &bits, count: MemoryLayout<UInt32>.size))
+        }
+        return data
+    }
+
+    private func temporaryDirectory() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent(
+            "DonkeyAIHarnessAdapterTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+    }
 }
 
 private final class FixedTraceClock: @unchecked Sendable {
@@ -823,6 +995,23 @@ private struct FakeVoiceRuntime: LocalVoiceTranscriptionRuntime {
         model: AIModelRegistryEntry
     ) async throws -> LocalVoiceTranscript {
         transcript
+    }
+}
+
+private actor RecordingVoiceRuntime: LocalVoiceTranscriptionRuntime {
+    var transcript: LocalVoiceTranscript
+    private(set) var lastAudio: LocalVoiceAudioBuffer?
+
+    init(transcript: LocalVoiceTranscript) {
+        self.transcript = transcript
+    }
+
+    func transcribe(
+        audio: LocalVoiceAudioBuffer,
+        model: AIModelRegistryEntry
+    ) async throws -> LocalVoiceTranscript {
+        lastAudio = audio
+        return transcript
     }
 }
 

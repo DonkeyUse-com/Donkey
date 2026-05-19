@@ -285,6 +285,8 @@ public actor DryRunSlowPlannerSidecar {
     private let unsafeActions: Set<HotLoopActionKind>
     private let screenshotReferences: [SlowPlannerScreenshotReference]
     private let maxTraceSummaries: Int
+    private let memoryRetriever: SemanticRunMemoryRetriever
+    private let semanticMemoryBudget: RunMemoryRetrievalBudget
 
     private var previousSceneSignature: String?
     private var consecutiveFailureCount = 0
@@ -300,7 +302,9 @@ public actor DryRunSlowPlannerSidecar {
         triggerPolicy: SlowPlannerTriggerPolicy = SlowPlannerTriggerPolicy(),
         unsafeActions: Set<HotLoopActionKind> = [],
         screenshotReferences: [SlowPlannerScreenshotReference] = [],
-        maxTraceSummaries: Int = 5
+        maxTraceSummaries: Int = 5,
+        memoryRetriever: SemanticRunMemoryRetriever = SemanticRunMemoryRetriever(),
+        semanticMemoryBudget: RunMemoryRetrievalBudget = RunMemoryRetrievalBudget(maxRecords: 4, maxPromptCharacters: 1_200)
     ) {
         self.coordinator = coordinator
         self.memory = memory
@@ -310,6 +314,8 @@ public actor DryRunSlowPlannerSidecar {
         self.unsafeActions = unsafeActions
         self.screenshotReferences = screenshotReferences
         self.maxTraceSummaries = max(1, maxTraceSummaries)
+        self.memoryRetriever = memoryRetriever
+        self.semanticMemoryBudget = semanticMemoryBudget
     }
 
     public func observe(
@@ -339,12 +345,17 @@ public actor DryRunSlowPlannerSidecar {
         let activeHints = await hintBus.summaryHints(now: now)
         let summary = Self.worldStateSummary(for: worldState)
         await memory?.rememberState(summary)
+        let semanticMemoryResults = await retrieveSemanticMemory(
+            goal: userInstruction ?? summary.summary,
+            memorySnapshot: memorySnapshot
+        )
 
         guard let context = await coordinator.buildContext(
             latestWorldState: summary,
             activeHints: activeHints,
             recentFailures: recentFailures,
-            memorySnapshot: memorySnapshot
+            memorySnapshot: memorySnapshot,
+            semanticMemoryResults: semanticMemoryResults
         ) else {
             return
         }
@@ -405,6 +416,26 @@ public actor DryRunSlowPlannerSidecar {
         } else {
             consecutiveFailureCount = 0
         }
+    }
+
+    private func retrieveSemanticMemory(
+        goal: String,
+        memorySnapshot: RunMemorySnapshot?
+    ) async -> [RunMemorySemanticResult] {
+        guard let records = memorySnapshot?.targetRecords,
+              !records.isEmpty
+        else {
+            return []
+        }
+
+        return await memoryRetriever.retrieve(
+            query: RunMemorySemanticQuery(
+                text: goal,
+                scope: .target,
+                budget: semanticMemoryBudget
+            ),
+            records: records
+        )
     }
 
     private static func worldStateSummary(for state: HotLoopWorldState) -> RunWorldStateSummary {

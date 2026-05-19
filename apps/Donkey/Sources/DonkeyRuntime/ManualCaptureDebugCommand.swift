@@ -11,6 +11,7 @@ public enum ManualCaptureDebugCommand: Equatable, Sendable {
     case installLocalRuntime(LocalRuntimeInstallDebugOptions)
     case repairLocalRuntime(LocalModelRuntimeID)
     case removeLocalRuntime(LocalModelRuntimeID)
+    case localAppTask(LocalAppTaskDebugOptions)
 }
 
 public struct ManualCaptureDebugCaptureOptions: Equatable, Sendable {
@@ -52,6 +53,14 @@ public struct LocalRuntimeInstallDebugOptions: Equatable, Sendable {
     }
 }
 
+public struct LocalAppTaskDebugOptions: Equatable, Sendable {
+    public var command: String
+
+    public init(command: String) {
+        self.command = command
+    }
+}
+
 public enum ManualCaptureDebugCommandParseError: Error, Equatable, Sendable, CustomStringConvertible {
     case conflictingCommands
     case missingCommand
@@ -66,7 +75,7 @@ public enum ManualCaptureDebugCommandParseError: Error, Equatable, Sendable, Cus
     public var description: String {
         switch self {
         case .conflictingCommands:
-            return "Use only one debug command: --list-window-candidates or --manual-capture."
+            return "Use only one Donkey debug command."
         case .missingCommand:
             return "Use --list-window-candidates or --manual-capture before capture options."
         case .missingValue(let option):
@@ -99,6 +108,8 @@ public enum ManualCaptureDebugCommandParser {
                 || argument == "--install-local-runtime"
                 || argument == "--repair-local-runtime"
                 || argument == "--remove-local-runtime"
+                || argument == "--local-app-task"
+                || argument == "--command"
                 || argument == "--window-id"
                 || argument == "--run-id"
                 || argument == "--trace-id"
@@ -125,6 +136,7 @@ public enum ManualCaptureDebugCommandParser {
         var benchmarkMode = ReflexReplayBenchmarkMode.endToEndDryRun
         var runtimeID: LocalModelRuntimeID?
         var runtimeSource: URL?
+        var localAppTaskCommand: String?
         var index = 0
 
         while index < arguments.count {
@@ -157,6 +169,12 @@ public enum ManualCaptureDebugCommandParser {
             case "--remove-local-runtime":
                 try setMode(.removeLocalRuntime, current: &mode)
                 index += 1
+            case "--local-app-task":
+                try setMode(.localAppTask, current: &mode)
+                index += 1
+            case "--command":
+                localAppTaskCommand = try value(after: argument, in: arguments, at: index)
+                index += 2
             case "--window-id":
                 let value = try value(after: argument, in: arguments, at: index)
                 guard let parsed = UInt32(value) else {
@@ -210,14 +228,16 @@ public enum ManualCaptureDebugCommandParser {
 
         switch mode {
         case .listWindowCandidates:
-            guard windowID == nil, runID == nil, traceID == nil, frameCount == 30, benchmarkMode == .endToEndDryRun else {
+            guard windowID == nil, runID == nil, traceID == nil, frameCount == 30,
+                  benchmarkMode == .endToEndDryRun, localAppTaskCommand == nil
+            else {
                 throw ManualCaptureDebugCommandParseError.unsupportedOption(
                     "options are not supported with --list-window-candidates"
                 )
             }
             return .listWindowCandidates
         case .manualCapture:
-            guard frameCount == 30, benchmarkMode == .endToEndDryRun else {
+            guard frameCount == 30, benchmarkMode == .endToEndDryRun, localAppTaskCommand == nil else {
                 throw ManualCaptureDebugCommandParseError.unsupportedOption(
                     "benchmark options require --dry-run-latency-report"
                 )
@@ -230,7 +250,7 @@ public enum ManualCaptureDebugCommandParser {
                 )
             )
         case .dryRunLatencyReport:
-            guard windowID == nil, runID == nil, traceID == nil else {
+            guard windowID == nil, runID == nil, traceID == nil, localAppTaskCommand == nil else {
                 throw ManualCaptureDebugCommandParseError.unsupportedOption(
                     "capture options require --manual-capture"
                 )
@@ -243,7 +263,8 @@ public enum ManualCaptureDebugCommandParser {
             )
         case .localRuntimeStatus:
             guard windowID == nil, runID == nil, traceID == nil, frameCount == 30,
-                  benchmarkMode == .endToEndDryRun, runtimeID == nil, runtimeSource == nil
+                  benchmarkMode == .endToEndDryRun, runtimeID == nil, runtimeSource == nil,
+                  localAppTaskCommand == nil
             else {
                 throw ManualCaptureDebugCommandParseError.unsupportedOption(
                     "runtime install options require --install-local-runtime"
@@ -252,7 +273,8 @@ public enum ManualCaptureDebugCommandParser {
             return .localRuntimeStatus
         case .localRuntimeSupport:
             guard windowID == nil, runID == nil, traceID == nil, frameCount == 30,
-                  benchmarkMode == .endToEndDryRun, runtimeID == nil, runtimeSource == nil
+                  benchmarkMode == .endToEndDryRun, runtimeID == nil, runtimeSource == nil,
+                  localAppTaskCommand == nil
             else {
                 throw ManualCaptureDebugCommandParseError.unsupportedOption(
                     "runtime install options require a runtime lifecycle command"
@@ -261,7 +283,8 @@ public enum ManualCaptureDebugCommandParser {
             return .localRuntimeSupport
         case .localRuntimeInstructions:
             guard windowID == nil, runID == nil, traceID == nil, frameCount == 30,
-                  benchmarkMode == .endToEndDryRun, runtimeID == nil, runtimeSource == nil
+                  benchmarkMode == .endToEndDryRun, runtimeID == nil, runtimeSource == nil,
+                  localAppTaskCommand == nil
             else {
                 throw ManualCaptureDebugCommandParseError.unsupportedOption(
                     "runtime install options require --install-local-runtime"
@@ -270,7 +293,7 @@ public enum ManualCaptureDebugCommandParser {
             return .localRuntimeInstructions
         case .installLocalRuntime:
             guard windowID == nil, runID == nil, traceID == nil, frameCount == 30,
-                  benchmarkMode == .endToEndDryRun
+                  benchmarkMode == .endToEndDryRun, localAppTaskCommand == nil
             else {
                 throw ManualCaptureDebugCommandParseError.unsupportedOption(
                     "capture or benchmark options are not supported with --install-local-runtime"
@@ -290,7 +313,7 @@ public enum ManualCaptureDebugCommandParser {
             )
         case .repairLocalRuntime:
             guard windowID == nil, runID == nil, traceID == nil, frameCount == 30,
-                  benchmarkMode == .endToEndDryRun, runtimeSource == nil
+                  benchmarkMode == .endToEndDryRun, runtimeSource == nil, localAppTaskCommand == nil
             else {
                 throw ManualCaptureDebugCommandParseError.unsupportedOption(
                     "capture, benchmark, or source options are not supported with --repair-local-runtime"
@@ -302,7 +325,7 @@ public enum ManualCaptureDebugCommandParser {
             return .repairLocalRuntime(runtimeID)
         case .removeLocalRuntime:
             guard windowID == nil, runID == nil, traceID == nil, frameCount == 30,
-                  benchmarkMode == .endToEndDryRun, runtimeSource == nil
+                  benchmarkMode == .endToEndDryRun, runtimeSource == nil, localAppTaskCommand == nil
             else {
                 throw ManualCaptureDebugCommandParseError.unsupportedOption(
                     "capture, benchmark, or source options are not supported with --remove-local-runtime"
@@ -312,6 +335,20 @@ public enum ManualCaptureDebugCommandParser {
                 throw ManualCaptureDebugCommandParseError.missingValue("--runtime-id")
             }
             return .removeLocalRuntime(runtimeID)
+        case .localAppTask:
+            guard windowID == nil, runID == nil, traceID == nil, frameCount == 30,
+                  benchmarkMode == .endToEndDryRun, runtimeID == nil, runtimeSource == nil
+            else {
+                throw ManualCaptureDebugCommandParseError.unsupportedOption(
+                    "runtime, capture, or benchmark options are not supported with --local-app-task"
+                )
+            }
+            guard let localAppTaskCommand,
+                  !localAppTaskCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else {
+                throw ManualCaptureDebugCommandParseError.missingValue("--command")
+            }
+            return .localAppTask(LocalAppTaskDebugOptions(command: localAppTaskCommand))
         }
     }
 
@@ -505,6 +542,24 @@ public enum ManualCaptureDebugCommandFormatter {
         ]
     }
 
+    public static func lines(
+        status: String,
+        summary: String,
+        traceID: String,
+        metadata: [String: String]
+    ) -> [String] {
+        var lines = [
+            "local app task completed",
+            "status=\(status)",
+            "summary=\(summary)",
+            "traceID=\(traceID)"
+        ]
+        for key in metadata.keys.sorted() {
+            lines.append("\(key)=\(metadata[key] ?? "")")
+        }
+        return lines
+    }
+
     public static func errorLine(for error: Error) -> String {
         if let parseError = error as? ManualCaptureDebugCommandParseError {
             return "manual capture debug error: \(parseError.description)"
@@ -535,4 +590,5 @@ private enum ManualCaptureDebugCommandMode {
     case installLocalRuntime
     case repairLocalRuntime
     case removeLocalRuntime
+    case localAppTask
 }

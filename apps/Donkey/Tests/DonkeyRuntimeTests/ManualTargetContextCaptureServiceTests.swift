@@ -500,7 +500,7 @@ private final class FakeWindowScreenshotCapturer: WindowScreenshotCapturing {
     }
 }
 
-private final class FakeMacAccessibilitySnapshotCapturer: MacAccessibilitySnapshotCapturing {
+private final class FakeMacAccessibilitySnapshotCapturer: MacAccessibilitySnapshotCapturing, @unchecked Sendable {
     var trust: MacAccessibilityTrustStatus
     var tree: MacAccessibilitySnapshotTree
     var error: Error?

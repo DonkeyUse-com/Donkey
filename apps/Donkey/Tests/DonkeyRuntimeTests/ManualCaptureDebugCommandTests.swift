@@ -97,6 +97,22 @@ struct ManualCaptureDebugCommandTests {
     }
 
     @Test
+    func localAppTaskCommandParsesSubmittedCommand() throws {
+        let command = try ManualCaptureDebugCommandParser.parse(
+            arguments: [
+                "Donkey",
+                "--local-app-task",
+                "--command",
+                "show me the weather for SF"
+            ]
+        )
+
+        #expect(command == .localAppTask(
+            LocalAppTaskDebugOptions(command: "show me the weather for SF")
+        ))
+    }
+
+    @Test
     func invalidLocalRuntimeIDReturnsCommandError() throws {
         #expect(throws: ManualCaptureDebugCommandParseError.invalidRuntimeID("weather")) {
             _ = try ManualCaptureDebugCommandParser.parse(
@@ -340,7 +356,7 @@ private final class FakeWindowScreenshotCapturer: WindowScreenshotCapturing {
     }
 }
 
-private final class FakeMacAccessibilitySnapshotCapturer: MacAccessibilitySnapshotCapturing {
+private final class FakeMacAccessibilitySnapshotCapturer: MacAccessibilitySnapshotCapturing, @unchecked Sendable {
     var trust: MacAccessibilityTrustStatus
     var tree: MacAccessibilitySnapshotTree
     var capturedWindowIDs: [UInt32] = []

@@ -186,7 +186,8 @@ public actor RunCoordinator {
         transcriptSummary: String = "",
         activeHints: [RunPlannerHint] = [],
         recentFailures: [RunFailureSummary] = [],
-        memorySnapshot: RunMemorySnapshot? = nil
+        memorySnapshot: RunMemorySnapshot? = nil,
+        semanticMemoryResults: [RunMemorySemanticResult] = []
     ) -> RunContextPackage? {
         guard let currentSession else { return nil }
 
@@ -196,7 +197,8 @@ public actor RunCoordinator {
             transcriptSummary: transcriptSummary,
             activeHints: activeHints,
             recentFailures: recentFailures,
-            memorySnapshot: memorySnapshot
+            memorySnapshot: memorySnapshot,
+            semanticMemoryResults: semanticMemoryResults
         )
     }
 

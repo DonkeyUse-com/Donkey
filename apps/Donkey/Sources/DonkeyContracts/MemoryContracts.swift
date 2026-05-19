@@ -123,6 +123,7 @@ public enum RunMemoryApprovalIssue: String, Codable, Equatable, Sendable {
     case missingUserID
     case missingRetention
     case unsupportedScope
+    case sensitiveContent
 }
 
 public struct RunMemoryWriteProposal: Codable, Equatable, Sendable {
@@ -279,6 +280,10 @@ public enum RunMemoryApprover {
             issues.append(.emptyValue)
         }
 
+        if containsSensitiveContent(record.value) {
+            issues.append(.sensitiveContent)
+        }
+
         if !record.source.isLinked {
             issues.append(.missingSourceLink)
         }
@@ -310,5 +315,20 @@ public enum RunMemoryApprover {
             issues: Array(Set(issues)).sorted { $0.rawValue < $1.rawValue },
             decidedAt: decidedAt
         )
+    }
+
+    private static func containsSensitiveContent(_ value: String) -> Bool {
+        let patterns = [
+            #"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}"#,
+            #"\b(?:\d[ -]*?){13,16}\b"#,
+            #"(?i)(password|token|api[_ -]?key)\s*[:=]\s*\S+"#
+        ]
+        let range = NSRange(value.startIndex..<value.endIndex, in: value)
+        return patterns.contains { pattern in
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+                return false
+            }
+            return regex.firstMatch(in: value, range: range) != nil
+        }
     }
 }
