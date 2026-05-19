@@ -15,7 +15,7 @@ Add the production macOS SwiftUI pointer prompt UI while keeping the future real
 - The active pointer renders with a shadow and supports theme-color customization.
 - Contracts, UI, runtime boundary, AI boundary, and app entrypoint are separate Swift targets.
 - Runtime boundary references `plans/20-off-the-shelf-run-loop.md`.
-- AI boundary references `plans/19-ai-harness.md`.
+- AI boundary references `plans/done/19-ai-harness.md`.
 - No Screen Recording, Accessibility, model calls, capture loop, or input execution is included in this slice.
 
 ## Acceptance

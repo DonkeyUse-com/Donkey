@@ -49,7 +49,7 @@ For local app tasks, prefer the safest high-level primitive that works:
 
 For touch-style targets such as iPhone Mirroring, the action engine should expose a synthetic controller adapter. It turns semantic commands like `swipe_left` or `tap_lane_center` into calibrated mouse/touch-like gestures. See [14-synthetic-controller.md](14-synthetic-controller.md).
 
-For games that support controllers, the action engine should expose a generic gamepad abstraction with buttons, sticks, triggers, and directional pads. See [15-gamepad-controller.md](15-gamepad-controller.md).
+For games that support controllers, the action engine should expose a generic gamepad backend with buttons, sticks, triggers, and directional pads through the synthetic controller abstraction. See [14-synthetic-controller.md](14-synthetic-controller.md).
 
 ## Rules
 

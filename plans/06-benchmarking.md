@@ -1,12 +1,12 @@
-# Benchmarking And Monitoring
+# Latency Budget, Benchmarking, And Monitoring
 
-> Active status: not complete. Current benchmark support can summarize dry-run traces, but not persistent cross-run trends or a concrete fast-navigation command-to-result baseline.
+> Active status: not complete. Current reports support synthetic and dry-run traces, but this plan is not complete until p50/p95/p99 budgets are measured for the first fast-navigation benchmark, compared with a same-machine manual baseline, and persisted across runs.
 
 ## Goal
 
 Make latency visible, measurable, and hard to accidentally regress.
 
-No latency claim counts unless it is measured.
+No latency claim counts unless it is measured with local traces.
 
 The first benchmark target is the user-facing Weather navigation task:
 
@@ -22,31 +22,89 @@ The project needs two observability loops:
 - local measurement while building and tuning the agent
 - continuous monitoring so latency regressions show up over time
 
+## Product Targets
+
+For the first Weather demo:
+
+- command-to-first-action p95 under 300ms after text submission
+- local observation/controller/input step p95 under 100ms
+- command-to-verified-result faster than a documented manual baseline on the same machine
+
+For later game and visual targets:
+
+- visual reflex p95 under 100ms end to end
+- stretch target of 30-60ms for simple games
+
+## Stage Budgets
+
+### Weather Task Budget
+
+| Stage | Baseline Target | Stretch Target |
+| --- | ---: | ---: |
+| Intent parse | 5-100ms | <20ms deterministic |
+| App launch/focus | 100-800ms | 50-300ms when already warm |
+| App observation | 5-50ms | 2-15ms |
+| Controller decision | 1-20ms | <5ms |
+| Input execution | 1-20ms | <5ms |
+| Result verification | 10-100ms | 5-30ms |
+
+### Visual Reflex Budget
+
+| Stage | Baseline Target | Stretch Target |
+| --- | ---: | ---: |
+| Screen capture | 5-15ms | 2-8ms |
+| Perception / model inference | 10-50ms | 5-20ms |
+| World-state update | 1-5ms | <2ms |
+| Action decision | 1-20ms | <5ms |
+| Input execution | 1-5ms | <2ms |
+| Total | <100ms | 30-60ms |
+
+## Hard Rules
+
+- No large LLM calls in the per-frame loop.
+- No remote calls in the per-frame loop.
+- No remote call is required for common Weather command parsing or execution.
+- No full-screen expensive inference unless the target requires it.
+- No full-resolution model input in the hot path unless measured under budget.
+- No unbounded queues between capture, perception, and action.
+- Drop stale frames instead of processing late frames.
+- Do not wait for planner output before acting in the reflex loop.
+- Do not type into an unverified focused control.
+
+## Loop Shape
+
+Use a latest-frame-wins design:
+
+```text
+Observation thread
+  -> overwrites latest app/window/task state
+
+Perception thread
+  -> reads latest structured observation or latest frame fallback
+  -> emits latest world state
+
+Controller thread
+  -> reads latest world state
+  -> emits immediate action
+```
+
+Do not preserve every frame if the system falls behind. A real-time agent should be current, not complete.
+
 ## Required Metrics
 
 Per loop:
 
-- intent parse start timestamp
-- intent parse end timestamp
-- app launch/focus start timestamp
-- app launch/focus end timestamp
-- app observation start timestamp
-- app observation end timestamp
-- capture start timestamp
-- capture end timestamp
-- perception start timestamp
-- perception end timestamp
-- model preprocess start timestamp
-- model preprocess end timestamp
-- model inference start timestamp
-- model inference end timestamp
+- intent parse start and end timestamps
+- app launch/focus start and end timestamps
+- app observation start and end timestamps
+- capture start and end timestamps
+- perception start and end timestamps
+- model preprocess start and end timestamps
+- model inference start and end timestamps
 - world-state timestamp
-- controller start timestamp
-- controller end timestamp
-- input command timestamp
-- input execution timestamp
-- verification start timestamp
-- verification end timestamp
+- controller start and end timestamps
+- input command and execution timestamps
+- verification start and end timestamps
 - command-to-result timestamp
 - frame age when perception begins
 - state age when controller begins
@@ -54,26 +112,19 @@ Per loop:
 
 Aggregate:
 
-- p50 latency
-- p95 latency
-- p99 latency
-- dropped frames
-- stale actions
-- planner calls
-- planner latency
+- p50, p95, and p99 latency
+- dropped frames and stale actions
+- planner calls and planner latency
 - app launch/focus latency
 - app observation latency
 - result verification latency
 - command-to-result latency
 - manual baseline latency
 - controller fallback count
-- capture FPS
-- perception FPS
-- controller tick rate
+- capture FPS, perception FPS, and controller tick rate
 - queue depth
 - CPU usage
-- GPU usage, if used
-- GPU memory usage, if used
+- GPU usage and GPU memory usage, if used
 - memory usage
 - thermal throttling indicator, when available
 
@@ -92,9 +143,7 @@ Every trace event should include:
 - build/version id
 - machine profile
 
-## Measuring End-To-End Latency
-
-There are three levels of latency to measure.
+## Measurement Levels
 
 ### Command-To-Result Latency
 
@@ -141,14 +190,15 @@ This may require external measurement, such as a high-FPS camera, OS-level input
 Add tiny timestamp spans around every hot-path boundary:
 
 ```text
-capture.start
-capture.end
+command.accepted
 intent_parse.start
 intent_parse.end
 app_focus.start
 app_focus.end
 app_observation.start
 app_observation.end
+capture.start
+capture.end
 preprocess.start
 preprocess.end
 model.start
@@ -182,6 +232,7 @@ Reports should show both total latency and stage latency:
 | decision_ms | `controller.end - controller.start` |
 | input_ms | `input.execute - action.enqueue` |
 | verification_ms | `verification.end - verification.start` |
+| command_to_first_action_ms | `input.execute - command.accepted` |
 | command_to_result_ms | `verification.end - command.accepted` |
 | software_loop_ms | `input.execute - capture.end` |
 | frame_age_ms | `controller.start - capture.end` |
@@ -191,7 +242,7 @@ Frame and state age matter because an action can be computed quickly but still b
 
 ## Trace Format
 
-Every reflex action should be traceable:
+Every action should be traceable:
 
 ```text
 trace_id
@@ -207,6 +258,32 @@ planner_hint_id
 machine_profile
 build_id
 ```
+
+## Optimization Order
+
+1. Measure each stage with monotonic timestamps.
+2. Remove unnecessary work from the hot path.
+3. Shrink the capture region.
+4. Use frame differencing to skip perception when nothing relevant changed.
+5. Move repeated calculations into cached state.
+6. Quantize or replace slow models.
+7. Split perception into fast local signals and slower background interpretation.
+8. Batch only when it reduces total latency without increasing frame age.
+
+## Latency Risks
+
+- Full-screen capture at high resolution.
+- Python-only hot loops for pixel-heavy work.
+- Large image copies between processes.
+- Image encoding or decoding before inference.
+- GPU upload/download overhead.
+- Model warmup during the first live loop.
+- Remote model calls.
+- Synchronous logging in the frame loop.
+- Input APIs with hidden OS scheduling delays.
+- App launch cold-start time.
+- Accessibility permission or trust checks.
+- Typing into an unverified focused control.
 
 ## Benchmark Modes
 
@@ -268,13 +345,13 @@ Later, add a lightweight local dashboard with:
 - action timeline
 - alerts when thresholds are crossed
 
-## Alerts
+## Alerts And Regression Gates
 
 Alert on symptoms that matter to feel:
 
-- p95 end-to-end latency over 100ms
+- p95 visual reflex latency over 100ms
 - Weather command-to-result latency slower than manual baseline by more than the configured tolerance
-- p99 end-to-end latency over 150ms
+- p99 visual reflex latency over 150ms
 - stale action rate over 2%
 - dropped frame rate over 5%
 - perception p95 over 50ms
@@ -284,17 +361,14 @@ Alert on symptoms that matter to feel:
 - queue depth above 1 in the reflex loop
 - sustained FPS below target
 
-Alerts should include the stage that regressed, the previous baseline, and the worst trace ids.
-
-## Regression Gates
-
 For the first supported target:
 
 - intent parse p95 under the Weather budget
 - app observation p95 under the Weather budget
 - verification p95 under the Weather budget
-- controller p95 under 20ms
-- action execution p95 under 5ms
+- command-to-first-action p95 under 300ms
+- local observation/controller/input step p50 under 60ms
+- local observation/controller/input step p95 under 100ms
 - command-to-result p95 faster than the manual Weather baseline or explicitly flagged
 
 For later visual targets:
@@ -310,11 +384,11 @@ Use both absolute and comparative gates:
 - comparative gate: warn when a stage gets 10% slower than baseline
 - comparative hard fail: fail when a stage gets 25% slower than baseline
 
-Small changes can pass absolute targets while still making the system worse over time. The comparative gate catches that drift.
+Small changes can pass absolute targets while still making the system worse over time. The comparative gate catches that drift. Alerts should include the stage that regressed, the previous baseline, and the worst trace ids.
 
 ## Replay Harness
 
-Record frames and world states so performance work can happen without launching the game every time.
+Record frames and world states so performance work can happen without launching the target every time.
 
 Replay should support:
 
@@ -334,6 +408,7 @@ Example:
 ```text
 baselines/
   macbook-pro-m3/
+    weather.json
     simple-2d-game.json
   windows-desktop-gpu/
     simple-2d-game.json
@@ -344,7 +419,7 @@ Each baseline should record:
 - hardware
 - OS version
 - screen resolution
-- game/window settings
+- app/window settings
 - agent config
 - capture backend
 - model versions
@@ -360,18 +435,26 @@ Do not compare runs across different machines without labeling them. Hardware di
 
 1. Add monotonic timestamp helper.
 2. Add trace event schema.
-3. Record capture and action events.
-4. Build a local trace viewer or summary command.
-5. Add p50/p95/p99 report.
-6. Add a failing threshold check for regressions.
-7. Add baseline comparison.
-8. Add a 10-minute soak test.
-9. Add live console monitoring for active runs.
+3. Record Weather command, observation, action, and verification events.
+4. Record capture and action events for visual/reflex runs.
+5. Build a local trace viewer or summary command.
+6. Add p50/p95/p99 report.
+7. Add a same-machine manual Weather baseline.
+8. Add a failing threshold check for regressions.
+9. Add baseline comparison.
+10. Add a 10-minute soak test.
+11. Add live console monitoring for active runs.
 
 ## Acceptance Criteria
 
 - A single command can print the latest latency report.
+- Every Weather task trace includes intent parse, app launch/focus, observation, decision, input, and verification timestamps.
+- Every visual action trace includes capture, perception, decision, and input timestamps.
+- p50 local observation/controller/input step latency is under 60ms for the first supported target.
+- p95 local observation/controller/input step latency is under 100ms for the first supported target.
+- command-to-result time is compared with a manual Weather lookup baseline.
+- Stale-frame actions are counted and visible in metrics.
 - Trace files can explain why an action happened.
 - Performance regressions are visible before release time.
 - Latency trends can be compared across runs from different days.
-- The system can identify whether capture, perception, controller, or input caused a regression.
+- The system can identify whether capture, perception, controller, input, app observation, or verification caused a regression.

@@ -64,12 +64,11 @@ Every frame should use local, bounded-cost logic:
 
 - [manual-target-context-capture-master-plan.md](manual-target-context-capture-master-plan.md): completed manual screenshot, Accessibility tree, and trace artifact capture milestone
 - [../master-plan.md](../master-plan.md): current master plan for closing out the off-the-shelf run loop and AI harness milestones
-- [../01-latency-budget.md](../01-latency-budget.md): hard timing budget and optimization priorities
 - [../02-capture-and-perception.md](../02-capture-and-perception.md): screen capture, visual parsing, and world-state updates
 - [../03-fast-controller.md](../03-fast-controller.md): real-time controller design
 - [04-slow-planner.md](04-slow-planner.md): completed slow strategy, recovery, and goal-setting layer
 - [../05-action-engine.md](../05-action-engine.md): low-latency keyboard, mouse, and controller output
-- [../06-benchmarking.md](../06-benchmarking.md): latency measurement, monitoring, traces, and regression gates
+- [../06-benchmarking.md](../06-benchmarking.md): hard latency budgets, measurement, monitoring, traces, and regression gates
 - [07-rollout.md](07-rollout.md): phased delivery path from first supported target to production readiness
 - [08-dom-parsing.md](08-dom-parsing.md): DOM-driven perception for browser games and web apps
 - [09-screenshot-model-inference.md](09-screenshot-model-inference.md): screenshot capture into low-latency vision models
@@ -77,12 +76,11 @@ Every frame should use local, bounded-cost logic:
 - [11-game-targets.md](11-game-targets.md): recommended games and target sequence
 - [12-iphone-mirroring.md](12-iphone-mirroring.md): iPhone Mirroring as a mobile-game target
 - [13-subway-surfers-target.md](13-subway-surfers-target.md): concrete Subway Surfers target profile
-- [14-synthetic-controller.md](14-synthetic-controller.md): generic synthetic input adapter
-- [15-gamepad-controller.md](15-gamepad-controller.md): generic controller/gamepad abstraction for controller-supported games
+- [14-synthetic-controller.md](14-synthetic-controller.md): generic synthetic input adapter, including gamepad/controller backends
 - [16-iphone-gameplay-roadmap.md](16-iphone-gameplay-roadmap.md): iPhone Mirroring gameplay roadmap
 - [17-ios-control-prompt.md](17-ios-control-prompt.md): iOS control prompt and PhoneAgent reference
 - [18-macos-accessibility.md](18-macos-accessibility.md): macOS Accessibility tree/action backend
-- [../19-ai-harness.md](../19-ai-harness.md): slow-path memory, LLM/VLM connection, model routing, and update plan
+- [done/19-ai-harness.md](done/19-ai-harness.md): completed AI harness memory, proposal, and voice-hardening slice
 - [../20-off-the-shelf-run-loop.md](../20-off-the-shelf-run-loop.md): off-the-shelf perception, deterministic control, and low-latency runtime stack
 
 ## System Priorities
