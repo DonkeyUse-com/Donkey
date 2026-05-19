@@ -755,7 +755,7 @@ final class PointerPromptOverlayController {
             return NotchMetrics.expandedTaskContentHeight
         }
 
-        return model.notchCommandInputSurfaceHeight + NotchMetrics.compactCommandContentPadding
+        return model.notchCommandInputSurfaceHeight + NotchMetrics.compactCommandContentVerticalPadding
     }
 
     private var hasStatusTaskDisplayText: Bool {
@@ -1196,11 +1196,12 @@ private struct NotchMetrics {
     private static let expandedContentDesignFrame = CGRect(
         x: 0,
         y: 0,
-        width: PointerPromptLayout.composerInputSurfaceWidth + 48,
+        width: PointerPromptLayout.composerInputSurfaceWidth + Self.inputHorizontalMargin * 2,
         height: 280
     )
     static let expandedTaskContentHeight: CGFloat = 280
-    static let compactCommandContentPadding: CGFloat = 52
+    static let inputHorizontalMargin: CGFloat = 14
+    static let compactCommandContentVerticalPadding: CGFloat = 30
     private static let collapsedSideLaneWidth: CGFloat = 34
     private static let collapsedCornerRadius: CGFloat = 14
     private static let expandedCornerRadius: CGFloat = 26

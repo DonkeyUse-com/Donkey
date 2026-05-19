@@ -201,7 +201,6 @@ public struct PointerPromptNotchStatusView: View {
             x: layout.expandedContentFrame.minX,
             y: layout.expandedContentFrame.minY
         )
-        .clipped()
     }
 
     private var expandedTaskContent: some View {
@@ -210,17 +209,16 @@ public struct PointerPromptNotchStatusView: View {
                 expandedUpdateHeader
             }
 
-            ScrollView(.vertical, showsIndicators: false) {
-                currentTaskRow
-                    .padding(.horizontal, 14)
-                    .padding(.top, 10)
+            VStack(spacing: 0) {
+                ScrollView(.vertical, showsIndicators: false) {
+                    currentTaskRow
+                        .padding(.top, 10)
+                }
+
+                commandRow
             }
-
-            Spacer(minLength: 8)
-
-            commandRow
-                .padding(.horizontal, 24)
-                .padding(.bottom, 24)
+            .padding(.horizontal, Self.contentInset)
+            .padding(.bottom, Self.contentInset)
         }
     }
 
@@ -231,10 +229,10 @@ public struct PointerPromptNotchStatusView: View {
             }
 
             commandRow
-                .padding(.horizontal, 24)
                 .padding(.top, 16)
-                .padding(.bottom, 24)
         }
+        .padding(.horizontal, Self.contentInset)
+        .padding(.bottom, Self.contentInset)
     }
 
     private var expandedNotchArrow: some View {
@@ -484,6 +482,7 @@ public struct PointerPromptNotchStatusView: View {
         .easeOut(duration: 0.3)
         .delay(0.15)
     private static let expandedContentDismissAnimation = Animation.easeOut(duration: 0.1)
+    private static let contentInset: CGFloat = 14
 }
 
 private struct TaskArrowMark: View {

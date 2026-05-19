@@ -145,7 +145,7 @@ struct PointerPromptComposer: View {
             height: composerHeight,
             alignment: .topLeading
         )
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     @ViewBuilder
@@ -183,10 +183,10 @@ struct PointerPromptComposer: View {
                 .stroke(Color.white.opacity(0.34), lineWidth: 1)
         }
         .shadow(
-            color: Color.black.opacity(state.isActive ? 0.2 : 0.08),
-            radius: state.isActive ? 12 : 6,
+            color: surfaceShadowColor,
+            radius: surfaceShadowRadius,
             x: 0,
-            y: state.isActive ? 5 : 2
+            y: surfaceShadowY
         )
         .accessibilityElement(children: .contain)
     }
@@ -226,10 +226,10 @@ struct PointerPromptComposer: View {
             }
         }
         .shadow(
-            color: Color.black.opacity(state.isActive ? 0.2 : 0.08),
-            radius: state.isActive ? 12 : 6,
+            color: surfaceShadowColor,
+            radius: surfaceShadowRadius,
             x: 0,
-            y: state.isActive ? 5 : 2
+            y: surfaceShadowY
         )
         .accessibilityElement(children: .contain)
     }
@@ -322,6 +322,18 @@ struct PointerPromptComposer: View {
 
     private var showsSurfaceStroke: Bool {
         toolbarStyle != .followUp
+    }
+
+    private var surfaceShadowColor: Color {
+        toolbarStyle == .followUp ? Color.black.opacity(0) : Color.black.opacity(state.isActive ? 0.2 : 0.08)
+    }
+
+    private var surfaceShadowRadius: CGFloat {
+        toolbarStyle == .followUp ? 0 : (state.isActive ? 12 : 6)
+    }
+
+    private var surfaceShadowY: CGFloat {
+        toolbarStyle == .followUp ? 0 : (state.isActive ? 5 : 2)
     }
 
     var composerHeight: CGFloat {
