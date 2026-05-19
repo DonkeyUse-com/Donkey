@@ -26,6 +26,9 @@ final class PointerPromptOverlayController {
     private var isVoiceInputActive = false
     private var isStatusExpanded = false
     private var isStatusHostExpanded = false
+    // Hover can produce enter/exit samples faster than SwiftUI's spring can settle.
+    // Track the lifecycle explicitly so pending host resizes, opens, and closes
+    // are cancelled in order instead of racing into a stale animation origin.
     private var statusHoverPhase: StatusHoverPhase = .collapsed
     private var statusCollapseWorkItem: DispatchWorkItem?
     private var statusExpansionWorkItem: DispatchWorkItem?
@@ -131,7 +134,7 @@ final class PointerPromptOverlayController {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.becomesKeyOnlyIfNeeded = true
-        panel.ignoresMouseEvents = true
+        panel.ignoresMouseEvents = false
         panel.level = .statusBar
         panel.collectionBehavior = [
             .canJoinAllSpaces,
@@ -445,6 +448,9 @@ final class PointerPromptOverlayController {
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0
             context.allowsImplicitAnimation = false
+            // The NSPanel is just the render host. It must jump to its target rect
+            // before SwiftUI animates the visible notch, otherwise AppKit's frame
+            // animation can combine with the SwiftUI spring and look corner-born.
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             if statusPanel.frame.size != metrics.surfaceSize {
@@ -531,6 +537,8 @@ final class PointerPromptOverlayController {
 
             statusHoverPhase = .preparingOpen
             isStatusExpanded = false
+            // First render the collapsed visual notch inside the already-expanded
+            // host. The delayed flip below is the only step that should animate.
             prepareStatusHostForExpansion()
 
             let workItem = DispatchWorkItem { [weak self] in
@@ -544,7 +552,10 @@ final class PointerPromptOverlayController {
                 self.updateStatusPanelView()
             }
             statusExpansionWorkItem = workItem
-            DispatchQueue.main.async(execute: workItem)
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + NotchMetrics.openHostPreparationDelay,
+                execute: workItem
+            )
             return
         }
 
@@ -570,6 +581,24 @@ final class PointerPromptOverlayController {
         isStatusHostExpanded = true
         positionStatusPanel()
         updateStatusPanelView()
+        flushStatusHostLayout()
+    }
+
+    private func flushStatusHostLayout() {
+        guard let statusPanel else { return }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            context.allowsImplicitAnimation = false
+
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            statusPanel.contentView?.layoutSubtreeIfNeeded()
+            statusHostingView?.layoutSubtreeIfNeeded()
+            statusHostingView?.displayIfNeeded()
+            statusPanel.displayIfNeeded()
+            CATransaction.commit()
+        }
     }
 
     private func scheduleStatusCollapse() {
@@ -602,6 +631,9 @@ final class PointerPromptOverlayController {
     private func scheduleStatusHostShrink() {
         statusHostShrinkWorkItem?.cancel()
 
+        // Wait for SwiftUI's short close animation, then collapse the transparent
+        // host without animation. Shrinking it earlier changes the coordinate
+        // space while the visible surface is still animating.
         let workItem = DispatchWorkItem { [weak self] in
             Task { @MainActor in
                 self?.shrinkStatusHostIfCollapsed()
@@ -1044,6 +1076,7 @@ private struct NotchMetrics {
     private static let collapsedSideLaneWidth: CGFloat = 34
     private static let collapsedCornerRadius: CGFloat = 14
     private static let expandedCornerRadius: CGFloat = 26
+    static let openHostPreparationDelay: TimeInterval = 1.0 / 60.0
     static let closeAnimationDuration: TimeInterval = 0.22
     private static let maximumExpandedContentTopInset: CGFloat = 44
 }
@@ -1059,6 +1092,9 @@ private struct StatusPanelViewSnapshot: Equatable {
 }
 
 private enum StatusHoverPhase {
+    // The status panel has two layers of state: an invisible AppKit host rect and
+    // the SwiftUI notch surface. These phases keep quick hover churn from leaving
+    // one layer expanded while the other is still opening or closing.
     case collapsed
     case preparingOpen
     case expanded

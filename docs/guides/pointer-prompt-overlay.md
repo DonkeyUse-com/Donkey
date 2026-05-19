@@ -14,7 +14,7 @@ Donkey supports a floating macOS pointer prompt overlay:
 - makes the resting notch envelope height match the detected physical notch height when a notch is present
 - only expands from controller-tracked hover over the visible notch surface, not SwiftUI hover over the transparent host panel area
 - lets the physical notch void participate in collapsed hover activation while keeping expanded content below the void
-- keeps the native status panel collapsed at rest, jumps it to expanded render bounds with AppKit animations disabled before the SwiftUI open spring, and jumps it back after the short non-spring close finishes
+- keeps the native status panel collapsed at rest, jumps it to expanded render bounds with AppKit animations disabled, forces a collapsed layout/display in that expanded host before the SwiftUI open spring, and jumps it back after the short non-spring close finishes
 - coalesces quick hover enter and exit samples through explicit collapsed, preparing-open, expanded, and closing phases so pending opens and closes do not fight each other
 - keeps expanded notch text and controls below the detected physical notch void while allowing the black surface to extend through it, adding vertical surface space instead of squeezing the below-notch content area
 - keeps the notch arrow mark pointed up-right at a fixed 45-degree angle
@@ -24,6 +24,7 @@ Donkey supports a floating macOS pointer prompt overlay:
 - lays out collapsed and expanded notch content inside the animated, clipped surface so content reveals and reflows with the current surface width
 - fades collapsed notch content out quickly, then fades expanded content in after the surface has started expanding
 - shows an update button in the expanded notch header when Sparkle reports a valid appcast update
+- accepts mouse clicks in the notch status panel so expanded header and command-row controls can invoke their actions
 - shows a black prompt modal with text input and a white voice waveform while active
 - uses a wide pill-shaped prompt for single-line text, then expands to a rounded rectangle when text wraps at the max input width or the user inserts new lines
 - places the waveform in a bottom toolbar that blends with the input background when the prompt is expanded
@@ -33,7 +34,6 @@ Donkey supports a floating macOS pointer prompt overlay:
 - dismisses the active modal when the user clicks outside it
 - dismisses the active modal when the user presses Escape while it is visible
 - supports dragging the active modal from capsule areas outside the text input
-- lets normal clicks pass through the inactive overlay and transparent active overlay space
 - opens the prompt input centered on the current screen instead of following the cursor
 - dismisses the centered prompt after submission and moves visible progress/result feedback into the notch status panel
 - submits typed prompt text through the local-app command pipeline while keeping model parsing, task validation, and live input outside the SwiftUI rendering path
@@ -58,7 +58,7 @@ This is a visual, typed-command, and voice-command UI capability. Typed submissi
 - The notch status panel should keep its visual language aligned with the `/prototype` route without exposing agent names or implementation roles: a slim arrow-only resting mark beside the physical notch, a minimal one-line task label when collapsed and active, and a compact current-task panel plus command row when expanded.
 - SwiftUI notch rendering should consume `PointerPromptNotchLayout` for derived surface/content frames, corner radii, and notch-safe content offsets instead of duplicating screen-geometry constants in the view.
 - Hover activation should be bounded to the visible notch surface using controller-side mouse location checks. The transparent host panel and expanded interaction padding must not trigger expansion or keep the notch expanded by themselves.
-- The native status panel should not animate its frame while the SwiftUI notch surface animates. When expansion starts, resize the panel to expanded render bounds with AppKit animations disabled before flipping SwiftUI expansion state; after the short non-spring collapse finishes, resize it back to the resting surface bounds with animations disabled.
+- The native status panel should not animate its frame while the SwiftUI notch surface animates. When expansion starts, resize the panel to expanded render bounds with AppKit animations disabled, render the collapsed notch once in that expanded host, then flip SwiftUI expansion state on the next frame; after the short non-spring collapse finishes, resize it back to the resting surface bounds with animations disabled.
 - Expanded notch content must treat the physical notch void as unavailable layout space. The surface may cover the void, but text, buttons, and task rows should start below the detected void height while retaining the normal below-notch content height.
 - Notch expansion should reveal from the top edge, growing width and height together so the expanded surface feels attached to the physical notch rather than growing from a lower corner. Use a single rendered surface with the prototype dimensions and a native spring for opening width, height, bottom corner radius, and shadow; use a short ease-out on close so there is no spring tail. Keep collapsed and expanded content inside that clipped surface so layout follows the animated width. Delay the expanded content fade-in so the surface leads the content.
 - The expanded notch header may show an update button when `PointerPromptUpdateState` is actionable; clicking it should invoke Sparkle's standard update UI outside the SwiftUI view.

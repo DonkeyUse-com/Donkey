@@ -37,6 +37,10 @@ public struct PointerPromptNotchStatusView: View {
     public var body: some View {
         GeometryReader { proxy in
             animatedNotchSurface
+                // Pin the top edge to the host's top center for every spring frame.
+                // Alignment-based layout occasionally reused a stale host geometry
+                // after quick hover enter/exit, making expansion appear to start
+                // from the bottom-right instead of from the physical notch.
                 .position(
                     x: proxy.size.width / 2,
                     y: animatingSurfaceHeight / 2
