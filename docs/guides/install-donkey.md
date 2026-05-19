@@ -8,7 +8,7 @@ From the repo root:
 ./scripts/package-donkey-app.sh
 ```
 
-The script builds the release executable, creates `dist/Donkey.app`, copies bundled resources, applies an ad-hoc signature when `codesign` is available, and creates `dist/Donkey.dmg`.
+The script builds the release executable, creates `dist/Donkey.app`, copies bundled resources and embedded frameworks, ensures the executable can load those frameworks from the app bundle, applies an ad-hoc signature when `codesign` is available, and creates `dist/Donkey.dmg`.
 
 The app bundle version defaults to `0.1.0` build `1`. Override it for local release testing:
 
@@ -71,11 +71,13 @@ The package script also creates Donkey-compatible sidecar runner packages under 
 dist/Donkey.app/Contents/Resources/LocalRuntimePackages/
 ```
 
-Parakeet and YOLO runner packages include manifest-tracked Python requirements. On setup, the sidecar creates a managed virtual environment under Application Support and installs those dependencies there. Build offline wheelhouse artifacts before packaging when the release must install without network access:
+Parakeet and YOLO runner packages include manifest-tracked Python requirements. On setup, the sidecar creates a managed virtual environment under Application Support and installs those dependencies there. Normal packages do not bundle Python wheelhouses; setup downloads dependencies from the Python package index. Build and explicitly bundle offline wheelhouse artifacts only when the release must install without network access:
 
 ```bash
 ./scripts/build-local-runtime-wheelhouses.sh
-DONKEY_RUNTIME_WHEELHOUSE_ROOT="dist/LocalRuntimeWheelhouses" ./scripts/package-donkey-app.sh
+DONKEY_BUNDLE_RUNTIME_WHEELHOUSES=1 \
+  DONKEY_RUNTIME_WHEELHOUSE_ROOT="dist/LocalRuntimeWheelhouses" \
+  ./scripts/package-donkey-app.sh
 ```
 
 On first launch, Donkey shows one setup button for local runtimes. Setup installs the bundled sidecar packages first, verifies their manifests/checksums/signatures, registers them in Application Support, asks them to prepare model weights, and health-checks them. The bundled packages do not include Parakeet or YOLO model weights; they contain protocol-speaking runner entrypoints for the local command parser, Parakeet voice transcription, and YOLO screenshot segmentation. UI understanding ships as a local Swift sidecar that uses Apple's on-device Vision text recognition and does not need downloaded model weights. If setup fails, clicking the same button retries failed or not-yet-attempted runtimes while keeping completed installs. The setup window can also be reopened from the app settings.

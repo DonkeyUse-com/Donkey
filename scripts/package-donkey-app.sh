@@ -23,11 +23,18 @@ UI_UNDERSTANDER_EXECUTABLE="$BUILD_DIR/.build/release/DonkeyUIUnderstandingSidec
 CACHE_DIR="$BUILD_DIR/.build/package-cache"
 RUNTIME_RUNNER_SOURCE="$ROOT_DIR/scripts/local-runtime-runners/donkey_runtime_runner.py"
 RUNTIME_WHEELHOUSE_ROOT="${DONKEY_RUNTIME_WHEELHOUSE_ROOT:-$ROOT_DIR/dist/LocalRuntimeWheelhouses}"
+BUNDLE_RUNTIME_WHEELHOUSES="${DONKEY_BUNDLE_RUNTIME_WHEELHOUSES:-0}"
 
 mkdir -p "$CACHE_DIR/clang" "$CACHE_DIR/swiftpm" "$CACHE_DIR/home"
 export CLANG_MODULE_CACHE_PATH="$CACHE_DIR/clang"
 export SWIFTPM_CACHE_PATH="$CACHE_DIR/swiftpm"
 export HOME="$CACHE_DIR/home"
+
+if [ "$BUNDLE_RUNTIME_WHEELHOUSES" = "1" ]; then
+  echo "Runtime wheelhouses will be bundled from $RUNTIME_WHEELHOUSE_ROOT"
+else
+  echo "Runtime wheelhouses will not be bundled; setup will install Python dependencies from the network."
+fi
 
 cd "$BUILD_DIR"
 echo "Compiling Donkey for Mac ..."
@@ -37,6 +44,13 @@ swift build -c release --product DonkeyUIUnderstandingSidecar
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$FRAMEWORKS_DIR"
 cp "$EXECUTABLE" "$MACOS_DIR/Donkey"
+if ! otool -l "$MACOS_DIR/Donkey" | grep -q "@executable_path/../Frameworks"; then
+  if ! command -v install_name_tool >/dev/null 2>&1; then
+    echo "install_name_tool is required to package Donkey.app with embedded frameworks." >&2
+    exit 1
+  fi
+  install_name_tool -add_rpath "@executable_path/../Frameworks" "$MACOS_DIR/Donkey"
+fi
 
 make_runtime_package() {
   local runtime_id="$1"
@@ -82,7 +96,7 @@ EOF_RUNTIME
   if [ -n "$requirements" ]; then
     printf '%s\n' "$requirements" > "$requirements_path"
   fi
-  if [ -d "$wheelhouse_source" ]; then
+  if [ "$BUNDLE_RUNTIME_WHEELHOUSES" = "1" ] && [ -d "$wheelhouse_source" ]; then
     mkdir -p "$package_dir/wheelhouse"
     cp -R "$wheelhouse_source/." "$package_dir/wheelhouse/"
   fi
