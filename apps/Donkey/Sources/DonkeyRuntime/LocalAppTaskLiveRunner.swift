@@ -22,6 +22,7 @@ public struct LocalAppTaskLiveRunResult: Equatable, Sendable {
     public var observation: LocalAppTaskObservation?
     public var documentFormFillPlan: DocumentFormFillPlan?
     public var actionTraces: [ActionEngineCommandTrace]
+    public var workflowProgress: LocalAppTaskWorkflowProgress
     public var metadata: [String: String]
 
     public init(
@@ -34,6 +35,7 @@ public struct LocalAppTaskLiveRunResult: Equatable, Sendable {
         observation: LocalAppTaskObservation? = nil,
         documentFormFillPlan: DocumentFormFillPlan? = nil,
         actionTraces: [ActionEngineCommandTrace] = [],
+        workflowProgress: LocalAppTaskWorkflowProgress = LocalAppTaskWorkflowProgress(),
         metadata: [String: String] = [:]
     ) {
         self.command = command
@@ -45,6 +47,7 @@ public struct LocalAppTaskLiveRunResult: Equatable, Sendable {
         self.observation = observation
         self.documentFormFillPlan = documentFormFillPlan
         self.actionTraces = actionTraces
+        self.workflowProgress = workflowProgress
         self.metadata = metadata
     }
 }
@@ -112,26 +115,54 @@ public struct LocalAppTaskLiveRunner: Sendable {
     ) async -> LocalAppTaskLiveRunResult {
         let runStartedAt = Self.uptimeMilliseconds()
         var runMetadata = metadata
+        var stepTracker = LocalAppTaskStepTracker(metadata: ["traceID": traceID])
+        stepTracker.complete(
+            .parseIntent,
+            summary: "Task intent parsed or supplied",
+            metadata: ["parser": metadata["intentParser"] ?? resolution.intent?.parserSource.rawValue ?? "external"]
+        )
         guard resolution.status == .resolved else {
+            stepTracker.block(
+                .resolveApp,
+                summary: "Local app task could not be resolved",
+                metadata: ["resolution.status": resolution.status.rawValue]
+            )
             await publishUnresolvedRun(
                 command: command,
                 traceID: traceID,
                 resolution: resolution
             )
+            let progress = stepTracker.snapshot()
             return unresolvedResult(
                 command: command,
                 traceID: traceID,
                 resolution: resolution,
+                workflowProgress: progress,
                 metadata: metadata.merging([
                     "latency.totalMS": Self.formatLatency(Self.uptimeMilliseconds() - runStartedAt)
-                ]) { current, _ in current }
+                ], uniquingKeysWith: { current, _ in current }).merging(
+                    Self.workflowProgressMetadata(progress),
+                    uniquingKeysWith: { current, _ in current }
+                )
             )
         }
+
+        stepTracker.start(
+            .resolveApp,
+            summary: "Resolving task definition and target app",
+            metadata: ["resolution.status": resolution.status.rawValue]
+        )
 
         guard let definition = resolution.definition,
               var intent = resolution.intent,
               let availability = resolution.availability
         else {
+            stepTracker.fail(
+                .resolveApp,
+                summary: "Local app task resolution was incomplete",
+                metadata: ["reason": "incompleteResolution"]
+            )
+            let progress = stepTracker.snapshot()
             await publishRunStart(
                 command: command,
                 traceID: traceID,
@@ -151,12 +182,25 @@ public struct LocalAppTaskLiveRunner: Sendable {
                 traceID: traceID,
                 status: .failedSafe,
                 resolution: resolution,
+                workflowProgress: progress,
                 metadata: runMetadata.merging([
                     "reason": "incompleteResolution",
                     "latency.totalMS": Self.formatLatency(Self.uptimeMilliseconds() - runStartedAt)
-                ]) { current, _ in current }
+                ], uniquingKeysWith: { current, _ in current }).merging(
+                    Self.workflowProgressMetadata(progress),
+                    uniquingKeysWith: { current, _ in current }
+                )
             )
         }
+
+        stepTracker.complete(
+            .resolveApp,
+            summary: "Resolved task definition and target app",
+            metadata: [
+                "taskType": definition.taskType,
+                "targetApp": definition.targetApp.appName
+            ]
+        )
 
         intent.metadata["traceID"] = traceID
         let adapter = catalog.adapter(for: definition)
@@ -167,6 +211,7 @@ public struct LocalAppTaskLiveRunner: Sendable {
         )
         if definition.metadata["guardedLiveDefault"] == "reviewOnly" {
             let contextStartedAt = Self.uptimeMilliseconds()
+            stepTracker.start(.observe, summary: "Capturing local app task context")
             await coordinator?.recordToolEvent(
                 capability: .capture,
                 decision: permissionPolicy.decision(for: .capture),
@@ -178,6 +223,12 @@ public struct LocalAppTaskLiveRunner: Sendable {
             runMetadata["latency.observationMS"] = Self.formatLatency(
                 Self.uptimeMilliseconds() - contextStartedAt
             )
+            stepTracker.complete(
+                .observe,
+                summary: "Captured local app task context",
+                metadata: ["observer": "local-app-task-context"]
+            )
+            stepTracker.start(.dryRun, summary: "Planning review-first document form fill")
             let documentPlan = documentFormFillPlanner.plan(
                 intent: intent,
                 definition: definition,
@@ -199,6 +250,22 @@ public struct LocalAppTaskLiveRunner: Sendable {
                 ]
             )
             let initialPlan = adapter.dryRunPlan(for: intent, observation: observation)
+            stepTracker.complete(
+                .dryRun,
+                summary: "Built review-first document form-fill plan",
+                metadata: ["terminalState": initialPlan.terminalState.rawValue]
+            )
+            stepTracker.wait(
+                .approval,
+                summary: "Waiting for user review before Accessibility execution",
+                metadata: [
+                    "documentFormFillPlan.status": documentPlan.status.rawValue,
+                    "proposalCount": String(documentPlan.proposals.count)
+                ]
+            )
+            stepTracker.skip(.execute, summary: "Execution waits for user approval")
+            stepTracker.skip(.verify, summary: "Verification waits for approved execution")
+            let progress = stepTracker.snapshot()
             await coordinator?.complete(reason: "Local app task requires document review")
             return LocalAppTaskLiveRunResult(
                 command: command,
@@ -209,17 +276,22 @@ public struct LocalAppTaskLiveRunner: Sendable {
                 finalPlan: initialPlan,
                 observation: observation,
                 documentFormFillPlan: documentPlan,
+                workflowProgress: progress,
                 metadata: runMetadata.merging([
                     "reason": "reviewOnlyTask",
                     "documentFormFillPlan.status": documentPlan.status.rawValue,
                     "documentFormFillPlan.proposalCount": String(documentPlan.proposals.count),
                     "latency.totalMS": Self.formatLatency(Self.uptimeMilliseconds() - runStartedAt)
-                ]) { current, _ in current }
+                ], uniquingKeysWith: { current, _ in current }).merging(
+                    Self.workflowProgressMetadata(progress),
+                    uniquingKeysWith: { current, _ in current }
+                )
             )
         }
 
         await coordinator?.waitIfPaused()
         let launchStartedAt = Self.uptimeMilliseconds()
+        stepTracker.start(.observe, summary: "Launching or focusing target app for observation")
         await coordinator?.recordToolEvent(
             capability: .input,
             decision: permissionPolicy.decision(for: .input),
@@ -236,8 +308,26 @@ public struct LocalAppTaskLiveRunner: Sendable {
             availability: availability
         )
         runMetadata["latency.launchFocusMS"] = Self.formatLatency(Self.uptimeMilliseconds() - launchStartedAt)
+        stepTracker.complete(
+            .observe,
+            summary: "Observed target app after launch or focus",
+            metadata: [
+                "appIsRunning": String(launchObservation.appIsRunning),
+                "appIsFocused": String(launchObservation.appIsFocused)
+            ]
+        )
+        stepTracker.start(.dryRun, summary: "Projecting guarded local-app workflow")
         let initialPlan = adapter.dryRunPlan(for: intent, observation: launchObservation)
         guard initialPlan.canAttemptGuardedLive else {
+            stepTracker.block(
+                .dryRun,
+                summary: "Dry-run plan blocked live input",
+                metadata: ["terminalState": initialPlan.terminalState.rawValue]
+            )
+            stepTracker.skip(.approval, summary: "No approval requested for blocked dry run")
+            stepTracker.skip(.execute, summary: "Execution skipped because dry run blocked")
+            stepTracker.skip(.verify, summary: "Verification skipped because dry run blocked")
+            let progress = stepTracker.snapshot()
             await coordinator?.pause(reason: "Local app task dry-run plan blocked live input")
             return LocalAppTaskLiveRunResult(
                 command: command,
@@ -246,12 +336,22 @@ public struct LocalAppTaskLiveRunner: Sendable {
                 resolution: resolution,
                 initialPlan: initialPlan,
                 observation: launchObservation,
+                workflowProgress: progress,
                 metadata: runMetadata.merging([
                     "reason": "dryRunPlanBlocked",
                     "latency.totalMS": Self.formatLatency(Self.uptimeMilliseconds() - runStartedAt)
-                ]) { current, _ in current }
+                ], uniquingKeysWith: { current, _ in current }).merging(
+                    Self.workflowProgressMetadata(progress),
+                    uniquingKeysWith: { current, _ in current }
+                )
             )
         }
+        stepTracker.complete(
+            .dryRun,
+            summary: "Dry-run plan allows guarded live execution",
+            metadata: ["terminalState": initialPlan.terminalState.rawValue]
+        )
+        stepTracker.skip(.approval, summary: "No review gate required for this local-app task")
 
         var actionTraces: [ActionEngineCommandTrace] = []
         var accessibilityActionMS = 0.0
@@ -304,6 +404,7 @@ public struct LocalAppTaskLiveRunner: Sendable {
         }
 
         var keyboardActionMS = 0.0
+        stepTracker.start(.execute, summary: "Executing guarded local-app actions")
         for (index, actionCommand) in commands.enumerated() {
             await coordinator?.waitIfPaused()
             let spacedCommand = actionCommand.withIssuedAt(Self.now(advancedByMilliseconds: Double(index) * 40))
@@ -339,6 +440,14 @@ public struct LocalAppTaskLiveRunner: Sendable {
             }
 
             guard trace.executed || trace.decision == ActionEngineCommandDecision.projectedDryRun else {
+                stepTracker.fail(
+                    .execute,
+                    summary: "Guarded local-app action was denied",
+                    metadata: [
+                        "actionDeniedReason": decisionReason(trace.decision),
+                        "commandID": trace.command.id
+                    ]
+                )
                 let observationStartedAt = Self.uptimeMilliseconds()
                 await coordinator?.recordToolEvent(
                     capability: .perception,
@@ -357,6 +466,7 @@ public struct LocalAppTaskLiveRunner: Sendable {
                     Self.uptimeMilliseconds() - verificationStartedAt
                 )
                 await coordinator?.fail(reason: "Local app task action was denied")
+                let progress = stepTracker.snapshot()
                 return LocalAppTaskLiveRunResult(
                     command: command,
                     traceID: traceID,
@@ -366,6 +476,7 @@ public struct LocalAppTaskLiveRunner: Sendable {
                     finalPlan: finalPlan,
                     observation: finalObservation,
                     actionTraces: actionTraces,
+                    workflowProgress: progress,
                     metadata: runMetadata.merging([
                         "reason": "actionDenied",
                         "actionDeniedReason": decisionReason(trace.decision),
@@ -373,16 +484,28 @@ public struct LocalAppTaskLiveRunner: Sendable {
                         "actionDeniedFocusGuardPassed": String(trace.focusGuardPassed),
                         "latency.keyboardActionMS": Self.formatLatency(keyboardActionMS),
                         "latency.totalMS": Self.formatLatency(Self.uptimeMilliseconds() - runStartedAt)
-                    ]) { current, _ in current }
+                    ], uniquingKeysWith: { current, _ in current }).merging(
+                        Self.workflowProgressMetadata(progress),
+                        uniquingKeysWith: { current, _ in current }
+                    )
                 )
             }
         }
         runMetadata["latency.keyboardActionMS"] = Self.formatLatency(keyboardActionMS)
+        stepTracker.complete(
+            .execute,
+            summary: "Guarded local-app actions completed",
+            metadata: [
+                "executedCommandCount": String(actionTraces.filter(\.executed).count),
+                "projectedCommandCount": String(actionTraces.filter { $0.decision == .projectedDryRun }.count)
+            ]
+        )
 
         await coordinator?.waitIfPaused()
         try? await Task.sleep(nanoseconds: 700_000_000)
         await coordinator?.waitIfPaused()
         let observationStartedAt = Self.uptimeMilliseconds()
+        stepTracker.start(.verify, summary: "Observing target app for result verification")
         await coordinator?.recordToolEvent(
             capability: .perception,
             decision: permissionPolicy.decision(for: .perception),
@@ -405,10 +528,21 @@ public struct LocalAppTaskLiveRunner: Sendable {
         }
         let status = status(for: finalPlan.terminalState)
         if status == .completed {
+            stepTracker.complete(
+                .verify,
+                summary: "Local app task result verified",
+                metadata: ["terminalState": finalPlan.terminalState.rawValue]
+            )
             await coordinator?.complete(reason: "Local app task completed")
         } else {
+            stepTracker.block(
+                .verify,
+                summary: "Local app task needs user review after verification",
+                metadata: ["terminalState": finalPlan.terminalState.rawValue]
+            )
             await coordinator?.pause(reason: "Local app task needs user review")
         }
+        let progress = stepTracker.snapshot()
         return LocalAppTaskLiveRunResult(
             command: command,
             traceID: traceID,
@@ -418,10 +552,14 @@ public struct LocalAppTaskLiveRunner: Sendable {
             finalPlan: finalPlan,
             observation: finalObservation,
             actionTraces: actionTraces,
+            workflowProgress: progress,
             metadata: runMetadata.merging([
                 "executedCommandCount": String(actionTraces.filter(\.executed).count),
                 "projectedCommandCount": String(actionTraces.filter { $0.decision == .projectedDryRun }.count)
-            ]) { current, _ in current }
+            ], uniquingKeysWith: { current, _ in current }).merging(
+                Self.workflowProgressMetadata(progress),
+                uniquingKeysWith: { current, _ in current }
+            )
         )
     }
 
@@ -451,6 +589,7 @@ public struct LocalAppTaskLiveRunner: Sendable {
         command: String,
         traceID: String,
         resolution: LocalAppTaskCatalogResolution,
+        workflowProgress: LocalAppTaskWorkflowProgress,
         metadata: [String: String]
     ) -> LocalAppTaskLiveRunResult {
         let status: LocalAppTaskLiveRunStatus
@@ -470,6 +609,7 @@ public struct LocalAppTaskLiveRunner: Sendable {
             traceID: traceID,
             status: status,
             resolution: resolution,
+            workflowProgress: workflowProgress,
             metadata: metadata
         )
     }
@@ -605,6 +745,16 @@ public struct LocalAppTaskLiveRunner: Sendable {
 
     private static func formatLatency(_ milliseconds: Double) -> String {
         String(format: "%.3f", max(0, milliseconds))
+    }
+
+    private static func workflowProgressMetadata(
+        _ progress: LocalAppTaskWorkflowProgress
+    ) -> [String: String] {
+        Dictionary(
+            uniqueKeysWithValues: progress.stages.map { state in
+                ("workflow.\(state.stage.rawValue).status", state.status.rawValue)
+            }
+        )
     }
 }
 

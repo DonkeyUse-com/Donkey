@@ -13,7 +13,8 @@ struct AppHarnessTurnRouterTests {
             traceID: "trace-chat"
         )
 
-        #expect(result.outcome.kind == .conversation)
+        #expect(result.outcome.decision.kind == .respond)
+        #expect(result.outcome.decision.traceID == "trace-chat")
         #expect(result.outcome.resolution == nil)
         #expect(result.outcome.assistantResponse?.contains("local app task") == true)
     }
@@ -27,7 +28,8 @@ struct AppHarnessTurnRouterTests {
             traceID: "trace-action"
         )
 
-        #expect(result.outcome.kind == .actionableIntent)
+        #expect(result.outcome.decision.kind == .runLocalTask)
+        #expect(result.outcome.decision.taskIntentID == result.outcome.resolution?.intent?.intentID)
         #expect(result.outcome.resolution?.status == .resolved)
         #expect(result.outcome.resolution?.intent?.normalizedEntities["city"] == "San Francisco")
     }
@@ -42,7 +44,7 @@ struct AppHarnessTurnRouterTests {
         )
 
         #expect(result.contextPacket.currentTurn.source == .voiceTranscript)
-        #expect(result.outcome.kind == .actionableIntent)
+        #expect(result.outcome.decision.kind == .runLocalTask)
         #expect(result.outcome.resolution?.status == .resolved)
         #expect(result.outcome.resolution?.intent?.normalizedEntities["city"] == "San Francisco")
     }
@@ -56,7 +58,8 @@ struct AppHarnessTurnRouterTests {
             traceID: "trace-clarify"
         )
 
-        #expect(result.outcome.kind == .clarification)
+        #expect(result.outcome.decision.kind == .askClarification)
+        #expect(result.outcome.decision.missingDetail == "city")
         #expect(result.outcome.missingDetail == "city")
         #expect(result.outcome.assistantResponse == "Which city should I use?")
     }
@@ -132,6 +135,53 @@ struct AppHarnessTurnRouterTests {
         #expect(result.contextPacket.promptText.contains("[redacted-email]"))
         #expect(result.contextPacket.promptText.contains("[redacted-secret]"))
         #expect(result.contextPacket.redactionCount == 3)
+        #expect(result.contextPacket.compactionRecords.contains {
+            $0.itemKind == .recentEvent && $0.originalCount == 3 && $0.includedCount == 2
+        })
+    }
+
+    @Test
+    func contextCompactionDropsTransientCorrectionsBeforeDurableEvents() {
+        let limits = AppHarnessContextPacketLimits(
+            maxRecentEvents: 2,
+            maxAssets: 0,
+            maxPromptCharacters: 600
+        )
+        let result = router(limits: limits).route(
+            request: AppHarnessTurnRequest(
+                turn: AppHarnessTurn(text: "thanks", source: .typedPrompt),
+                recentEvents: [
+                    PointerPromptTaskEvent(
+                        id: "event-1",
+                        taskID: "task-1",
+                        role: .assistant,
+                        text: "Retry nudge: invalid output, try again.",
+                        sequence: 1
+                    ),
+                    PointerPromptTaskEvent(
+                        id: "event-2",
+                        taskID: "task-1",
+                        role: .user,
+                        text: "show me the weather for SF",
+                        sequence: 2
+                    ),
+                    PointerPromptTaskEvent(
+                        id: "event-3",
+                        taskID: "task-1",
+                        role: .assistant,
+                        text: "Opening Weather for San Francisco.",
+                        sequence: 3
+                    )
+                ]
+            ),
+            traceID: "trace-typed-compaction"
+        )
+
+        #expect(result.contextPacket.recentEvents.map(\.sequence) == [2, 3])
+        #expect(result.contextPacket.metadata["events.droppedTransientCorrectionCount"] == "1")
+        #expect(result.contextPacket.compactionRecords.contains {
+            $0.itemKind == .transientCorrection && $0.droppedCount == 1
+        })
     }
 
     private func router(

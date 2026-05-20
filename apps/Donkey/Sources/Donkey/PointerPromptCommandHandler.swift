@@ -6,7 +6,7 @@ import Foundation
 struct PointerPromptCommandHandlingResult: Equatable, Sendable {
     var status: LocalAppTaskLiveRunStatus
     var threadStatus: PointerPromptTaskStatus
-    var routeKind: AppHarnessTurnRouteKind
+    var decision: AppHarnessDecision
     var summary: String
     var taskLabel: String?
     var traceID: String
@@ -82,23 +82,23 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
             request: Self.harnessRequest(command: command, context: context),
             traceID: traceID
         )
-        switch routing.outcome.kind {
-        case .conversation, .assistantResponse:
+        switch routing.outcome.decision.kind {
+        case .respond:
             return PointerPromptCommandHandlingResult(
                 status: .completed,
                 threadStatus: .chatting,
-                routeKind: routing.outcome.kind,
+                decision: routing.outcome.decision,
                 summary: routing.outcome.assistantResponse ?? "Tell me what local app task you want to work on.",
                 taskLabel: nil,
                 traceID: traceID,
                 metadata: Self.contextPacketMetadata(routing.contextPacket, outcome: routing.outcome),
                 documentReviewRequest: nil
             )
-        case .clarification:
+        case .askClarification:
             return PointerPromptCommandHandlingResult(
                 status: .needsConfirmation,
                 threadStatus: .waitingForClarification,
-                routeKind: routing.outcome.kind,
+                decision: routing.outcome.decision,
                 summary: routing.outcome.assistantResponse ?? "What detail should I use?",
                 taskLabel: nil,
                 traceID: traceID,
@@ -109,14 +109,14 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
             return PointerPromptCommandHandlingResult(
                 status: .completed,
                 threadStatus: .chatting,
-                routeKind: routing.outcome.kind,
+                decision: routing.outcome.decision,
                 summary: "",
                 taskLabel: nil,
                 traceID: traceID,
                 metadata: Self.contextPacketMetadata(routing.contextPacket, outcome: routing.outcome),
                 documentReviewRequest: nil
             )
-        case .actionableIntent, .review, .execution, .failure:
+        case .openReview, .runLocalTask:
             break
         }
 
@@ -151,7 +151,7 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
             traceID: traceID,
             resolution: resolution,
             metadata: [
-                "appHarness.route": routing.outcome.kind.rawValue,
+                "appHarness.decision": routing.outcome.decision.kind.rawValue,
                 "appHarness.context.promptCharacters": String(routing.contextPacket.promptText.count),
                 "appHarness.context.redactionCount": String(routing.contextPacket.redactionCount),
                 "intentParser": "localModel",
@@ -185,7 +185,7 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
         let handlingResult = PointerPromptCommandHandlingResult(
             status: result.status,
             threadStatus: threadStatus(for: result),
-            routeKind: routing.outcome.kind,
+            decision: routing.outcome.decision,
             summary: summary(for: result),
             taskLabel: taskLabel(for: result),
             traceID: traceID,
@@ -390,7 +390,8 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
         outcome: AppHarnessRoutingOutcome
     ) -> [String: String] {
         [
-            "appHarness.route": outcome.kind.rawValue,
+            "appHarness.decision": outcome.decision.kind.rawValue,
+            "appHarness.decision.traceID": outcome.decision.traceID,
             "appHarness.missingDetail": outcome.missingDetail ?? "",
             "appHarness.context.traceID": packet.traceID,
             "appHarness.context.eventCount": String(packet.recentEvents.count),

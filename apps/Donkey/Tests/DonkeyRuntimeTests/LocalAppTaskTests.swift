@@ -383,6 +383,8 @@ struct LocalAppTaskTests {
         #expect(result.documentFormFillPlan?.status == .readyForReview)
         #expect(result.documentFormFillPlan?.proposals.first?.proposedValue == "Grace Hopper")
         #expect(result.metadata["reason"] == "reviewOnlyTask")
+        #expect(result.workflowProgress.state(for: .approval)?.status == .waiting)
+        #expect(result.workflowProgress.state(for: .execute)?.status == .skipped)
     }
 
     @Test @MainActor
@@ -428,6 +430,13 @@ struct LocalAppTaskTests {
         #expect(await backend.executedKeys() == ["Command+F", "San Francisco", "Return", "Return"])
         #expect(controller.launchCount == 1)
         #expect(controller.observeCount == 1)
+        #expect(result.workflowProgress.state(for: .parseIntent)?.status == .completed)
+        #expect(result.workflowProgress.state(for: .resolveApp)?.status == .completed)
+        #expect(result.workflowProgress.state(for: .dryRun)?.status == .completed)
+        #expect(result.workflowProgress.state(for: .approval)?.status == .skipped)
+        #expect(result.workflowProgress.state(for: .execute)?.status == .completed)
+        #expect(result.workflowProgress.state(for: .verify)?.status == .completed)
+        #expect(result.metadata["workflow.verify.status"] == "completed")
     }
 
     @Test @MainActor

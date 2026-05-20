@@ -55,20 +55,20 @@ public struct AppHarnessTurnRequest: Equatable, Sendable {
 }
 
 public struct AppHarnessRoutingOutcome: Equatable, Sendable {
-    public var kind: AppHarnessTurnRouteKind
+    public var decision: AppHarnessDecision
     public var assistantResponse: String?
     public var missingDetail: String?
     public var resolution: LocalAppTaskCatalogResolution?
     public var metadata: [String: String]
 
     public init(
-        kind: AppHarnessTurnRouteKind,
+        decision: AppHarnessDecision,
         assistantResponse: String? = nil,
         missingDetail: String? = nil,
         resolution: LocalAppTaskCatalogResolution? = nil,
         metadata: [String: String] = [:]
     ) {
-        self.kind = kind
+        self.decision = decision
         self.assistantResponse = assistantResponse
         self.missingDetail = missingDetail
         self.resolution = resolution
@@ -99,45 +99,111 @@ public struct AppHarnessContextPacketBuilder: Sendable {
         traceID: String
     ) -> AppHarnessContextPacket {
         var redactionCount = 0
+        var compactionRecords: [AppHarnessContextCompactionRecord] = []
         var turn = request.turn
         let redactedTurn = Self.redacted(turn.text)
         redactionCount += redactedTurn.count
-        turn.text = Self.truncated(redactedTurn.text, maxLength: limits.maxPromptCharacters)
+        let boundedTurn = Self.bounded(redactedTurn.text, maxLength: limits.maxPromptCharacters)
+        turn.text = boundedTurn.text
+        compactionRecords.append(
+            AppHarnessContextCompactionRecord(
+                itemKind: .currentTurn,
+                originalCount: request.turn.text.isEmpty ? 0 : 1,
+                includedCount: turn.text.isEmpty ? 0 : 1,
+                truncatedCount: boundedTurn.wasTruncated ? 1 : 0,
+                metadata: ["traceID": traceID]
+            )
+        )
 
-        let events = request.recentEvents
-            .suffix(limits.maxRecentEvents)
-            .map { event in
-                let redacted = Self.redacted(event.text)
-                redactionCount += redacted.count
-                return AppHarnessContextEvent(
+        let preparedEvents = request.recentEvents.map { event -> PreparedHarnessContextEvent in
+            let redacted = Self.redacted(event.text)
+            redactionCount += redacted.count
+            let bounded = Self.bounded(redacted.text, maxLength: limits.maxEventTextCharacters)
+            return PreparedHarnessContextEvent(
+                event: AppHarnessContextEvent(
                     role: event.role,
-                    text: Self.truncated(redacted.text, maxLength: limits.maxEventTextCharacters),
+                    text: bounded.text,
                     sequence: event.sequence
-                )
-            }
+                ),
+                sourceID: event.id,
+                isTransientCorrection: Self.isTransientCorrection(event),
+                wasTruncated: bounded.wasTruncated
+            )
+        }
+        let eventCompaction = Self.compactEvents(
+            preparedEvents,
+            limit: limits.maxRecentEvents
+        )
+        let events = eventCompaction.events
+        compactionRecords.append(contentsOf: eventCompaction.records)
 
         let assets = request.assets
             .suffix(limits.maxAssets)
-            .map { asset in
-                AppHarnessContextAsset(
-                    displayName: Self.truncated(asset.displayName, maxLength: limits.maxAssetNameCharacters),
+            .map { asset -> AppHarnessContextAsset in
+                let boundedName = Self.bounded(asset.displayName, maxLength: limits.maxAssetNameCharacters)
+                return AppHarnessContextAsset(
+                    displayName: boundedName.text,
                     contentType: asset.contentType,
                     byteCount: asset.byteCount
                 )
             }
+        compactionRecords.append(
+            AppHarnessContextCompactionRecord(
+                itemKind: .asset,
+                originalCount: request.assets.count,
+                includedCount: assets.count,
+                droppedCount: max(0, request.assets.count - assets.count),
+                truncatedCount: request.assets.suffix(limits.maxAssets).filter {
+                    $0.displayName.count > limits.maxAssetNameCharacters
+                }.count
+            )
+        )
 
         let memory = request.memory
             .prefix(limits.maxMemoryItems)
             .map { item -> String in
                 let redacted = Self.redacted(item)
                 redactionCount += redacted.count
-                return Self.truncated(redacted.text, maxLength: limits.maxMemoryTextCharacters)
+                return Self.bounded(redacted.text, maxLength: limits.maxMemoryTextCharacters).text
             }
+        compactionRecords.append(
+            AppHarnessContextCompactionRecord(
+                itemKind: .memory,
+                originalCount: request.memory.count,
+                includedCount: memory.count,
+                droppedCount: max(0, request.memory.count - memory.count),
+                truncatedCount: request.memory.prefix(limits.maxMemoryItems).filter {
+                    Self.redacted($0).text.count > limits.maxMemoryTextCharacters
+                }.count
+            )
+        )
 
         let runtimeCapabilities = catalog.taskDefinitions
             .map { "\($0.taskType):\($0.targetApp.appName)" }
             .sorted()
-        let promptText = Self.truncated(
+        compactionRecords.append(
+            AppHarnessContextCompactionRecord(
+                itemKind: .runtimeCapability,
+                originalCount: catalog.taskDefinitions.count,
+                includedCount: runtimeCapabilities.count
+            )
+        )
+        compactionRecords.append(
+            AppHarnessContextCompactionRecord(
+                itemKind: .targetState,
+                originalCount: request.targetState.count,
+                includedCount: request.targetState.count
+            )
+        )
+        compactionRecords.append(
+            AppHarnessContextCompactionRecord(
+                itemKind: .policy,
+                originalCount: request.policy.count,
+                includedCount: request.policy.count
+            )
+        )
+
+        let promptBounds = Self.bounded(
             Self.promptText(
                 turn: turn,
                 events: events,
@@ -149,6 +215,7 @@ public struct AppHarnessContextPacketBuilder: Sendable {
             ),
             maxLength: limits.maxPromptCharacters
         )
+        let promptText = promptBounds.text
 
         return AppHarnessContextPacket(
             traceID: traceID,
@@ -161,10 +228,16 @@ public struct AppHarnessContextPacketBuilder: Sendable {
             policy: request.policy,
             promptText: promptText,
             redactionCount: redactionCount,
+            compactionRecords: compactionRecords,
             metadata: [
                 "bounds.maxRecentEvents": String(limits.maxRecentEvents),
                 "bounds.maxAssets": String(limits.maxAssets),
                 "bounds.maxPromptCharacters": String(limits.maxPromptCharacters),
+                "compaction.recordCount": String(compactionRecords.count),
+                "compaction.promptTruncated": String(promptBounds.wasTruncated),
+                "events.originalCount": String(request.recentEvents.count),
+                "events.droppedCount": String(eventCompaction.droppedCount),
+                "events.droppedTransientCorrectionCount": String(eventCompaction.droppedTransientCorrectionCount),
                 "events.includedCount": String(events.count),
                 "assets.includedCount": String(assets.count),
                 "memory.includedCount": String(memory.count),
@@ -239,12 +312,123 @@ public struct AppHarnessContextPacketBuilder: Sendable {
         return (redacted, count)
     }
 
-    private static func truncated(_ text: String, maxLength: Int) -> String {
-        guard text.count > maxLength else { return text }
+    private static func bounded(_ text: String, maxLength: Int) -> (text: String, wasTruncated: Bool) {
+        guard text.count > maxLength else { return (text, false) }
 
         let endIndex = text.index(text.startIndex, offsetBy: maxLength)
-        return String(text[..<endIndex]).trimmingCharacters(in: .whitespacesAndNewlines) + "..."
+        return (String(text[..<endIndex]).trimmingCharacters(in: .whitespacesAndNewlines) + "...", true)
     }
+
+    private static func compactEvents(
+        _ preparedEvents: [PreparedHarnessContextEvent],
+        limit: Int
+    ) -> HarnessEventCompactionResult {
+        guard limit > 0 else {
+            let transientCount = preparedEvents.filter(\.isTransientCorrection).count
+            return HarnessEventCompactionResult(
+                events: [],
+                records: [
+                    AppHarnessContextCompactionRecord(
+                        itemKind: .recentEvent,
+                        originalCount: preparedEvents.count,
+                        includedCount: 0,
+                        droppedCount: preparedEvents.count,
+                        truncatedCount: 0
+                    ),
+                    AppHarnessContextCompactionRecord(
+                        itemKind: .transientCorrection,
+                        originalCount: transientCount,
+                        includedCount: 0,
+                        droppedCount: transientCount,
+                        truncatedCount: 0
+                    )
+                ],
+                droppedCount: preparedEvents.count,
+                droppedTransientCorrectionCount: transientCount
+            )
+        }
+
+        let selected: [PreparedHarnessContextEvent]
+        if preparedEvents.count <= limit {
+            selected = preparedEvents
+        } else {
+            let nonTransient = preparedEvents.filter { !$0.isTransientCorrection }
+            var chosen = Array(nonTransient.suffix(limit))
+            if chosen.count < limit {
+                let chosenIDs = Set(chosen.map(\.sourceID))
+                let fill = preparedEvents
+                    .filter { $0.isTransientCorrection && !chosenIDs.contains($0.sourceID) }
+                    .suffix(limit - chosen.count)
+                chosen.append(contentsOf: fill)
+            }
+            selected = chosen.sorted { lhs, rhs in
+                if lhs.event.sequence == rhs.event.sequence {
+                    return lhs.sourceID < rhs.sourceID
+                }
+                return lhs.event.sequence < rhs.event.sequence
+            }
+        }
+
+        let selectedIDs = Set(selected.map(\.sourceID))
+        let dropped = preparedEvents.filter { !selectedIDs.contains($0.sourceID) }
+        let transientOriginal = preparedEvents.filter(\.isTransientCorrection).count
+        let transientIncluded = selected.filter(\.isTransientCorrection).count
+        let transientDropped = dropped.filter(\.isTransientCorrection).count
+        let recentTruncated = selected.filter { !$0.isTransientCorrection && $0.wasTruncated }.count
+        let transientTruncated = selected.filter { $0.isTransientCorrection && $0.wasTruncated }.count
+
+        return HarnessEventCompactionResult(
+            events: selected.map(\.event),
+            records: [
+                AppHarnessContextCompactionRecord(
+                    itemKind: .recentEvent,
+                    originalCount: preparedEvents.count,
+                    includedCount: selected.count,
+                    droppedCount: dropped.count,
+                    truncatedCount: recentTruncated,
+                    metadata: ["strategy": "dropTransientCorrectionsFirst"]
+                ),
+                AppHarnessContextCompactionRecord(
+                    itemKind: .transientCorrection,
+                    originalCount: transientOriginal,
+                    includedCount: transientIncluded,
+                    droppedCount: transientDropped,
+                    truncatedCount: transientTruncated,
+                    metadata: ["strategy": "dropBeforeDurableEvents"]
+                )
+            ],
+            droppedCount: dropped.count,
+            droppedTransientCorrectionCount: transientDropped
+        )
+    }
+
+    private static func isTransientCorrection(_ event: PointerPromptTaskEvent) -> Bool {
+        let normalized = LocalAppTaskIntentParser.normalizedPhrase(event.text)
+        guard event.role == .assistant || event.role == .system else { return false }
+
+        return normalized.contains("retry")
+            || normalized.contains("try again")
+            || normalized.contains("invalid format")
+            || normalized.contains("invalid output")
+            || normalized.contains("unknown tool")
+            || normalized.contains("missing prerequisite")
+            || normalized.contains("step nudge")
+            || normalized.contains("retry nudge")
+    }
+}
+
+private struct PreparedHarnessContextEvent: Equatable, Sendable {
+    var event: AppHarnessContextEvent
+    var sourceID: String
+    var isTransientCorrection: Bool
+    var wasTruncated: Bool
+}
+
+private struct HarnessEventCompactionResult: Equatable, Sendable {
+    var events: [AppHarnessContextEvent]
+    var records: [AppHarnessContextCompactionRecord]
+    var droppedCount: Int
+    var droppedTransientCorrectionCount: Int
 }
 
 public struct AppHarnessTurnRouter: Sendable {
@@ -272,7 +456,14 @@ public struct AppHarnessTurnRouter: Sendable {
         guard !trimmedText.isEmpty else {
             return AppHarnessRoutingResult(
                 contextPacket: packet,
-                outcome: AppHarnessRoutingOutcome(kind: .noOp)
+                outcome: AppHarnessRoutingOutcome(
+                    decision: AppHarnessDecision(
+                        kind: .noOp,
+                        traceID: traceID,
+                        metadata: ["router": "emptyTurn"]
+                    ),
+                    metadata: ["router": "emptyTurn"]
+                )
             )
         }
 
@@ -282,18 +473,31 @@ public struct AppHarnessTurnRouter: Sendable {
             return AppHarnessRoutingResult(
                 contextPacket: packet,
                 outcome: AppHarnessRoutingOutcome(
-                    kind: .actionableIntent,
+                    decision: decision(
+                        kind: .runLocalTask,
+                        traceID: traceID,
+                        resolution: deterministicResolution,
+                        metadata: ["router": "deterministicCatalog"]
+                    ),
                     resolution: deterministicResolution,
                     metadata: ["router": "deterministicCatalog"]
                 )
             )
         case .needsConfirmation:
             let missingDetail = deterministicResolution.metadata["reason"] ?? "detail"
+            let response = clarificationPrompt(for: missingDetail, resolution: deterministicResolution)
             return AppHarnessRoutingResult(
                 contextPacket: packet,
                 outcome: AppHarnessRoutingOutcome(
-                    kind: .clarification,
-                    assistantResponse: clarificationPrompt(for: missingDetail, resolution: deterministicResolution),
+                    decision: decision(
+                        kind: .askClarification,
+                        traceID: traceID,
+                        message: response,
+                        missingDetail: missingDetail,
+                        resolution: deterministicResolution,
+                        metadata: ["router": "deterministicCatalog"]
+                    ),
+                    assistantResponse: response,
                     missingDetail: missingDetail,
                     resolution: deterministicResolution,
                     metadata: ["router": "deterministicCatalog"]
@@ -303,7 +507,12 @@ public struct AppHarnessTurnRouter: Sendable {
             return AppHarnessRoutingResult(
                 contextPacket: packet,
                 outcome: AppHarnessRoutingOutcome(
-                    kind: .actionableIntent,
+                    decision: decision(
+                        kind: .runLocalTask,
+                        traceID: traceID,
+                        resolution: deterministicResolution,
+                        metadata: ["router": "deterministicCatalog"]
+                    ),
                     resolution: deterministicResolution,
                     metadata: ["router": "deterministicCatalog"]
                 )
@@ -316,7 +525,12 @@ public struct AppHarnessTurnRouter: Sendable {
             return AppHarnessRoutingResult(
                 contextPacket: packet,
                 outcome: AppHarnessRoutingOutcome(
-                    kind: .actionableIntent,
+                    decision: decision(
+                        kind: .runLocalTask,
+                        traceID: traceID,
+                        resolution: deterministicResolution,
+                        metadata: ["router": "followUpActionContext"]
+                    ),
                     resolution: deterministicResolution,
                     metadata: ["router": "followUpActionContext"]
                 )
@@ -324,25 +538,60 @@ public struct AppHarnessTurnRouter: Sendable {
         }
 
         if Self.isConversational(trimmedText) {
+            let response = conversationResponse(for: trimmedText)
             return AppHarnessRoutingResult(
                 contextPacket: packet,
                 outcome: AppHarnessRoutingOutcome(
-                    kind: .conversation,
-                    assistantResponse: conversationResponse(for: trimmedText),
+                    decision: decision(
+                        kind: .respond,
+                        traceID: traceID,
+                        message: response,
+                        metadata: ["router": "conversationRules"]
+                    ),
+                    assistantResponse: response,
                     metadata: ["router": "conversationRules"]
                 )
             )
         }
 
+        let response = "What would you like Donkey to do?"
         return AppHarnessRoutingResult(
             contextPacket: packet,
             outcome: AppHarnessRoutingOutcome(
-                kind: .clarification,
-                assistantResponse: "What would you like Donkey to do?",
+                decision: decision(
+                    kind: .askClarification,
+                    traceID: traceID,
+                    message: response,
+                    missingDetail: "actionable request",
+                    resolution: deterministicResolution,
+                    metadata: ["router": "unsupportedClarification"]
+                ),
+                assistantResponse: response,
                 missingDetail: "actionable request",
                 resolution: deterministicResolution,
                 metadata: ["router": "unsupportedClarification"]
             )
+        )
+    }
+
+    private func decision(
+        kind: AppHarnessDecisionKind,
+        traceID: String,
+        message: String? = nil,
+        missingDetail: String? = nil,
+        resolution: LocalAppTaskCatalogResolution? = nil,
+        metadata: [String: String] = [:]
+    ) -> AppHarnessDecision {
+        AppHarnessDecision(
+            kind: kind,
+            message: message,
+            missingDetail: missingDetail,
+            taskIntentID: resolution?.intent?.intentID,
+            traceID: traceID,
+            metadata: metadata.merging([
+                "structuredDecision": "true",
+                "resolution.status": resolution?.status.rawValue ?? "none"
+            ]) { current, _ in current }
         )
     }
 

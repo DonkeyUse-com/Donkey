@@ -422,7 +422,9 @@ public struct LocalModelTaskIntentResolver: Sendable {
 
     public init(
         catalog: LocalAppTaskCatalog,
-        adapter: any TaskIntentParsingAdapter = ProcessBackedLocalLLMTaskIntentAdapter()
+        adapter: any TaskIntentParsingAdapter = PriorityQueuedTaskIntentParsingAdapter(
+            base: ProcessBackedLocalLLMTaskIntentAdapter()
+        )
     ) {
         self.catalog = catalog
         self.adapter = adapter

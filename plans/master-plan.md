@@ -30,3 +30,6 @@ No active implementation tasks.
 - Runtime, input, and latency claims should be tied to verifiable local traces.
 - Task threads are conversations first; action execution is a routed outcome of
   the agent harness, not the default meaning of every prompt turn.
+- Harness routing decisions, context compaction, local-app workflow progress,
+  and shared local-model work scheduling are typed runtime state, not implicit
+  prompt text.

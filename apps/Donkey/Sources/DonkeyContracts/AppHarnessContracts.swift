@@ -7,15 +7,73 @@ public enum AppHarnessTurnSource: String, Codable, Equatable, Sendable {
     case assetEvent
 }
 
-public enum AppHarnessTurnRouteKind: String, Codable, Equatable, Sendable {
-    case conversation
-    case clarification
-    case actionableIntent
-    case review
-    case execution
-    case failure
-    case assistantResponse
+public enum AppHarnessDecisionKind: String, Codable, Equatable, Sendable {
+    case respond
+    case askClarification
+    case openReview
+    case runLocalTask
     case noOp
+}
+
+public struct AppHarnessDecision: Codable, Equatable, Sendable {
+    public var kind: AppHarnessDecisionKind
+    public var message: String?
+    public var missingDetail: String?
+    public var taskIntentID: String?
+    public var traceID: String
+    public var metadata: [String: String]
+
+    public init(
+        kind: AppHarnessDecisionKind,
+        message: String? = nil,
+        missingDetail: String? = nil,
+        taskIntentID: String? = nil,
+        traceID: String,
+        metadata: [String: String] = [:]
+    ) {
+        self.kind = kind
+        self.message = message
+        self.missingDetail = missingDetail
+        self.taskIntentID = taskIntentID
+        self.traceID = traceID
+        self.metadata = metadata
+    }
+}
+
+public enum AppHarnessContextItemKind: String, Codable, Equatable, Sendable {
+    case currentTurn
+    case recentEvent
+    case transientCorrection
+    case asset
+    case memory
+    case runtimeCapability
+    case targetState
+    case policy
+}
+
+public struct AppHarnessContextCompactionRecord: Codable, Equatable, Sendable {
+    public var itemKind: AppHarnessContextItemKind
+    public var originalCount: Int
+    public var includedCount: Int
+    public var droppedCount: Int
+    public var truncatedCount: Int
+    public var metadata: [String: String]
+
+    public init(
+        itemKind: AppHarnessContextItemKind,
+        originalCount: Int,
+        includedCount: Int,
+        droppedCount: Int = 0,
+        truncatedCount: Int = 0,
+        metadata: [String: String] = [:]
+    ) {
+        self.itemKind = itemKind
+        self.originalCount = max(0, originalCount)
+        self.includedCount = max(0, includedCount)
+        self.droppedCount = max(0, droppedCount)
+        self.truncatedCount = max(0, truncatedCount)
+        self.metadata = metadata
+    }
 }
 
 public struct AppHarnessTurn: Codable, Equatable, Sendable {
@@ -78,6 +136,7 @@ public struct AppHarnessContextPacket: Codable, Equatable, Sendable {
     public var policy: [String: String]
     public var promptText: String
     public var redactionCount: Int
+    public var compactionRecords: [AppHarnessContextCompactionRecord]
     public var metadata: [String: String]
 
     public init(
@@ -91,6 +150,7 @@ public struct AppHarnessContextPacket: Codable, Equatable, Sendable {
         policy: [String: String] = [:],
         promptText: String,
         redactionCount: Int = 0,
+        compactionRecords: [AppHarnessContextCompactionRecord] = [],
         metadata: [String: String] = [:]
     ) {
         self.traceID = traceID
@@ -103,6 +163,7 @@ public struct AppHarnessContextPacket: Codable, Equatable, Sendable {
         self.policy = policy
         self.promptText = promptText
         self.redactionCount = redactionCount
+        self.compactionRecords = compactionRecords
         self.metadata = metadata
     }
 }

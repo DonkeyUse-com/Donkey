@@ -47,6 +47,12 @@ inside the thread. The user should not need to know whether a turn was answered
 by a chat response, a local model classifier, deterministic parsing, or a
 guarded runtime path.
 
+Routing outcomes carry a structured `AppHarnessDecision`. The decision names the
+next supported harness action:
+respond, ask for clarification, open review, run a local task, or no-op. This
+keeps model-assisted routing in a typed decision space instead of treating free
+text as an implicit action signal.
+
 ## Context Engineering
 
 The harness builds context deliberately for each job. It should never dump raw,
@@ -66,6 +72,12 @@ Remote-bound context must be redacted before provider calls. Local-only context
 can include richer app and observation facts, but should still stay bounded and
 inspectable. Memory retrieval should use target/scope filters, relevance
 thresholds, and prompt-character budgets before summaries are added.
+
+Context compaction is typed and inspectable. Current turns, policy, active
+target state, runtime capabilities, and trace identifiers are preserved first.
+Transient retry/correction events are dropped before durable thread events,
+and packet metadata records what was included, dropped, or truncated by item
+kind.
 
 ## Routing Outcomes
 
@@ -104,6 +116,11 @@ runtime safety model. Local-app work flows through typed contracts, catalog
 resolution, observation, dry-run projection, guardrails, and verification before
 or during live control.
 
+Local-app workflow progress is tracked outside prompt/context text. Each run
+records typed stage state for intent parsing, task/app resolution, observation,
+dry-run projection, approval/review, guarded execution, and verification. The
+model can be told about this state, but the runner owns it.
+
 Live input remains guarded. The action engine checks permission policy, target
 focus, rate limits, hold duration, and backend evidence before issuing input.
 The macOS keyboard and Accessibility backends are intentionally narrow. They
@@ -119,6 +136,10 @@ can classify actionable turns, transcribe voice, segment screenshots, or
 summarize UI observations. Provider-backed planners and memory proposals remain
 slow-path helpers and must fail without stopping local control on existing
 validated state.
+
+Local model work that shares the same runtime capacity should enter a priority
+worker. Interactive task-intent parsing runs at user-interactive priority and
+can cooperatively preempt lower-priority planner, memory, or replay jobs.
 
 ## State And Observability
 
