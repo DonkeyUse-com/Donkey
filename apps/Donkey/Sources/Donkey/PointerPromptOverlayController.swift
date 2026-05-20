@@ -34,6 +34,7 @@ final class PointerPromptOverlayController {
     private var statusCollapseWorkItem: DispatchWorkItem?
     private var statusExpansionWorkItem: DispatchWorkItem?
     private var statusHostShrinkWorkItem: DispatchWorkItem?
+    private var hasPrewarmedStatusPanelExpansion = false
     private var lastStatusViewSnapshot: StatusPanelViewSnapshot?
 
     init(
@@ -55,6 +56,7 @@ final class PointerPromptOverlayController {
 
         self.inputPanel = inputPanel
         self.statusPanel = statusPanel
+        prewarmStatusPanelExpansion()
         startActivationMonitoring()
         startAppDeactivationMonitoring()
         positionStatusPanel()
@@ -172,6 +174,7 @@ final class PointerPromptOverlayController {
         statusPanel?.close()
         statusPanel = nil
         statusHostingView = nil
+        hasPrewarmedStatusPanelExpansion = false
         lastStatusViewSnapshot = nil
     }
 
@@ -670,6 +673,25 @@ final class PointerPromptOverlayController {
 
     private func prepareStatusHostForExpansion() {
         isStatusHostExpanded = true
+        positionStatusPanel()
+        updateStatusPanelView()
+        flushStatusHostLayout()
+    }
+
+    private func prewarmStatusPanelExpansion() {
+        guard !hasPrewarmedStatusPanelExpansion,
+              statusPanel != nil else { return }
+        hasPrewarmedStatusPanelExpansion = true
+
+        // AppKit and SwiftUI layout must stay on the main actor, but doing this
+        // while the status panel is still hidden keeps first-hover setup work off
+        // the visible animation path.
+        isStatusHostExpanded = true
+        positionStatusPanel()
+        updateStatusPanelView()
+        flushStatusHostLayout()
+
+        isStatusHostExpanded = false
         positionStatusPanel()
         updateStatusPanelView()
         flushStatusHostLayout()
