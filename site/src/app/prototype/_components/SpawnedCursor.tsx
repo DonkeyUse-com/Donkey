@@ -34,6 +34,9 @@ export function SpawnedCursor({ spawn, spawnOrigin }: Props) {
   const isWorking = phase === 'working';
   const useOffsetPath = isEmerge || isTravel;
   const cursorBaseRotation = 50;
+  const labelLength = Math.max(Array.from(label).length, 1);
+  const labelTypingDurationMs = Math.min(1300, Math.max(280, labelLength * 38));
+  const labelWidth = `${labelLength + 1}ch`;
 
   return (
     <>
@@ -141,7 +144,7 @@ export function SpawnedCursor({ spawn, spawnOrigin }: Props) {
 
           return (
             <div
-              className="absolute whitespace-nowrap text-[10px] font-medium text-white px-2 py-0.5 rounded-md pointer-events-none animate-fadein-label"
+              className="absolute inline-flex items-center whitespace-nowrap text-[10px] font-medium text-white px-2 py-0.5 rounded-md pointer-events-none animate-fadein-label"
               style={{
                 background: color,
                 left: anchorX,
@@ -151,12 +154,41 @@ export function SpawnedCursor({ spawn, spawnOrigin }: Props) {
                 zIndex: 29,
               }}
             >
-              {label}
+              <span
+                className="inline-block overflow-hidden whitespace-nowrap"
+                style={{
+                  maxWidth: labelWidth,
+                  animation: `typeLabel-${id} ${labelTypingDurationMs}ms steps(${labelLength}, end) both`,
+                }}
+              >
+                {label}
+              </span>
+              <span
+                aria-hidden="true"
+                className="ml-px inline-block h-[10px] w-px bg-white"
+                style={{
+                  animation: [
+                    `labelCaretBlink-${id} 650ms steps(1, end) infinite`,
+                    `labelCaretHide-${id} 1ms linear ${labelTypingDurationMs + 700}ms forwards`,
+                  ].join(', '),
+                }}
+              />
             </div>
           );
         })()
       )}
       <style>{`
+        @keyframes typeLabel-${id} {
+          from { max-width: 0; }
+          to   { max-width: ${labelWidth}; }
+        }
+        @keyframes labelCaretBlink-${id} {
+          0%, 45% { opacity: 1; }
+          46%, 100% { opacity: 0; }
+        }
+        @keyframes labelCaretHide-${id} {
+          to { opacity: 0; }
+        }
         @keyframes fadeinLabel-${id} {
           from { opacity: 0; }
           to   { opacity: 1; }
