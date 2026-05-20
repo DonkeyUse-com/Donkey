@@ -27,6 +27,6 @@ Before changing `site/` UI, routes, API handlers, or data access patterns:
 - Over time, prefer shrinking active `plans/` by completing work and moving finished plans to `plans/done/`.
 - Update guides in `docs/guides/` only for major features or durable supported-behavior changes. Do not update guide docs for small styling tweaks, layout adjustments, copy changes, or implementation-only refactors.
 - When work completes a master-plan slice, update the master plan's supported/current-boundary language and next steps in the same change.
-- Keep guides explanatory. Describe supported behavior, boundaries, and engineering intent; do not duplicate code or maintain long file inventories.
-- Link to source paths only when a maintainer needs an entrypoint.
+- Keep guides explanatory. They should teach what the system is, how it works, and which boundaries matter; do not turn guides into feature inventories, implementation logs, duplicated code, or long file lists.
+- Keep guide source entrypoints short and readable. Do not write exhaustive file inventories. Prefer a small maintainer map by subsystem or one to seven high-signal paths, and link to a source path only when it gives someone a clear place to start.
 - Keep this file stable and lightweight.

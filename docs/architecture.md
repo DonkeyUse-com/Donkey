@@ -2,7 +2,7 @@
 
 This document is a compact map of Donkey's supported runtime architecture. The
 source of truth for behavior and boundaries remains
-[`docs/guides/minimal-run-coordinator.md`](guides/minimal-run-coordinator.md).
+[`docs/guides/app-harness.md`](guides/app-harness.md).
 
 ## App-Level Components
 
@@ -35,8 +35,8 @@ source of truth for behavior and boundaries remains
 |             |                                                        ^         |
 |             v                                                        |         |
 |  +----------------------+      +----------------------+              |         |
-|  | Task Intent Resolver |<---->| Per-Task Coordinator |--------------+         |
-|  | validated TaskIntent |      | lifecycle + policy   |                        |
+|  | App Harness          |<---->| Per-Task Coordinator |--------------+         |
+|  | context + routing    |      | lifecycle + policy   |                        |
 |  +----------+-----------+      +----------+-----------+                        |
 |             |                             |                                    |
 |             v                             v                                    |
@@ -74,8 +74,8 @@ execution stay behind narrow runtime boundaries.
 |             ^                                                        |         |
 |             |                                                        v         |
 |  +----------------------+      +----------------------+      +---------------+ |
-|  | Core Data            |<-----| Task Events          |<-----| Agent Run     | |
-|  | task/event/asset     |      | user/assistant/tool  |      | command path  | |
+|  | Core Data            |<-----| Task Events          |<-----| Harness Turn  | |
+|  | task/event/asset     |      | user/assistant/tool  |      | chat/action   | |
 |  +----------+-----------+      +----------------------+      +-------+-------+ |
 |             ^                                                        |         |
 |             |                                                        v         |
@@ -94,12 +94,12 @@ execution stay behind narrow runtime boundaries.
 |                         Fast Local Navigation Hot Path                         |
 +--------------------------------------------------------------------------------+
 |                                                                                |
-|  selected task command                                                         |
+|  actionable harness turn                                                       |
 |             |                                                                  |
 |             v                                                                  |
 |  +----------------------+      +----------------------+      +---------------+ |
-|  | Task Context         |----->| Local LLM Parser     |----->| TaskIntent    | |
-|  | command/events/assets|      | sidecar JSON schema  |      | validated     | |
+|  | Harness Context      |----->| Local LLM Parser     |----->| TaskIntent    | |
+|  | turn/events/assets   |      | sidecar JSON schema  |      | validated     | |
 |  +----------+-----------+      +----------------------+      +-------+-------+ |
 |             |                                                        |         |
 |             v                                                        v         |
@@ -135,9 +135,13 @@ execution stay behind narrow runtime boundaries.
 +--------------------------------------------------------------------------------+
 ```
 
-The hot path must keep working without a remote model call. Local model output is
-validated into typed contracts before execution, controller output is semantic,
-and the action engine is the only boundary allowed to issue guarded OS input.
+Every prompt turn enters the app harness as conversation first. The harness
+builds bounded context from thread history, assets, target state, memory,
+runtime capabilities, policy, and trace ids, then routes the turn to
+conversation, clarification, review, planning, or action execution. The hot path
+must keep working without a remote model call. Local model output is validated
+into typed contracts before execution, controller output is semantic, and the
+action engine is the only boundary allowed to issue guarded OS input.
 
 ## Local Stack And Model Sidecars
 
