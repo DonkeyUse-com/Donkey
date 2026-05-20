@@ -163,16 +163,6 @@ export function SpawnedCursor({ spawn, spawnOrigin }: Props) {
               >
                 {label}
               </span>
-              <span
-                aria-hidden="true"
-                className="ml-px inline-block h-[10px] w-px bg-white"
-                style={{
-                  animation: [
-                    `labelCaretBlink-${id} 650ms steps(1, end) infinite`,
-                    `labelCaretHide-${id} 1ms linear ${labelTypingDurationMs + 700}ms forwards`,
-                  ].join(', '),
-                }}
-              />
             </div>
           );
         })()
@@ -181,13 +171,6 @@ export function SpawnedCursor({ spawn, spawnOrigin }: Props) {
         @keyframes typeLabel-${id} {
           from { max-width: 0; }
           to   { max-width: ${labelWidth}; }
-        }
-        @keyframes labelCaretBlink-${id} {
-          0%, 45% { opacity: 1; }
-          46%, 100% { opacity: 0; }
-        }
-        @keyframes labelCaretHide-${id} {
-          to { opacity: 0; }
         }
         @keyframes fadeinLabel-${id} {
           from { opacity: 0; }
