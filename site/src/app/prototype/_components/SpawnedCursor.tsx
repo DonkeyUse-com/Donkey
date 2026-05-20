@@ -3,14 +3,14 @@ import type { Point, Spawn } from '@/app/prototype/_components/types';
 
 type Props = {
   spawn: Spawn;
-  notchAnchor: Point;
+  spawnOrigin: Point;
 };
 
-export function SpawnedCursor({ spawn, notchAnchor }: Props) {
+export function SpawnedCursor({ spawn, spawnOrigin }: Props) {
   const { id, color, label, target, phase } = spawn;
 
-  const sx = notchAnchor.x;
-  const sy = notchAnchor.y;
+  const sx = spawnOrigin.x;
+  const sy = spawnOrigin.y;
   const tx = target.x;
   const ty = target.y;
   const mx = (sx + tx) / 2;

@@ -1,157 +1,232 @@
-import { MousePointer2, Plus, Sparkles } from 'lucide-react';
+import { ArrowUp, Check, CircleAlert, Pause, Play } from 'lucide-react';
+import type { FormEvent } from 'react';
 
-import { ActivityBars } from '@/app/prototype/_components/ActivityBars';
 import { TaskArrow } from '@/app/prototype/_components/TaskArrow';
-import { ALL_TASK_IDS, TASKS } from '@/app/prototype/_components/tasks';
-import type { NotchState, SetHovering, TaskId } from '@/app/prototype/_components/types';
+import { TASKS } from '@/app/prototype/_components/tasks';
+import type { NotchState, TaskId } from '@/app/prototype/_components/types';
 
 type Props = {
   state: NotchState;
   activeTaskId: TaskId;
-  hovering: boolean;
-  setHovering: SetHovering;
-  runningTaskIds: TaskId[];
+  expanded: boolean;
+  setExpanded: (expanded: boolean) => void;
+  onRequestSpawn: (taskText: string) => void;
 };
 
-const NOTCH = {
-  restWidth: 110,
-  restHeight: 28,
-  cornerRadius: 14,
-  expandedWidth: 480,
-  expandedHeight: 280,
-  expandedRadius: 26,
+const METRICS = {
+  collapsedWidth: 248,
+  collapsedHeight: 32,
+  expandedWidth: 604,
+  expandedHeight: 312,
+  expandedContentHeight: 280,
+  collapsedCornerRadius: 14,
+  expandedCornerRadius: 26,
+  contentInset: 14,
 } as const;
 
-const EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
-const DURATION = '0.55s';
+type RowStatus = 'running' | 'completed' | 'needsAttention';
 
-export function Notch({ state, activeTaskId, hovering, setHovering, runningTaskIds }: Props) {
+type TaskRow = {
+  id: string;
+  title: string;
+  detail: string;
+  color: string;
+  status: RowStatus;
+};
+
+function taskRowsForState(state: NotchState, activeTaskId: TaskId): TaskRow[] {
   const activeTask = TASKS[activeTaskId];
-  const isExpanded = hovering || state === 'expanded-pinned';
-  const surfaceWidth = isExpanded ? NOTCH.expandedWidth : NOTCH.restWidth;
-  const surfaceHeight = isExpanded ? NOTCH.expandedHeight : NOTCH.restHeight;
-  const surfaceRadius = isExpanded ? NOTCH.expandedRadius : NOTCH.cornerRadius;
+  const activeTitle = activeTask.label;
+
+  if (state === 'idle') {
+    return [];
+  }
+
+  if (state === 'running-multi') {
+    return [
+      { id: 'compare', title: TASKS.compare.label, detail: 'Running', color: TASKS.compare.color, status: 'running' },
+      { id: 'research', title: TASKS.research.label, detail: 'Running', color: TASKS.research.color, status: 'running' },
+      { id: 'schedule', title: TASKS.schedule.label, detail: 'Running', color: TASKS.schedule.color, status: 'running' },
+    ];
+  }
+
+  if (state === 'complete') {
+    return [
+      { id: activeTask.id, title: activeTitle, detail: 'Done', color: activeTask.color, status: 'completed' },
+      { id: 'weather', title: "Find tomorrow's weather", detail: 'Done', color: TASKS.schedule.color, status: 'completed' },
+    ];
+  }
+
+  if (state === 'needs-input') {
+    return [
+      { id: activeTask.id, title: activeTitle, detail: 'Needs attention', color: activeTask.color, status: 'needsAttention' },
+      { id: 'weather', title: "Find tomorrow's weather", detail: 'Done', color: TASKS.schedule.color, status: 'completed' },
+    ];
+  }
+
+  return [
+    { id: activeTask.id, title: activeTitle, detail: 'Running', color: activeTask.color, status: 'running' },
+    { id: 'weather', title: "Find tomorrow's weather", detail: 'Done', color: TASKS.schedule.color, status: 'completed' },
+  ];
+}
+
+function collapsedStatusText(state: NotchState) {
+  if (state === 'idle') return 'Idle';
+  if (state === 'complete') return 'Done';
+  if (state === 'needs-input') return 'Ask';
+
+  return 'Run';
+}
+
+export function Notch({ state, activeTaskId, expanded, setExpanded, onRequestSpawn }: Props) {
+  const rows = taskRowsForState(state, activeTaskId);
+  const activeColor = rows[0]?.color ?? 'rgb(29,158,117)';
+
+  const handleFollowUpSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const taskText = String(formData.get('followUp') ?? '').trim();
+    if (!taskText) return;
+
+    onRequestSpawn(taskText);
+    form.reset();
+  };
 
   return (
-    <div
-      className="absolute top-0 left-1/2 -translate-x-1/2 z-20"
+    <section
+      aria-label="Donkey status"
+      className="absolute left-1/2 top-0 z-30 -translate-x-1/2 overflow-hidden focus:outline-none"
       style={{
-        width: isExpanded ? `${NOTCH.expandedWidth + 40}px` : `${NOTCH.restWidth + 60}px`,
-        height: isExpanded ? `${NOTCH.expandedHeight + 20}px` : `${NOTCH.restHeight + 20}px`,
-        transition: `width ${DURATION} ${EASE}, height ${DURATION} ${EASE}`,
+        width: expanded ? METRICS.expandedWidth : METRICS.collapsedWidth,
+        height: expanded ? METRICS.expandedHeight : METRICS.collapsedHeight,
+        borderBottomLeftRadius: expanded ? METRICS.expandedCornerRadius : METRICS.collapsedCornerRadius,
+        borderBottomRightRadius: expanded ? METRICS.expandedCornerRadius : METRICS.collapsedCornerRadius,
+        transition: 'width 220ms ease-out, height 220ms ease-out, border-radius 220ms ease-out',
       }}
-      onMouseEnter={() => setHovering(true)}
-      onMouseLeave={() => setHovering(false)}
+      tabIndex={0}
+      onClick={() => setExpanded(true)}
+      onFocus={() => setExpanded(true)}
+      onPointerEnter={() => setExpanded(true)}
+      onPointerLeave={() => setExpanded(false)}
+      onMouseEnter={() => setExpanded(true)}
+      onMouseLeave={() => setExpanded(false)}
     >
       <div
-        className="absolute top-0 left-1/2 overflow-hidden bg-black text-white"
+        className="absolute left-1/2 top-0 overflow-hidden bg-black text-white"
         style={{
-          width: `${surfaceWidth}px`,
-          height: `${surfaceHeight}px`,
+          width: expanded ? METRICS.expandedWidth : METRICS.collapsedWidth,
+          height: expanded ? METRICS.expandedHeight : METRICS.collapsedHeight,
           transform: 'translateX(-50%)',
-          borderTopLeftRadius: 0,
-          borderTopRightRadius: 0,
-          borderBottomLeftRadius: `${surfaceRadius}px`,
-          borderBottomRightRadius: `${surfaceRadius}px`,
-          boxShadow: isExpanded
-            ? '0 24px 48px -12px rgba(0,0,0,0.5), 0 8px 16px -8px rgba(0,0,0,0.3)'
-            : 'none',
-          outline: '1px dashed rgba(255,36,148,0.95)',
-          outlineOffset: '-1px',
-          transition: [
-            `width ${DURATION} ${EASE}`,
-            `height ${DURATION} ${EASE}`,
-            `border-radius ${DURATION} ${EASE}`,
-            `box-shadow ${DURATION} ${EASE}`,
-          ].join(', '),
-          zIndex: 30,
+          borderBottomLeftRadius: expanded ? METRICS.expandedCornerRadius : METRICS.collapsedCornerRadius,
+          borderBottomRightRadius: expanded ? METRICS.expandedCornerRadius : METRICS.collapsedCornerRadius,
+          boxShadow: expanded ? '0 12px 24px rgba(0,0,0,0.5)' : '0 0 0 rgba(0,0,0,0)',
+          transition:
+            'width 550ms cubic-bezier(0.2,0.9,0.24,1), height 550ms cubic-bezier(0.2,0.9,0.24,1), border-radius 550ms cubic-bezier(0.2,0.9,0.24,1), box-shadow 300ms ease-out',
         }}
       >
         <div
-          className="absolute inset-0 flex items-center pl-3.5 pr-3.5"
+          className="absolute inset-0"
           style={{
-            opacity: isExpanded ? 0 : 1,
-            transition: `opacity 0.15s ${EASE}`,
+            opacity: expanded ? 0 : 1,
+            transition: 'opacity 150ms ease-out',
             pointerEvents: 'none',
           }}
         >
-          <MousePointer2
-            size={14}
-            color="#fff"
-            fill="#fff"
-            strokeWidth={0}
-            style={{ transform: 'rotate(-8deg)' }}
+          <TaskArrow
+            color={activeColor}
+            size={13}
+            className="absolute top-[9.5px] left-[10.5px] -rotate-45"
           />
+          <span className="absolute right-0 top-0 grid h-8 w-[34px] place-items-center text-[9px] leading-none text-white/[0.72]">
+            {collapsedStatusText(state)}
+          </span>
         </div>
 
         <div
-          className="absolute inset-0 flex flex-col"
+          className="absolute left-0 flex flex-col gap-2"
           style={{
-            opacity: isExpanded ? 1 : 0,
-            padding: 18,
-            pointerEvents: isExpanded ? 'auto' : 'none',
-            transition: isExpanded ? `opacity 0.3s ${EASE} 0.15s` : `opacity 0.1s ${EASE}`,
+            top: METRICS.collapsedHeight,
+            width: METRICS.expandedWidth,
+            height: METRICS.expandedContentHeight,
+            padding: `0 ${METRICS.contentInset}px ${METRICS.contentInset}px`,
+            opacity: expanded ? 1 : 0,
+            pointerEvents: expanded ? 'auto' : 'none',
+            transition: expanded ? 'opacity 300ms ease-out 150ms' : 'opacity 100ms ease-out',
           }}
         >
-          <div className="flex items-center gap-2 border-b border-white/10 pb-2.5">
-            <TaskArrow color={activeTask.color} size={14} className="-rotate-45" />
-            <span className="text-[12px] text-white/95">Donkey</span>
-            <span className="text-[11px] text-white/45 ml-0.5">
-              {state === 'idle' ? 'ready' : activeTask.label.toLowerCase()}
-            </span>
-            <div className="ml-auto flex items-center gap-1 text-[10px] text-white/45 hover:text-white/80 cursor-pointer">
-              <Plus size={11} />
-              <span>new task</span>
+          <div className="min-h-0 flex-1 overflow-hidden pt-2.5">
+            <div className="flex flex-col gap-2">
+              {rows.map((task) => (
+                <article
+                  key={task.id}
+                  className="flex h-12 items-center gap-3 rounded-lg bg-white/[0.055] px-3"
+                >
+                  <TaskArrow color={task.color} size={14} className="-rotate-45" />
+                  <div className="min-w-0 flex-1">
+                    <h2 className="truncate text-[13px] font-normal leading-4 text-white/[0.9]">{task.title}</h2>
+                    <p className="mt-1 truncate text-[12px] font-normal leading-[14px] text-white/[0.42]">{task.detail}</p>
+                  </div>
+                  {task.status === 'running' ? (
+                    <div className="flex gap-1.5">
+                      <button
+                        type="button"
+                        className="grid h-6 w-6 place-items-center rounded-full bg-white/[0.055] text-white/[0.3]"
+                        aria-label="Resume"
+                        disabled
+                      >
+                        <Play size={10} fill="currentColor" />
+                      </button>
+                      <button
+                        type="button"
+                        className="grid h-6 w-6 place-items-center rounded-full bg-white/[0.12] text-white/[0.88]"
+                        aria-label="Pause"
+                      >
+                        <Pause size={10} fill="currentColor" />
+                      </button>
+                    </div>
+                  ) : task.status === 'completed' ? (
+                    <Check size={18} color={task.color} strokeWidth={1.35} />
+                  ) : (
+                    <CircleAlert size={18} color={task.color} strokeWidth={1.35} />
+                  )}
+                </article>
+              ))}
             </div>
           </div>
 
-          <div className="grid grid-cols-5 gap-2 py-3">
-            {ALL_TASK_IDS.map((id) => {
-              const task = TASKS[id];
-              const isRunning = runningTaskIds.includes(id);
-              const isActiveStateTask = activeTaskId === id && (state === 'complete' || state === 'needs-input');
-              let statusLabel = isRunning ? 'running' : 'idle';
-              let statusColor = isRunning ? task.color : 'rgba(255,255,255,0.4)';
-              if (isActiveStateTask && state === 'complete') statusLabel = 'done';
-              if (isActiveStateTask && state === 'needs-input') {
-                statusLabel = 'needs you';
-                statusColor = task.color;
-              }
-
-              return (
-                <div
-                  key={id}
-                  className="flex min-w-0 flex-col items-center gap-1.5 rounded-md border border-white/[0.06] bg-white/[0.04] px-1 py-2 transition hover:-translate-y-px hover:bg-white/[0.07]"
-                  style={isRunning ? { background: `${task.color}1A` } : undefined}
-                >
-                  <div
-                    className="flex h-6 w-6 items-center justify-center rounded-md"
-                    style={{ background: task.color }}
-                  >
-                    <TaskArrow color="#fff" size={13} className="-rotate-45" />
-                  </div>
-                  <span className="max-w-full truncate text-[10px] text-white/75">{task.label.split(' ')[0]}</span>
-                  <span
-                    className="max-w-full truncate rounded px-1 py-px text-[8px]"
-                    style={{
-                      background: `${statusColor}30`,
-                      color: statusColor === 'rgba(255,255,255,0.4)' ? 'rgba(255,255,255,0.5)' : statusColor,
-                    }}
-                  >
-                    {statusLabel}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="mt-auto flex items-center gap-2 rounded-md border border-white/[0.08] bg-white/[0.06] px-3 py-2.5">
-            <Sparkles size={12} color="rgba(255,255,255,0.45)" />
-            <span className="min-w-0 flex-1 truncate text-[12px] text-white/40">Tell Donkey what to do...</span>
-            {state !== 'idle' && <ActivityBars color={activeTask.color} />}
-          </div>
+          <form
+            className="relative h-[92px] w-[576px] rounded-[22px] bg-white/[0.085]"
+            onSubmit={handleFollowUpSubmit}
+          >
+            <label className="sr-only" htmlFor="donkey-follow-up-input">
+              Follow-up
+            </label>
+            <textarea
+              id="donkey-follow-up-input"
+              name="followUp"
+              rows={1}
+              placeholder="What can donkey do for you?"
+              className="absolute left-6 top-3 h-[19.2px] w-[528px] resize-none overflow-hidden border-0 bg-transparent p-0 text-[16px] font-light leading-[19.2px] text-white outline-none placeholder:text-white/[0.58]"
+              style={{ caretColor: 'white', fontVariantLigatures: 'none' }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
+            />
+            <button
+              type="submit"
+              className="absolute bottom-4 right-4 grid h-8 w-8 place-items-center rounded-full bg-white/[0.9] text-black/[0.75]"
+              aria-label="Send follow-up"
+            >
+              <ArrowUp size={16} strokeWidth={2} />
+            </button>
+          </form>
         </div>
       </div>
-    </div>
+    </section>
   );
 }

@@ -1,129 +1,143 @@
 'use client';
 
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { type FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { DemoControls } from '@/app/prototype/_components/DemoControls';
 import { MacDesktop } from '@/app/prototype/_components/MacDesktop';
 import { TASK_COLORS } from '@/app/prototype/_components/tasks';
 import type { DesktopSize, NotchState, Spawn, SpawnPhase, TaskId } from '@/app/prototype/_components/types';
 
-let spawnCounter = 0;
+const COMPOSER_TEXT_MIN_HEIGHT = 19.2;
+const COMPOSER_TEXT_MAX_HEIGHT = 134.4;
 
 export default function App() {
   const [state, setState] = useState<NotchState>('running-single');
   const [activeTaskId, setActiveTaskId] = useState<TaskId>('compare');
-  const [hovering, setHovering] = useState(false);
+  const [notchExpanded, setNotchExpanded] = useState(false);
+  const [promptText, setPromptText] = useState('');
+  const [promptTextHeight, setPromptTextHeight] = useState(COMPOSER_TEXT_MIN_HEIGHT);
   const [spawns, setSpawns] = useState<Spawn[]>([]);
-  const [spawnInputOpen, setSpawnInputOpen] = useState(false);
-  const desktopRef = useRef<HTMLDivElement | null>(null);
-  const [desktopSize, setDesktopSize] = useState<DesktopSize>({ w: 1000, h: 625 });
-  const runningTaskIds = useMemo<TaskId[]>(() => {
-    if (state === 'idle') return [];
-    if (state === 'running-multi') return ['compare', 'research', 'schedule'];
-
-    return [activeTaskId];
-  }, [state, activeTaskId]);
+  const [desktopSize, setDesktopSize] = useState<DesktopSize>({ w: 1280, h: 720 });
+  const promptInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const desktopRef = useRef<HTMLElement | null>(null);
+  const spawnCounterRef = useRef(0);
+  const spawnTimerRef = useRef<number[]>([]);
 
   useLayoutEffect(() => {
-    if (!desktopRef.current) return;
-    const ro = new ResizeObserver((entries) => {
-      const r = entries[0].contentRect;
-      setDesktopSize({ w: r.width, h: r.height });
+    const input = promptInputRef.current;
+    if (!input) return;
+
+    input.style.height = 'auto';
+    const nextHeight = Math.min(
+      Math.max(Math.ceil(input.scrollHeight), COMPOSER_TEXT_MIN_HEIGHT),
+      COMPOSER_TEXT_MAX_HEIGHT,
+    );
+    input.style.height = `${nextHeight}px`;
+    setPromptTextHeight(nextHeight);
+  }, [promptText]);
+
+  const promptExpanded =
+    promptText.trim().length > 0 &&
+    (promptTextHeight > COMPOSER_TEXT_MIN_HEIGHT + 1 || promptText.includes('\n'));
+
+  useLayoutEffect(() => {
+    const desktop = desktopRef.current;
+    if (!desktop) return;
+
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (!rect) return;
+
+      setDesktopSize({ w: rect.width, h: rect.height });
     });
-    ro.observe(desktopRef.current);
-    return () => ro.disconnect();
+    observer.observe(desktop);
+
+    return () => observer.disconnect();
   }, []);
 
-  const advanceSpawn = (id: string, nextPhase: SpawnPhase) => {
-    setSpawns((curr) => curr.map((s) => (s.id === id ? { ...s, phase: nextPhase } : s)));
-  };
+  useEffect(() => {
+    return () => {
+      spawnTimerRef.current.forEach((timer) => window.clearTimeout(timer));
+      spawnTimerRef.current = [];
+    };
+  }, []);
 
-  const handleSpawn = (taskText: string) => {
-    const id = `spawn-${++spawnCounter}-${Date.now()}`;
-    const color = TASK_COLORS[spawnCounter % TASK_COLORS.length];
+  const advanceSpawn = useCallback((id: string, nextPhase: SpawnPhase) => {
+    setSpawns((current) => current.map((spawn) => (spawn.id === id ? { ...spawn, phase: nextPhase } : spawn)));
+  }, []);
+
+  const scheduleSpawnPhase = useCallback((id: string, nextPhase: SpawnPhase, delay: number) => {
+    const timer = window.setTimeout(() => advanceSpawn(id, nextPhase), delay);
+    spawnTimerRef.current.push(timer);
+  }, [advanceSpawn]);
+
+  const handleSpawn = useCallback((taskText: string) => {
+    spawnCounterRef.current += 1;
+    const id = `spawn-${spawnCounterRef.current}-${Date.now()}`;
+    const color = TASK_COLORS[spawnCounterRef.current % TASK_COLORS.length];
     const label = taskText.slice(0, 40);
     const padding = 60;
-    const target = {
-      x: padding + Math.random() * (desktopSize.w - padding * 2),
-      y: 90 + Math.random() * (desktopSize.h - 160),
-    };
+    const targetX = padding + Math.random() * Math.max(1, desktopSize.w - padding * 2);
+    const targetY = 90 + Math.random() * Math.max(1, desktopSize.h - 160);
     const curveSide = Math.random() > 0.5 ? 1 : -1;
 
-    setSpawns((curr) => [...curr, { id, color, label, target, phase: 'emerge', curveSide, startedAt: Date.now() }]);
-    setSpawnInputOpen(false);
+    setSpawns((current) => [
+      ...current,
+      {
+        id,
+        color,
+        label,
+        target: { x: targetX, y: targetY },
+        phase: 'travel',
+        curveSide,
+        startedAt: Date.now(),
+      },
+    ]);
 
-    setTimeout(() => advanceSpawn(id, 'travel'), 500);
-    setTimeout(() => advanceSpawn(id, 'shake-left'), 500 + 900);
-    setTimeout(() => advanceSpawn(id, 'shake-right'), 500 + 900 + 350);
-    setTimeout(() => advanceSpawn(id, 'working'), 500 + 900 + 350 + 350);
-  };
+    scheduleSpawnPhase(id, 'shake-left', 900);
+    scheduleSpawnPhase(id, 'shake-right', 1250);
+    scheduleSpawnPhase(id, 'working', 1600);
+  }, [desktopSize.h, desktopSize.w, scheduleSpawnPhase]);
+
+  const handleSubmit = useCallback((event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const taskText = promptText.trim();
+    if (!taskText) return;
+
+    handleSpawn(taskText);
+    setPromptText('');
+    promptInputRef.current?.focus();
+  }, [handleSpawn, promptText]);
+
+  const isNotchExpanded = notchExpanded || state === 'expanded-pinned';
 
   return (
-    <div style={{ background: '#f5f3ee', minHeight: '100vh' }} className="px-6 py-10">
-      <div className="max-w-[1280px] mx-auto">
-        <header className="mb-10" />
-
-        <div className="mb-8">
-          <MacDesktop
-            state={state}
-            activeTaskId={activeTaskId}
-            runningTaskIds={runningTaskIds}
-            hovering={hovering}
-            setHovering={setHovering}
-            spawns={spawns}
-            onRequestSpawn={handleSpawn}
-            spawnInputOpen={spawnInputOpen}
-            onCloseSpawnInput={() => setSpawnInputOpen(false)}
-            desktopRef={desktopRef}
-            desktopSize={desktopSize}
-          />
-          <div className="mt-3 flex items-center justify-center gap-3 text-xs text-gray-400">
-            <button
-              type="button"
-              onClick={() => setSpawnInputOpen((v) => !v)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-[#e5e3dc] bg-white hover:bg-gray-50 text-gray-700 transition"
-            >
-              <Plus size={12} />
-              <span className="text-[11px] font-medium">New task</span>
-              <span className="text-[9px] text-gray-400 font-mono ml-1">↵ to start</span>
-            </button>
-            {spawns.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setSpawns([])}
-                className="text-[11px] text-gray-500 hover:text-gray-800 underline underline-offset-2"
-              >
-                clear {spawns.length} tasks
-              </button>
-            )}
-            <span className="text-gray-400">·</span>
-            <span>{hovering ? 'move away to collapse' : 'hover the notch to expand'}</span>
-          </div>
-        </div>
-
-        <DemoControls
-          state={state}
-          setState={setState}
-          activeTaskId={activeTaskId}
-          setActiveTaskId={setActiveTaskId}
-        />
-
-        <div className="mt-10 pt-6 border-t border-gray-200 grid grid-cols-1 md:grid-cols-3 gap-6 text-[13px] text-gray-600">
-          <div>
-            <div className="font-medium text-gray-900 mb-1">Resting</div>
-            <p className="leading-relaxed">Small pill, task color + live activity bars. Does not compete with your work.</p>
-          </div>
-          <div>
-            <div className="font-medium text-gray-900 mb-1">Attention</div>
-            <p className="leading-relaxed">Bulges with the task color. Check badge = done. Pulsing pink halo = needs you.</p>
-          </div>
-          <div>
-            <div className="font-medium text-gray-900 mb-1">Expanded</div>
-            <p className="leading-relaxed">Current work, statuses, and a task prompt. Background dims so focus stays on the task.</p>
-          </div>
-        </div>
-      </div>
+    <div className="relative min-h-screen">
+      <MacDesktop
+        state={state}
+        activeTaskId={activeTaskId}
+        notchExpanded={isNotchExpanded}
+        setNotchExpanded={setNotchExpanded}
+        promptText={promptText}
+        setPromptText={setPromptText}
+        promptInputRef={promptInputRef}
+        promptTextHeight={promptTextHeight}
+        promptExpanded={promptExpanded}
+        onPromptSubmit={handleSubmit}
+        desktopRef={desktopRef}
+        desktopSize={desktopSize}
+        spawns={spawns}
+        onRequestSpawn={handleSpawn}
+      />
+      <DemoControls
+        state={state}
+        setState={setState}
+        activeTaskId={activeTaskId}
+        setActiveTaskId={setActiveTaskId}
+        spawnCount={spawns.length}
+        onClearSpawns={() => setSpawns([])}
+      />
     </div>
   );
 }

@@ -1,103 +1,203 @@
-import { Apple, Wifi, BatteryFull } from 'lucide-react';
+import type { FormEvent, RefObject } from 'react';
 
 import { Notch } from '@/app/prototype/_components/Notch';
 import { SpawnedCursor } from '@/app/prototype/_components/SpawnedCursor';
-import { SpawnInputOverlay } from '@/app/prototype/_components/SpawnInputOverlay';
-import { TaskArrow } from '@/app/prototype/_components/TaskArrow';
-import { ALL_TASK_IDS, TASKS } from '@/app/prototype/_components/tasks';
-import type { DesktopRef, DesktopSize, NotchState, SetHovering, Spawn, TaskId } from '@/app/prototype/_components/types';
+import type { DesktopSize, NotchState, Spawn, TaskId } from '@/app/prototype/_components/types';
 
 type Props = {
   state: NotchState;
   activeTaskId: TaskId;
-  runningTaskIds: TaskId[];
-  hovering: boolean;
-  setHovering: SetHovering;
+  notchExpanded: boolean;
+  setNotchExpanded: (expanded: boolean) => void;
+  promptText: string;
+  setPromptText: (text: string) => void;
+  promptInputRef: RefObject<HTMLTextAreaElement | null>;
+  promptTextHeight: number;
+  promptExpanded: boolean;
+  onPromptSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  desktopRef: RefObject<HTMLElement | null>;
+  desktopSize: DesktopSize;
   spawns: Spawn[];
   onRequestSpawn: (taskText: string) => void;
-  spawnInputOpen: boolean;
-  onCloseSpawnInput: () => void;
-  desktopRef: DesktopRef;
-  desktopSize: DesktopSize;
 };
+
+const LAYOUT = {
+  contentWidth: 592,
+  contentExtraHeight: 8,
+  stageHorizontalPadding: 8,
+  stageVerticalPadding: 10,
+  composerWidth: 576,
+  composerCornerRadius: 22,
+  composerInputMinimumHeight: 66,
+  composerInputLeadingContentPadding: 20,
+  composerInputTrailingContentPadding: 8,
+  composerWaveformWidth: 54,
+  composerWaveformHeight: 28,
+  composerWrappingTextWidth: 482,
+  composerExpandedTextWidth: 528,
+  composerExpandedTextTopPadding: 18,
+  composerExpandedTextHorizontalPadding: 24,
+  composerExpandedToolbarHeight: 54,
+  composerExpandedMinimumHeight: 156,
+} as const;
+
+const WAVEFORM_LEVELS = [0.12, 0.2, 0.34, 0.5, 0.34, 0.2, 0.12] as const;
+
+function waveformHeight(level: number) {
+  return 5 + level * 24;
+}
 
 export function MacDesktop({
   state,
   activeTaskId,
-  runningTaskIds,
-  hovering,
-  setHovering,
-  spawns,
-  onRequestSpawn,
-  spawnInputOpen,
-  onCloseSpawnInput,
+  notchExpanded,
+  setNotchExpanded,
+  promptText,
+  setPromptText,
+  promptInputRef,
+  promptTextHeight,
+  promptExpanded,
+  onPromptSubmit,
   desktopRef,
   desktopSize,
+  spawns,
+  onRequestSpawn,
 }: Props) {
-  const isExpanded = hovering || state === 'expanded-pinned';
-  const notchAnchor = { x: desktopSize.w / 2, y: 24 };
+  const composerHeight = promptExpanded
+    ? Math.max(
+        LAYOUT.composerExpandedMinimumHeight,
+        promptTextHeight + LAYOUT.composerExpandedTextTopPadding + LAYOUT.composerExpandedToolbarHeight,
+      )
+    : LAYOUT.composerInputMinimumHeight;
+  const hostHeight = LAYOUT.stageVerticalPadding * 2 + composerHeight + LAYOUT.contentExtraHeight;
+  const spawnOrigin = { x: desktopSize.w / 2, y: -36 };
 
   return (
-    <div ref={desktopRef} className="relative w-full overflow-hidden rounded-2xl border border-black/10" style={{ aspectRatio: '16 / 10' }}>
+    <main
+      ref={desktopRef}
+      className="relative min-h-screen overflow-hidden bg-[#121419] text-white"
+      style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif' }}
+    >
       <div
         className="absolute inset-0"
         style={{
-          backgroundImage:
-            'radial-gradient(circle at 20% 30%, rgba(120,100,200,0.25) 0%, transparent 50%), radial-gradient(circle at 80% 70%, rgba(80,140,200,0.2) 0%, transparent 50%), linear-gradient(180deg, #2d2a4a 0%, #1a1d29 100%)',
+          background:
+            'linear-gradient(145deg, rgba(44,66,78,0.82) 0%, rgba(20,21,26,0.96) 45%, rgba(33,36,51,0.92) 100%)',
+        }}
+      />
+      <div
+        className="absolute inset-0"
+        style={{
+          background:
+            'linear-gradient(180deg, rgba(0,0,0,0.18) 0%, rgba(0,0,0,0) 26%, rgba(0,0,0,0.32) 100%)',
         }}
       />
 
       <div
-        className="absolute top-0 left-0 right-0 h-7 flex items-center px-4 gap-4 text-[11px] text-white/85"
-        style={{ background: 'rgba(20,22,30,0.5)', backdropFilter: 'blur(10px)' }}
+        className="absolute left-0 right-0 top-0 z-10 flex h-7 items-center gap-4 px-4 text-[13px] text-white/[0.72]"
+        style={{
+          background: 'rgba(11,12,15,0.55)',
+          backdropFilter: 'blur(14px)',
+        }}
       >
-        <Apple size={13} fill="currentColor" />
-        <span className="font-medium">Finder</span>
+        <span className="font-medium text-white/[0.88]">Donkey</span>
         <span>File</span>
         <span>Edit</span>
         <span>View</span>
         <span>Go</span>
         <span>Window</span>
         <span>Help</span>
-        <div className="ml-auto flex items-center gap-3.5">
-          <Wifi size={13} />
-          <BatteryFull size={13} />
-          <span>Sun 5:02 PM</span>
-        </div>
       </div>
 
-      {isExpanded && <div className="absolute inset-0 bg-black/40 z-10 transition-opacity duration-300" />}
+      <Notch
+        state={state}
+        activeTaskId={activeTaskId}
+        expanded={notchExpanded}
+        setExpanded={setNotchExpanded}
+        onRequestSpawn={onRequestSpawn}
+      />
 
-      <Notch state={state} activeTaskId={activeTaskId} hovering={hovering} setHovering={setHovering} runningTaskIds={runningTaskIds} />
-
-      {spawns.map((s) => (
-        <SpawnedCursor key={s.id} spawn={s} notchAnchor={notchAnchor} />
+      {spawns.map((spawn) => (
+        <SpawnedCursor key={spawn.id} spawn={spawn} spawnOrigin={spawnOrigin} />
       ))}
 
-      {spawnInputOpen && <SpawnInputOverlay onSubmit={onRequestSpawn} onClose={onCloseSpawnInput} />}
-
-      <div
-        className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-2xl px-3 py-1.5 flex gap-2 transition-opacity duration-300"
+      <section
+        aria-label="Donkey prompt"
+        className="absolute left-1/2 top-1/2 z-20"
         style={{
-          background: 'rgba(255,255,255,0.15)',
-          border: '0.5px solid rgba(255,255,255,0.25)',
-          backdropFilter: 'blur(20px) saturate(180%)',
-          opacity: isExpanded ? 0.5 : 1,
+          width: LAYOUT.contentWidth,
+          height: hostHeight,
+          padding: `${LAYOUT.stageVerticalPadding}px ${LAYOUT.stageHorizontalPadding}px`,
+          transform: 'translate(-50%, -50%)',
         }}
       >
-        {ALL_TASK_IDS.map((id) => {
-          const task = TASKS[id];
-          const isRunning = runningTaskIds.includes(id);
-          return (
-            <div key={id} className="relative">
-              <div className="w-8 h-8 flex items-center justify-center">
-                <TaskArrow color={task.color} size={22} />
-              </div>
-              {isRunning && <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-white" />}
-            </div>
-          );
-        })}
-      </div>
-    </div>
+        <form
+          onSubmit={onPromptSubmit}
+          className="relative bg-black"
+          style={{
+            width: LAYOUT.composerWidth,
+            height: composerHeight,
+            borderRadius: promptExpanded ? LAYOUT.composerCornerRadius : 999,
+            boxShadow: `0 5px 12px rgba(0,0,0,0.2), inset 0 0 0 1px ${
+              promptExpanded ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.34)'
+            }`,
+            transition: 'height 160ms ease-out, border-radius 160ms ease-out',
+          }}
+        >
+          <label className="sr-only" htmlFor="donkey-prompt-input">
+            Prompt
+          </label>
+          <textarea
+            id="donkey-prompt-input"
+            ref={promptInputRef}
+            rows={1}
+            value={promptText}
+            onChange={(event) => setPromptText(event.target.value)}
+            placeholder="What can donkey do for you?"
+            className="absolute resize-none overflow-hidden border-0 bg-transparent p-0 text-[16px] font-light leading-[19.2px] text-white outline-none placeholder:text-white/[0.58]"
+            style={{
+              left: promptExpanded
+                ? LAYOUT.composerExpandedTextHorizontalPadding
+                : LAYOUT.composerInputLeadingContentPadding,
+              top: promptExpanded
+                ? LAYOUT.composerExpandedTextTopPadding
+                : (LAYOUT.composerInputMinimumHeight - promptTextHeight) / 2,
+              width: promptExpanded ? LAYOUT.composerExpandedTextWidth : LAYOUT.composerWrappingTextWidth,
+              height: promptTextHeight,
+              caretColor: 'white',
+              fontVariantLigatures: 'none',
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
+            }}
+          />
+          <div
+            className="absolute flex items-center justify-center gap-1"
+            style={{
+              right: promptExpanded
+                ? LAYOUT.composerExpandedTextHorizontalPadding
+                : LAYOUT.composerInputTrailingContentPadding,
+              top: promptExpanded
+                ? composerHeight - LAYOUT.composerExpandedToolbarHeight + (LAYOUT.composerExpandedToolbarHeight - LAYOUT.composerWaveformHeight) / 2
+                : (LAYOUT.composerInputMinimumHeight - LAYOUT.composerWaveformHeight) / 2,
+              width: LAYOUT.composerWaveformWidth,
+              height: LAYOUT.composerWaveformHeight,
+            }}
+            aria-hidden="true"
+          >
+            {WAVEFORM_LEVELS.map((level, index) => (
+              <span
+                key={`${level}-${index}`}
+                className="w-1 rounded-full bg-white"
+                style={{ height: waveformHeight(level) }}
+              />
+            ))}
+          </div>
+        </form>
+      </section>
+    </main>
   );
 }
