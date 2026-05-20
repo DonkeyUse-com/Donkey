@@ -466,7 +466,7 @@ public struct PointerPromptNotchStatusView: View {
 
     private var commandInputState: PointerPromptState {
         PointerPromptState(
-            promptText: "Ask for follow-up changes",
+            promptText: PointerPromptCopy.defaultPromptPlaceholder,
             isPrimaryActionEnabled: true,
             leadingSignalLevel: .ready,
             isActive: isExpanded,
@@ -566,7 +566,7 @@ public struct PointerPromptNotchStatusView: View {
 
         switch state.leadingSignalLevel {
         case .idle:
-            return "Resting"
+            return "Idle"
         case .ready:
             return "Ready"
         case .thinking:
@@ -636,11 +636,8 @@ public struct PointerPromptNotchStatusView: View {
     }
 
     private var taskDisplayText: String? {
-        let text = state.promptText
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .split(whereSeparator: \.isWhitespace)
-            .joined(separator: " ")
-        guard !text.isEmpty, text != "Make this so", text != "Resting" else {
+        let text = PointerPromptCopy.normalizedDisplayText(state.promptText)
+        guard PointerPromptCopy.isTaskDisplayText(text) else {
             return nil
         }
 

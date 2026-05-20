@@ -1,6 +1,23 @@
 import CoreGraphics
 import Foundation
 
+public enum PointerPromptCopy {
+    public static let defaultPromptPlaceholder = "What can donkey do for you?"
+
+    public static func normalizedDisplayText(_ text: String) -> String {
+        text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+    }
+
+    public static func isTaskDisplayText(_ text: String) -> Bool {
+        let normalizedText = normalizedDisplayText(text)
+        return !normalizedText.isEmpty &&
+            normalizedText != defaultPromptPlaceholder
+    }
+}
+
 public struct PointerPromptState: Equatable, Sendable {
     public static let defaultVoiceWaveformLevels: [Double] = [
         0.12,
@@ -36,7 +53,7 @@ public struct PointerPromptState: Equatable, Sendable {
     }
 
     public static let productionDefault = PointerPromptState(
-        promptText: "Make this so",
+        promptText: PointerPromptCopy.defaultPromptPlaceholder,
         leadingSignalLevel: .ready,
         isActive: true
     )

@@ -814,12 +814,7 @@ final class PointerPromptOverlayController {
     }
 
     private var hasStatusTaskDisplayText: Bool {
-        let text = model.promptState.promptText
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .split(whereSeparator: \.isWhitespace)
-            .joined(separator: " ")
-
-        return !text.isEmpty && text != "Make this so" && text != "Resting"
+        PointerPromptCopy.isTaskDisplayText(model.promptState.promptText)
     }
 
     private func inferredVoidWidth(for screen: NSScreen, safeTop: CGFloat) -> CGFloat {
