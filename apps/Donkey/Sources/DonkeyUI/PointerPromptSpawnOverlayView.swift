@@ -9,6 +9,8 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
     @Published public private(set) var position: CGPoint = .zero
     @Published public private(set) var destination: CGPoint = .zero
     @Published public private(set) var screenSize: CGSize = .zero
+    @Published public private(set) var viewportOrigin: CGPoint = .zero
+    @Published public private(set) var viewportSize: CGSize = .zero
     @Published public private(set) var opacity: Double = 0
     @Published public private(set) var isHolding = false
     @Published public private(set) var isSelected = false
@@ -19,6 +21,7 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
     public var inputActivityChanged: ((Bool) -> Void)?
     public var followUpSubmitted: ((String, String, String) -> Void)?
     public var selected: ((String) -> Void)?
+    public var travelCompleted: (() -> Void)?
 
     private var animationGeneration = 0
 
@@ -47,16 +50,66 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
     public var hitTestFrame: CGRect {
         guard state != nil, isHolding else { return .null }
 
+        return visualFrame(at: position, includesLabel: true)
+    }
+
+    public var localHitTestFrame: CGRect {
+        guard !hitTestFrame.isNull else { return .null }
+
+        return hitTestFrame.offsetBy(dx: -viewportOrigin.x, dy: -viewportOrigin.y)
+    }
+
+    public var visualFrame: CGRect {
+        guard state != nil else { return .null }
+
+        return visualFrame(at: position, includesLabel: isHolding)
+    }
+
+    public var renderPosition: CGPoint {
+        CGPoint(
+            x: position.x - viewportOrigin.x,
+            y: position.y - viewportOrigin.y
+        )
+    }
+
+    public var isTraveling: Bool {
+        state != nil && !isHolding
+    }
+
+    public var hasScreenSize: Bool {
+        screenSize.width > 0 && screenSize.height > 0
+    }
+
+    public func cursorOnlyVisualFrame(at point: CGPoint) -> CGRect {
+        CGRect(
+            x: point.x - 30,
+            y: point.y - 30,
+            width: 60,
+            height: 60
+        )
+    }
+
+    public func updateViewport(origin: CGPoint, size: CGSize) {
+        viewportOrigin = origin
+        viewportSize = size
+    }
+
+    private func visualFrame(
+        at point: CGPoint,
+        includesLabel: Bool
+    ) -> CGRect {
+        var frame = cursorOnlyVisualFrame(at: point)
+        guard includesLabel else { return frame }
+
         let width: CGFloat = isInputActive ? 312 : 244
         let height: CGFloat = isInputActive ? 142 : 54
-        let offset = labelOffset(in: screenSize)
+        let offset = labelOffset(for: point, in: screenSize)
         let origin = CGPoint(
-            x: position.x + offset.width - width / 2,
-            y: position.y + offset.height - height / 2
+            x: point.x + offset.width - width / 2,
+            y: point.y + offset.height - height / 2
         )
-        return cursorHitTestFrame
-            .union(CGRect(origin: origin, size: CGSize(width: width, height: height)))
-            .insetBy(dx: -14, dy: -14)
+        frame = frame.union(CGRect(origin: origin, size: CGSize(width: width, height: height)))
+        return frame.insetBy(dx: -10, dy: -10)
     }
 
     public var cursorHitTestFrame: CGRect {
@@ -71,6 +124,13 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
     }
 
     public func labelOffset(in screenSize: CGSize) -> CGSize {
+        labelOffset(for: position, in: screenSize)
+    }
+
+    private func labelOffset(
+        for cursorPosition: CGPoint,
+        in screenSize: CGSize
+    ) -> CGSize {
         let labelSize = CGSize(
             width: isInputActive ? 292 : 220,
             height: isInputActive ? 126 : 46
@@ -81,13 +141,13 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
         let upOffset = CGSize(width: rightOffset.width, height: -labelSize.height - 28)
         let upLeftOffset = CGSize(width: leftOffset.width, height: upOffset.height)
 
-        if point(position, offsetBy: rightOffset, labelSize: labelSize, fitsIn: screenSize, margin: margin) {
+        if point(cursorPosition, offsetBy: rightOffset, labelSize: labelSize, fitsIn: screenSize, margin: margin) {
             return rightOffset
         }
-        if point(position, offsetBy: leftOffset, labelSize: labelSize, fitsIn: screenSize, margin: margin) {
+        if point(cursorPosition, offsetBy: leftOffset, labelSize: labelSize, fitsIn: screenSize, margin: margin) {
             return leftOffset
         }
-        if point(position, offsetBy: upOffset, labelSize: labelSize, fitsIn: screenSize, margin: margin) {
+        if point(cursorPosition, offsetBy: upOffset, labelSize: labelSize, fitsIn: screenSize, margin: margin) {
             return upOffset
         }
         return upLeftOffset
@@ -106,6 +166,8 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
         self.screenSize = screenSize
         self.opacity = 0
         self.isHolding = false
+        self.viewportOrigin = .zero
+        self.viewportSize = .zero
         self.inputText = ""
         self.inputTextHeight = Self.inputMinimumTextHeight
         self.isInputExpanded = false
@@ -115,11 +177,10 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.animationGeneration == generation else { return }
 
-            withAnimation(Self.travelAnimation) {
-                self.position = destination
+            withAnimation(.easeOut(duration: 0.12)) {
                 self.opacity = 1
             }
-            self.finishTravelAfterDelay(generation: generation)
+            self.finishTravelAfterDelay(generation: generation, finalPosition: destination)
         }
     }
 
@@ -147,11 +208,10 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
         let generation = animationGeneration
         self.destination = destination
         self.isHolding = false
-        withAnimation(Self.travelAnimation) {
-            self.position = destination
+        withAnimation(.easeOut(duration: 0.12)) {
             self.opacity = 1
         }
-        finishTravelAfterDelay(generation: generation)
+        finishTravelAfterDelay(generation: generation, finalPosition: destination)
     }
 
     public func fadeOut() {
@@ -170,6 +230,8 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
             self.inputText = ""
             self.inputTextHeight = Self.inputMinimumTextHeight
             self.isInputExpanded = false
+            self.viewportOrigin = .zero
+            self.viewportSize = .zero
         }
     }
 
@@ -262,16 +324,18 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
         isInputExpanded = clamped > Self.inputMinimumTextHeight + 1 || inputText.contains("\n")
     }
 
-    private func finishTravelAfterDelay(generation: Int) {
+    private func finishTravelAfterDelay(generation: Int, finalPosition: CGPoint) {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.travelDuration) { [weak self] in
             guard let self, self.animationGeneration == generation else { return }
 
+            self.position = finalPosition
             self.isHolding = true
             if var state = self.state, state.phase == .traveling || state.phase == .notchCue {
                 state.phase = .holding
                 state.updatedAt = Date()
                 self.state = state
             }
+            self.travelCompleted?()
         }
     }
 
@@ -320,32 +384,6 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
     private static let travelAnimation = Animation.timingCurve(0.45, 0.05, 0.3, 1, duration: travelDuration)
 }
 
-@MainActor
-public final class PointerPromptSpawnOverlayStore: ObservableObject {
-    @Published public var viewModels: [PointerPromptSpawnOverlayViewModel] = []
-
-    public init() {}
-}
-
-public struct PointerPromptSpawnOverlayContainerView: View {
-    @ObservedObject private var store: PointerPromptSpawnOverlayStore
-
-    public init(store: PointerPromptSpawnOverlayStore) {
-        self.store = store
-    }
-
-    public var body: some View {
-        ZStack(alignment: .topLeading) {
-            Color.black.opacity(0.001)
-
-            ForEach(store.viewModels, id: \.objectID) { viewModel in
-                PointerPromptSpawnOverlayView(viewModel: viewModel)
-            }
-        }
-        .ignoresSafeArea()
-    }
-}
-
 public struct PointerPromptSpawnOverlayView: View {
     @ObservedObject private var viewModel: PointerPromptSpawnOverlayViewModel
     @FocusState private var labelIsFocused: Bool
@@ -357,11 +395,9 @@ public struct PointerPromptSpawnOverlayView: View {
     public var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .topLeading) {
-                Color.black.opacity(0.001)
-
                 if let state = viewModel.state {
-                    spawnSurface(state: state, screenSize: proxy.size)
-                        .position(viewModel.position)
+                    spawnSurface(state: state, screenSize: viewModel.hasScreenSize ? viewModel.screenSize : proxy.size)
+                        .position(viewModel.renderPosition)
                         .opacity(viewModel.opacity)
                 }
             }

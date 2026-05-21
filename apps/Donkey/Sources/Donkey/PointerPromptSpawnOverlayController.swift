@@ -2,15 +2,13 @@ import AppKit
 import DonkeyContracts
 import DonkeyRuntime
 import DonkeyUI
+import QuartzCore
 import SwiftUI
 
 @MainActor
 final class PointerPromptSpawnOverlayController {
-    private let store = PointerPromptSpawnOverlayStore()
-    private var panel: PointerPromptSpawnPanel?
-    private var hostingView: PointerPromptSpawnHostingView<PointerPromptSpawnOverlayContainerView>?
+    private var surfacesByID: [String: PointerPromptSpawnSurface] = [:]
     private var viewModelsByID: [String: PointerPromptSpawnOverlayViewModel] = [:]
-    private var closeWorkItem: DispatchWorkItem?
     private var windowResolver = MacWindowResolver()
 
     var followUpSubmitted: ((String, String, String) -> Void)? {
@@ -35,22 +33,17 @@ final class PointerPromptSpawnOverlayController {
         screen: NSScreen?,
         notchMetrics: PointerPromptNotchMetrics
     ) {
-        guard !spawnStates.isEmpty else {
+        guard let screen else { return }
+
+        let visibleSpawnStates = spawnStates.filter { $0.phase != .notchCue }
+        guard !visibleSpawnStates.isEmpty else {
             fadeAndCloseAll()
             return
         }
 
-        closeWorkItem?.cancel()
-        closeWorkItem = nil
-
-        guard let screen else { return }
-
-        ensurePanel(on: screen)
-        let visibleSpawnStates = spawnStates.filter { $0.phase != .notchCue }
         let visibleIDs = Set(visibleSpawnStates.map(\.id))
-
         for spawnState in visibleSpawnStates {
-            updateViewModel(
+            updateSurface(
                 for: spawnState,
                 selectedSpawnID: selectedSpawnID,
                 screen: screen,
@@ -58,48 +51,167 @@ final class PointerPromptSpawnOverlayController {
             )
         }
 
-        for staleID in viewModelsByID.keys where !visibleIDs.contains(staleID) {
+        for staleID in surfacesByID.keys where !visibleIDs.contains(staleID) {
             fadeAndRemove(id: staleID)
         }
     }
 
     func close() {
-        closeWorkItem?.cancel()
-        closeWorkItem = nil
-        for viewModel in viewModelsByID.values {
-            viewModel.fadeOut()
+        for surface in surfacesByID.values {
+            surface.travelWorkItem?.cancel()
+            surface.removalWorkItem?.cancel()
+            surface.viewModel.fadeOut()
+            surface.panel.close()
         }
-        panel?.close()
-        panel = nil
-        hostingView = nil
-        store.viewModels = []
+        surfacesByID = [:]
         viewModelsByID = [:]
     }
 
-    private func ensurePanel(on screen: NSScreen) {
-        if let panel {
-            guard panel.frame.size != screen.frame.size || panel.frame.origin != screen.frame.origin else { return }
+    private func updateSurface(
+        for spawnState: PointerPromptSpawnState,
+        selectedSpawnID: String?,
+        screen: NSScreen,
+        notchMetrics: PointerPromptNotchMetrics
+    ) {
+        let destination = destinationPoint(
+            for: spawnState.targetHint,
+            viewModel: viewModelsByID[spawnState.id],
+            screen: screen,
+            notchMetrics: notchMetrics
+        )
 
-            panel.setFrame(screen.frame, display: true)
-            hostingView?.frame = CGRect(origin: .zero, size: screen.frame.size)
+        if let surface = surfacesByID[spawnState.id] {
+            updateExistingSurface(
+                surface,
+                spawnState: spawnState,
+                selectedSpawnID: selectedSpawnID,
+                destination: destination,
+                screen: screen
+            )
             return
         }
 
-        let hostingView = PointerPromptSpawnHostingView(rootView: PointerPromptSpawnOverlayContainerView(store: store))
-        hostingView.frame = CGRect(origin: .zero, size: screen.frame.size)
+        createSurface(
+            for: spawnState,
+            selectedSpawnID: selectedSpawnID,
+            destination: destination,
+            screen: screen
+        )
+    }
+
+    private func createSurface(
+        for spawnState: PointerPromptSpawnState,
+        selectedSpawnID: String?,
+        destination: CGPoint,
+        screen: NSScreen
+    ) {
+        let viewModel = PointerPromptSpawnOverlayViewModel()
+        viewModel.followUpSubmitted = followUpSubmitted
+        viewModel.selected = selected
+        viewModel.setSelected(spawnState.id == selectedSpawnID)
+
+        let origin = spawnOrigin(
+            in: screen,
+            index: surfacesByID.count
+        )
+        viewModel.show(
+            state: spawnState,
+            origin: origin,
+            destination: destination,
+            screenSize: screen.frame.size
+        )
+
+        let initialLocalFrame = viewModel.cursorOnlyVisualFrame(at: origin)
+        viewModel.updateViewport(
+            origin: initialLocalFrame.origin,
+            size: initialLocalFrame.size
+        )
+        let surface = makeSurface(
+            id: spawnState.id,
+            viewModel: viewModel,
+            localFrame: initialLocalFrame,
+            screen: screen
+        )
+        configureCallbacks(for: surface)
+        surfacesByID[spawnState.id] = surface
+        viewModelsByID[spawnState.id] = viewModel
+        animateSurfaceTravel(
+            surface,
+            to: destination,
+            on: screen
+        )
+    }
+
+    private func updateExistingSurface(
+        _ surface: PointerPromptSpawnSurface,
+        spawnState: PointerPromptSpawnState,
+        selectedSpawnID: String?,
+        destination: CGPoint,
+        screen: NSScreen
+    ) {
+        surface.screen = screen
+        surface.viewModel.setSelected(spawnState.id == selectedSpawnID)
+        let shouldRetarget = !surface.viewModel.freezesMovement &&
+            distance(from: surface.destination, to: destination) > 1
+
+        surface.viewModel.update(
+            state: spawnState,
+            destination: destination,
+            screenSize: screen.frame.size
+        )
+
+        if spawnState.phase == .fading {
+            fadeAndRemove(id: spawnState.id)
+            return
+        }
+
+        if shouldRetarget {
+            animateSurfaceTravel(
+                surface,
+                to: destination,
+                on: screen
+            )
+            return
+        }
+
+        if surface.isTraveling {
+            updateMouseEventPassthrough(for: surface)
+            return
+        }
+
+        layoutSurface(
+            surface,
+            on: screen,
+            animated: false
+        )
+    }
+
+    private func makeSurface(
+        id: String,
+        viewModel: PointerPromptSpawnOverlayViewModel,
+        localFrame: CGRect,
+        screen: NSScreen
+    ) -> PointerPromptSpawnSurface {
+        let globalFrame = panelFrame(
+            for: localFrame,
+            on: screen
+        )
+        let hostingView = PointerPromptSpawnHostingView(
+            rootView: PointerPromptSpawnOverlayView(viewModel: viewModel)
+        )
+        hostingView.frame = CGRect(origin: .zero, size: globalFrame.size)
         hostingView.autoresizingMask = [.width, .height]
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
-        hostingView.hitTestRegionProvider = { [weak self] in
-            guard let self else { return [] }
+        hostingView.hitTestRegionProvider = { [weak viewModel] in
+            guard let viewModel else { return [] }
 
-            return self.store.viewModels
-                .map(\.hitTestFrame)
-                .filter { !$0.isNull }
+            let frame = viewModel.localHitTestFrame
+            return frame.isNull || frame.isEmpty ? [] : [frame]
         }
 
         let panel = PointerPromptSpawnPanel(
-            contentRect: screen.frame,
+            contentRect: globalFrame,
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
@@ -112,7 +224,7 @@ final class PointerPromptSpawnOverlayController {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.becomesKeyOnlyIfNeeded = false
-        panel.ignoresMouseEvents = false
+        panel.ignoresMouseEvents = true
         panel.level = .statusBar
         panel.collectionBehavior = [
             .canJoinAllSpaces,
@@ -120,74 +232,176 @@ final class PointerPromptSpawnOverlayController {
             .ignoresCycle,
             .stationary
         ]
-        panel.setFrame(screen.frame, display: true)
+        panel.setFrame(globalFrame, display: true)
         panel.orderFrontRegardless()
 
-        self.panel = panel
-        self.hostingView = hostingView
+        return PointerPromptSpawnSurface(
+            id: id,
+            viewModel: viewModel,
+            panel: panel,
+            hostingView: hostingView,
+            screen: screen,
+            destination: viewModel.destination
+        )
     }
 
-    private func updateViewModel(
-        for spawnState: PointerPromptSpawnState,
-        selectedSpawnID: String?,
-        screen: NSScreen,
-        notchMetrics: PointerPromptNotchMetrics
+    private func configureCallbacks(for surface: PointerPromptSpawnSurface) {
+        surface.viewModel.inputActivityChanged = { [weak self, weak surface] isActive in
+            guard let self,
+                  let surface else {
+                return
+            }
+
+            self.updateInputInteractivity(
+                isActive: isActive,
+                for: surface
+            )
+        }
+        surface.viewModel.travelCompleted = { [weak self, weak surface] in
+            guard let self,
+                  let surface else {
+                return
+            }
+
+            surface.isTraveling = false
+            self.layoutSurface(
+                surface,
+                on: surface.screen,
+                animated: false
+            )
+        }
+    }
+
+    private func animateSurfaceTravel(
+        _ surface: PointerPromptSpawnSurface,
+        to destination: CGPoint,
+        on screen: NSScreen
     ) {
-        let viewModel = viewModel(for: spawnState)
-        viewModel.setSelected(spawnState.id == selectedSpawnID)
-        let destination = destinationPoint(
-            for: spawnState.targetHint,
-            viewModel: viewModel,
-            screen: screen,
-            notchMetrics: notchMetrics
+        surface.travelWorkItem?.cancel()
+        surface.screen = screen
+        surface.destination = destination
+        surface.isTraveling = true
+
+        let currentLocalFrame = surface.viewModel.cursorOnlyVisualFrame(
+            at: surface.viewModel.position
+        )
+        applyViewport(
+            currentLocalFrame,
+            to: surface,
+            on: screen
+        )
+        surface.panel.setFrame(
+            panelFrame(for: currentLocalFrame, on: screen),
+            display: true
         )
 
-        if viewModel.state == nil {
-            viewModel.show(
-                state: spawnState,
-                origin: spawnOrigin(in: screen, index: store.viewModels.firstIndex { $0.objectID == viewModel.objectID } ?? 0),
-                destination: destination,
-                screenSize: screen.frame.size
+        let destinationLocalFrame = surface.viewModel.cursorOnlyVisualFrame(
+            at: destination
+        )
+        let destinationGlobalFrame = panelFrame(
+            for: destinationLocalFrame,
+            on: screen
+        )
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = PointerPromptSpawnOverlayViewModel.travelDuration
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.45, 0.05, 0.3, 1)
+            surface.panel.animator().setFrame(destinationGlobalFrame, display: true)
+        }
+
+        let workItem = DispatchWorkItem { [weak self, weak surface] in
+            guard let self,
+                  let surface,
+                  surface.isTraveling else {
+                return
+            }
+
+            surface.isTraveling = false
+            self.layoutSurface(
+                surface,
+                on: surface.screen,
+                animated: false
             )
+        }
+        surface.travelWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + PointerPromptSpawnOverlayViewModel.travelDuration + 0.03,
+            execute: workItem
+        )
+        updateMouseEventPassthrough(for: surface)
+    }
+
+    private func layoutSurface(
+        _ surface: PointerPromptSpawnSurface,
+        on screen: NSScreen,
+        animated: Bool
+    ) {
+        guard !surface.viewModel.visualFrame.isNull,
+              !surface.viewModel.visualFrame.isEmpty else {
+            updateMouseEventPassthrough(for: surface)
             return
         }
 
-        viewModel.update(
-            state: spawnState,
-            destination: destination,
-            screenSize: screen.frame.size
+        surface.screen = screen
+        let localFrame = surface.viewModel.visualFrame
+        applyViewport(
+            localFrame,
+            to: surface,
+            on: screen
         )
-        if spawnState.phase == .fading {
-            scheduleRemove(id: spawnState.id)
+        let globalFrame = panelFrame(for: localFrame, on: screen)
+        if animated {
+            surface.panel.animator().setFrame(globalFrame, display: true)
+        } else {
+            surface.panel.setFrame(globalFrame, display: true)
         }
+        updateMouseEventPassthrough(for: surface)
     }
 
-    private func viewModel(for spawnState: PointerPromptSpawnState) -> PointerPromptSpawnOverlayViewModel {
-        if let viewModel = viewModelsByID[spawnState.id] {
-            return viewModel
-        }
-
-        let viewModel = PointerPromptSpawnOverlayViewModel()
-        viewModel.followUpSubmitted = followUpSubmitted
-        viewModel.selected = selected
-        viewModel.inputActivityChanged = { [weak self] isActive in
-            self?.updateInputInteractivity(isActive: isActive)
-        }
-        viewModelsByID[spawnState.id] = viewModel
-        store.viewModels.append(viewModel)
-        return viewModel
+    private func applyViewport(
+        _ localFrame: CGRect,
+        to surface: PointerPromptSpawnSurface,
+        on screen: NSScreen
+    ) {
+        surface.viewModel.updateViewport(
+            origin: localFrame.origin,
+            size: localFrame.size
+        )
+        surface.hostingView.frame = CGRect(origin: .zero, size: localFrame.size)
+        surface.screen = screen
     }
 
-    private func updateInputInteractivity(isActive: Bool) {
-        guard let panel else { return }
+    private func updateInputInteractivity(
+        isActive: Bool,
+        for surface: PointerPromptSpawnSurface
+    ) {
+        surface.travelWorkItem?.cancel()
+        surface.isTraveling = false
+        layoutSurface(
+            surface,
+            on: surface.screen,
+            animated: false
+        )
 
         if isActive {
             NSApp.activate(ignoringOtherApps: true)
-            panel.orderFrontRegardless()
-            panel.makeKeyAndOrderFront(nil)
+            surface.panel.orderFrontRegardless()
+            surface.panel.makeKeyAndOrderFront(nil)
         } else {
-            panel.orderFrontRegardless()
+            surface.panel.orderFrontRegardless()
         }
+        updateMouseEventPassthrough(for: surface)
+    }
+
+    private func updateMouseEventPassthrough(for surface: PointerPromptSpawnSurface) {
+        let hitTestFrame = surface.viewModel.localHitTestFrame
+        guard !hitTestFrame.isNull, !hitTestFrame.isEmpty else {
+            surface.panel.ignoresMouseEvents = true
+            return
+        }
+
+        let mouseLocation = surface.panel.convertPoint(fromScreen: NSEvent.mouseLocation)
+        surface.panel.ignoresMouseEvents = !hitTestFrame.contains(mouseLocation)
     }
 
     func beginVoiceInput(spawnID: String) -> Bool {
@@ -238,46 +452,28 @@ final class PointerPromptSpawnOverlayController {
     }
 
     private func fadeAndCloseAll() {
-        guard panel != nil else { return }
-
-        for viewModel in viewModelsByID.values {
-            viewModel.fadeOut()
+        for spawnID in Array(surfacesByID.keys) {
+            fadeAndRemove(id: spawnID)
         }
-        scheduleCloseAfterFade()
     }
 
     private func fadeAndRemove(id spawnID: String) {
-        viewModelsByID[spawnID]?.fadeOut()
-        scheduleRemove(id: spawnID)
-    }
+        guard let surface = surfacesByID[spawnID] else { return }
 
-    private func scheduleRemove(id spawnID: String) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) { [weak self] in
-            guard let self else { return }
+        surface.travelWorkItem?.cancel()
+        surface.removalWorkItem?.cancel()
+        surface.viewModel.fadeOut()
+        let workItem = DispatchWorkItem { [weak self, weak surface] in
+            guard let self,
+                  let surface else {
+                return
+            }
 
+            surface.panel.close()
+            self.surfacesByID[spawnID] = nil
             self.viewModelsByID[spawnID] = nil
-            self.store.viewModels.removeAll { viewModel in
-                viewModel.state?.id == spawnID || viewModel.state == nil
-            }
-            if self.store.viewModels.isEmpty {
-                self.scheduleCloseAfterFade()
-            }
         }
-    }
-
-    private func scheduleCloseAfterFade() {
-        closeWorkItem?.cancel()
-        let workItem = DispatchWorkItem { [weak self] in
-            Task { @MainActor in
-                self?.panel?.close()
-                self?.panel = nil
-                self?.hostingView = nil
-                self?.store.viewModels = []
-                self?.viewModelsByID = [:]
-                self?.closeWorkItem = nil
-            }
-        }
-        closeWorkItem = workItem
+        surface.removalWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.24, execute: workItem)
     }
 
@@ -288,12 +484,16 @@ final class PointerPromptSpawnOverlayController {
 
     private func destinationPoint(
         for hint: PointerPromptSpawnTargetHint?,
-        viewModel: PointerPromptSpawnOverlayViewModel,
+        viewModel: PointerPromptSpawnOverlayViewModel?,
         screen: NSScreen,
         notchMetrics: PointerPromptNotchMetrics
     ) -> CGPoint {
-        guard !viewModel.freezesMovement else {
-            return viewModel.destination
+        guard viewModel?.freezesMovement != true else {
+            return viewModel?.destination ?? destinationPoint(
+                for: hint,
+                screen: screen,
+                notchMetrics: notchMetrics
+            )
         }
 
         return destinationPoint(
@@ -390,6 +590,50 @@ final class PointerPromptSpawnOverlayController {
             localPoint,
             in: screen.frame.size
         )
+    }
+
+    private func panelFrame(
+        for localFrame: CGRect,
+        on screen: NSScreen
+    ) -> CGRect {
+        CGRect(
+            x: screen.frame.minX + localFrame.minX,
+            y: screen.frame.maxY - localFrame.maxY,
+            width: localFrame.width,
+            height: localFrame.height
+        )
+    }
+
+    private func distance(from lhs: CGPoint, to rhs: CGPoint) -> CGFloat {
+        hypot(lhs.x - rhs.x, lhs.y - rhs.y)
+    }
+}
+
+private final class PointerPromptSpawnSurface {
+    let id: String
+    let viewModel: PointerPromptSpawnOverlayViewModel
+    let panel: PointerPromptSpawnPanel
+    let hostingView: PointerPromptSpawnHostingView<PointerPromptSpawnOverlayView>
+    var screen: NSScreen
+    var destination: CGPoint
+    var isTraveling = false
+    var travelWorkItem: DispatchWorkItem?
+    var removalWorkItem: DispatchWorkItem?
+
+    init(
+        id: String,
+        viewModel: PointerPromptSpawnOverlayViewModel,
+        panel: PointerPromptSpawnPanel,
+        hostingView: PointerPromptSpawnHostingView<PointerPromptSpawnOverlayView>,
+        screen: NSScreen,
+        destination: CGPoint
+    ) {
+        self.id = id
+        self.viewModel = viewModel
+        self.panel = panel
+        self.hostingView = hostingView
+        self.screen = screen
+        self.destination = destination
     }
 }
 

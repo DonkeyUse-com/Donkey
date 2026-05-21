@@ -1,83 +1,81 @@
 import DonkeyContracts
 import SwiftUI
 
-public struct PointerCoachCursorOverlayView: View {
-    private let request: PointerCoachCursorGuideRequest
-    @State private var startedAt = Date()
-    @State private var now = Date()
+@MainActor
+public final class PointerCoachCursorOverlayViewModel: ObservableObject {
+    public let request: PointerCoachCursorGuideRequest
+    public private(set) var screenSize: CGSize
+    @Published public private(set) var viewportOrigin: CGPoint = .zero
+    @Published public private(set) var viewportSize: CGSize = .zero
+    @Published public private(set) var startedAt = Date()
+    @Published public private(set) var now = Date()
 
-    private let timer = Timer.publish(every: 1.0 / 60.0, on: .main, in: .common).autoconnect()
-
-    public init(request: PointerCoachCursorGuideRequest) {
+    public init(
+        request: PointerCoachCursorGuideRequest,
+        screenSize: CGSize
+    ) {
         self.request = request
+        self.screenSize = screenSize
     }
 
-    public var body: some View {
-        GeometryReader { proxy in
-            let frame = animationFrame(size: proxy.size)
+    public var animationFrame: CoachCursorAnimationFrame {
+        animationFrame(size: screenSize)
+    }
 
-            ZStack(alignment: .topLeading) {
-                Color.black.opacity(0.001)
+    public var visualFrame: CGRect {
+        visualFrame(for: animationFrame)
+    }
 
-                if frame.isHolding {
-                    Circle()
-                        .stroke(Color.white.opacity(0.55), lineWidth: 1.5)
-                        .frame(width: 36, height: 36)
-                        .scaleEffect(frame.haloScale)
-                        .opacity(frame.haloOpacity)
-                        .position(frame.position)
-                }
+    public func start(at date: Date = Date()) {
+        startedAt = date
+        now = date
+    }
 
-                cursor(angle: frame.angle)
-                    .position(frame.position)
-
-                if !frame.visibleLabel.isEmpty {
-                    label(text: frame.visibleLabel, accent: frame.accent)
-                        .position(labelPosition(for: frame.position, in: proxy.size))
-                        .opacity(frame.labelOpacity)
-                }
-            }
-            .ignoresSafeArea()
-        }
-        .onAppear {
-            startedAt = Date()
-            now = startedAt
-        }
-        .onReceive(timer) { value in
-            now = value
+    public func update(now: Date, screenSize: CGSize? = nil) {
+        self.now = now
+        if let screenSize {
+            self.screenSize = screenSize
         }
     }
 
-    private func cursor(angle: Double) -> some View {
-        PointerCoachCursorShape()
-            .fill(Color.white)
-            .overlay {
-                PointerCoachCursorShape()
-                    .stroke(Color(red: 0.34, green: 0.95, blue: 1.0), lineWidth: 1.4)
-            }
-            .shadow(color: Color.black.opacity(0.28), radius: 3, x: 0, y: 2)
-            .frame(width: 26, height: 26)
-            .rotationEffect(.degrees(angle + 50))
+    public func updateViewport(origin: CGPoint, size: CGSize) {
+        viewportOrigin = origin
+        viewportSize = size
     }
 
-    private func label(text: String, accent: Color) -> some View {
-        Text(text)
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.white)
-            .lineLimit(2)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .frame(maxWidth: 280, alignment: .leading)
-            .background {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(accent)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(Color.white.opacity(0.22), lineWidth: 1)
-            }
-            .shadow(color: Color.black.opacity(0.32), radius: 8, x: 0, y: 4)
+    public func renderPoint(_ point: CGPoint) -> CGPoint {
+        CGPoint(
+            x: point.x - viewportOrigin.x,
+            y: point.y - viewportOrigin.y
+        )
+    }
+
+    public func labelPosition(for cursorPosition: CGPoint) -> CGPoint {
+        let prefersLeft = cursorPosition.x > screenSize.width - 340
+        let prefersAbove = cursorPosition.y > screenSize.height - 120
+        return CGPoint(
+            x: cursorPosition.x + (prefersLeft ? -156 : 156),
+            y: cursorPosition.y + (prefersAbove ? -54 : 54)
+        )
+    }
+
+    private func visualFrame(for frame: CoachCursorAnimationFrame) -> CGRect {
+        var bounds = CGRect(
+            x: frame.position.x - 30,
+            y: frame.position.y - 30,
+            width: 60,
+            height: 60
+        )
+        if !frame.visibleLabel.isEmpty {
+            let labelCenter = labelPosition(for: frame.position)
+            bounds = bounds.union(CGRect(
+                x: labelCenter.x - 160,
+                y: labelCenter.y - 42,
+                width: 320,
+                height: 84
+            ))
+        }
+        return bounds.insetBy(dx: -8, dy: -8)
     }
 
     private func animationFrame(size: CGSize) -> CoachCursorAnimationFrame {
@@ -162,15 +160,6 @@ public struct PointerCoachCursorOverlayView: View {
         )
     }
 
-    private func labelPosition(for cursorPosition: CGPoint, in size: CGSize) -> CGPoint {
-        let prefersLeft = cursorPosition.x > size.width - 340
-        let prefersAbove = cursorPosition.y > size.height - 120
-        return CGPoint(
-            x: cursorPosition.x + (prefersLeft ? -156 : 156),
-            y: cursorPosition.y + (prefersAbove ? -54 : 54)
-        )
-    }
-
     private func typedText(_ text: String, progress: Double) -> String {
         guard progress < 1 else { return text }
 
@@ -189,7 +178,72 @@ public struct PointerCoachCursorOverlayView: View {
     }
 }
 
-private struct CoachCursorAnimationFrame {
+public struct PointerCoachCursorOverlayView: View {
+    @ObservedObject private var viewModel: PointerCoachCursorOverlayViewModel
+
+    public init(viewModel: PointerCoachCursorOverlayViewModel) {
+        self.viewModel = viewModel
+    }
+
+    public var body: some View {
+        let frame = viewModel.animationFrame
+
+        ZStack(alignment: .topLeading) {
+            if frame.isHolding {
+                Circle()
+                    .stroke(Color.white.opacity(0.55), lineWidth: 1.5)
+                    .frame(width: 36, height: 36)
+                    .scaleEffect(frame.haloScale)
+                    .opacity(frame.haloOpacity)
+                    .position(viewModel.renderPoint(frame.position))
+            }
+
+            cursor(angle: frame.angle)
+                .position(viewModel.renderPoint(frame.position))
+
+            if !frame.visibleLabel.isEmpty {
+                label(text: frame.visibleLabel, accent: frame.accent)
+                    .position(viewModel.renderPoint(viewModel.labelPosition(for: frame.position)))
+                    .opacity(frame.labelOpacity)
+            }
+        }
+    }
+
+    private func cursor(angle: Double) -> some View {
+        PointerCoachCursorShape()
+            .fill(Color.white)
+            .overlay {
+                PointerCoachCursorShape()
+                    .stroke(Color(red: 0.34, green: 0.95, blue: 1.0), lineWidth: 1.4)
+            }
+            .shadow(color: Color.black.opacity(0.28), radius: 3, x: 0, y: 2)
+            .frame(width: 26, height: 26)
+            .rotationEffect(.degrees(angle + 50))
+    }
+
+    private func label(text: String, accent: Color) -> some View {
+        Text(text)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(.white)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: 280, alignment: .leading)
+            .background {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(accent)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(Color.white.opacity(0.22), lineWidth: 1)
+            }
+            .shadow(color: Color.black.opacity(0.32), radius: 8, x: 0, y: 4)
+    }
+
+}
+
+public struct CoachCursorAnimationFrame {
     var position: CGPoint
     var angle: Double
     var visibleLabel: String
