@@ -25,6 +25,65 @@ public struct LocalAppTarget: Codable, Equatable, Sendable {
     }
 }
 
+public enum LocalAppActionPlanTool: String, Codable, CaseIterable, Equatable, Sendable {
+    case openOrFocusApp = "app.openOrFocus"
+    case observeApp = "app.observe"
+    case focusSearch = "ui.focusSearch"
+    case setText = "ui.setText"
+    case pressReturn = "ui.pressReturn"
+    case verifyCommand = "app.verifyCommand"
+    case verifyVisibleText = "app.verifyVisibleText"
+}
+
+public enum LocalAppActionPlanVerification: String, Codable, CaseIterable, Equatable, Sendable {
+    case commandAttempted
+    case visibleText
+}
+
+public struct LocalAppActionPlan: Codable, Equatable, Sendable {
+    public var tools: [LocalAppActionPlanTool]
+    public var inputEntity: String
+    public var controlID: String
+    public var focusKey: String
+    public var verification: LocalAppActionPlanVerification
+
+    public init(
+        tools: [LocalAppActionPlanTool],
+        inputEntity: String = "query",
+        controlID: String = "search",
+        focusKey: String = "Command+F",
+        verification: LocalAppActionPlanVerification = .commandAttempted
+    ) {
+        self.tools = tools
+        self.inputEntity = inputEntity
+        self.controlID = controlID
+        self.focusKey = focusKey
+        self.verification = verification
+    }
+
+    public static var defaultSearchSubmitPlan: LocalAppActionPlan {
+        LocalAppActionPlan(
+            tools: [
+                .openOrFocusApp,
+                .observeApp,
+                .focusSearch,
+                .setText,
+                .pressReturn,
+                .verifyCommand
+            ]
+        )
+    }
+
+    public var isExecutable: Bool {
+        tools.isEmpty == false
+            && tools.contains(where: { $0 == .setText || $0 == .pressReturn })
+    }
+
+    public var requiresTextInput: Bool {
+        tools.contains(.setText)
+    }
+}
+
 public struct TaskIntent: Codable, Equatable, Sendable {
     public var intentID: String
     public var taskType: String
@@ -35,6 +94,7 @@ public struct TaskIntent: Codable, Equatable, Sendable {
     public var parserSource: TaskIntentParserSource
     public var needsConfirmation: Bool
     public var sourceModelCallID: String?
+    public var actionPlan: LocalAppActionPlan?
     public var metadata: [String: String]
 
     public init(
@@ -47,6 +107,7 @@ public struct TaskIntent: Codable, Equatable, Sendable {
         parserSource: TaskIntentParserSource,
         needsConfirmation: Bool = false,
         sourceModelCallID: String? = nil,
+        actionPlan: LocalAppActionPlan? = nil,
         metadata: [String: String] = [:]
     ) {
         self.intentID = intentID
@@ -58,6 +119,7 @@ public struct TaskIntent: Codable, Equatable, Sendable {
         self.parserSource = parserSource
         self.needsConfirmation = needsConfirmation
         self.sourceModelCallID = sourceModelCallID
+        self.actionPlan = actionPlan
         self.metadata = metadata
     }
 }

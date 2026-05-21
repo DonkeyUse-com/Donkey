@@ -5,12 +5,14 @@ import Foundation
 public struct TaskIntentAdapterRequest: Equatable, Sendable {
     public var command: String
     public var taskDefinitions: [LocalAppTaskDefinition]
+    public var contextSnippets: [String]
     public var sourceTraceID: String
     public var routeRequest: AIModelRouteRequest
 
     public init(
         command: String,
         taskDefinitions: [LocalAppTaskDefinition],
+        contextSnippets: [String] = [],
         sourceTraceID: String,
         routeRequest: AIModelRouteRequest = AIModelRouteRequest(
             jobType: .taskIntent,
@@ -20,6 +22,7 @@ public struct TaskIntentAdapterRequest: Equatable, Sendable {
     ) {
         self.command = command
         self.taskDefinitions = taskDefinitions
+        self.contextSnippets = contextSnippets
         self.sourceTraceID = sourceTraceID
         self.routeRequest = routeRequest
     }
@@ -79,6 +82,7 @@ public struct ProcessBackedLocalLLMTaskIntentAdapter: TaskIntentParsingAdapter {
         let input = LocalLLMTaskIntentSidecarRequest(
             command: request.command,
             taskDefinitions: request.taskDefinitions,
+            contextSnippets: request.contextSnippets,
             sourceTraceID: request.sourceTraceID,
             modelID: entry.modelID,
             metadata: [
@@ -203,6 +207,7 @@ public struct ProcessBackedLocalLLMTaskIntentAdapter: TaskIntentParsingAdapter {
 private struct LocalLLMTaskIntentSidecarRequest: Codable, Equatable, Sendable {
     var command: String
     var taskDefinitions: [LocalAppTaskDefinition]
+    var contextSnippets: [String]
     var sourceTraceID: String
     var modelID: String
     var metadata: [String: String]
@@ -325,7 +330,7 @@ public struct OllamaTaskIntentAdapter: TaskIntentParsingAdapter {
             ),
             "options": [
                 "num_ctx": 2048,
-                "num_predict": 128,
+                "num_predict": 256,
                 "temperature": 0,
                 "top_p": 0.8
             ],
@@ -350,6 +355,13 @@ public struct OllamaTaskIntentAdapter: TaskIntentParsingAdapter {
             ]
             .compactMap(\.self)
             .joined(separator: " | ")
+            let modelPlan = definition.metadata["modelPlanned"] == "true"
+                ? [
+                    "model_plan=true",
+                    "allowed_tools=\(definition.metadata["plan.allowedTools"] ?? "")",
+                    "action_plan_required=true"
+                ].joined(separator: " | ")
+                : ""
 
             return [
                 "task_type=\(definition.taskType)",
@@ -357,23 +369,34 @@ public struct OllamaTaskIntentAdapter: TaskIntentParsingAdapter {
                 "bundle=\(definition.targetApp.bundleIdentifier ?? "unknown")",
                 "capability=\(workflow)",
                 "entities=\(entities)",
-                automation
+                automation,
+                modelPlan
             ]
             .filter { !$0.isEmpty }
             .joined(separator: " | ")
         }
         .joined(separator: "\n")
+        let context = request.contextSnippets
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .prefix(8)
+            .joined(separator: "\n")
 
         return [
             "Classify the user's natural-language request into exactly one supported local app task intent, then return strict JSON.",
             "Choose by capability and target app, not by exact wording. The user should not need to remember command phrases.",
             "Do not include reasoning.",
-            "Use only the provided task definitions. Do not invent apps, task types, entities, or actions.",
+            "Use only the provided task definitions. Do not invent task types, unsupported entities, or actions.",
             "If no capability fits, return the closest supported task with confidence below 0.55.",
             "If a required entity is missing, set needsConfirmation=true and include missingEntity in metadata.",
-            "For dynamic local-item capabilities, extract the requested local app/file/folder name into entities.appName and normalizedEntities.appName. Use targetAppName for the resolved item name when you know it.",
+            "For dynamic local-item capabilities, app/file/folder names may come from the request, relevant local cache, or default-app inference; the catalog will verify availability before execution.",
+            "For local_app_interaction, select the most likely local app for the user's goal, set entities.goal, and when text must be entered set entities.query plus normalizedEntities.query.",
+            "For local_app_interaction, fill actionPlan.tools with allowed tools only: app.openOrFocus, app.observe, ui.focusSearch, ui.setText, ui.pressReturn, app.verifyCommand, app.verifyVisibleText.",
+            "For local_app_interaction, set actionPlan.inputEntity to query when ui.setText should type the query, and set actionPlan.controlID/focusKey for the UI control strategy.",
+            "For every other task type, actionPlan.tools must be empty.",
             "For AppleScript-backed capabilities, include compact appleScript.source or appleScript.template metadata only when the provided action is insufficient; prefer task metadata and normalized entities for speed.",
             "Command: \(request.command)",
+            "Relevant local cache:",
+            context,
             "Supported task capabilities:",
             tasks
         ]
@@ -426,6 +449,39 @@ public struct OllamaTaskIntentAdapter: TaskIntentParsingAdapter {
     }
 }
 
+public struct FallbackTaskIntentParsingAdapter: TaskIntentParsingAdapter {
+    public var primary: any TaskIntentParsingAdapter
+    public var fallback: any TaskIntentParsingAdapter
+
+    public init(
+        primary: any TaskIntentParsingAdapter,
+        fallback: any TaskIntentParsingAdapter
+    ) {
+        self.primary = primary
+        self.fallback = fallback
+    }
+
+    public func parseTaskIntent(_ request: TaskIntentAdapterRequest) async -> TaskIntentAdapterResult {
+        let primaryResult = await primary.parseTaskIntent(request)
+        guard primaryResult.intent == nil,
+              [.invalidOutput, .providerOutage, .timeout].contains(primaryResult.trace.status)
+        else {
+            return primaryResult
+        }
+
+        let fallbackResult = await fallback.parseTaskIntent(request)
+        guard fallbackResult.intent != nil else {
+            return primaryResult
+        }
+
+        var trace = fallbackResult.trace
+        trace.metadata["fallback.primaryStatus"] = primaryResult.trace.status.rawValue
+        trace.metadata["fallback.primaryValidation"] = primaryResult.trace.validationStatus
+        trace.metadata["fallback.used"] = "true"
+        return TaskIntentAdapterResult(intent: fallbackResult.intent, trace: trace)
+    }
+}
+
 public struct LocalModelTaskIntentResolver: Sendable {
     public var catalog: LocalAppTaskCatalog
     public var adapter: any TaskIntentParsingAdapter
@@ -433,7 +489,10 @@ public struct LocalModelTaskIntentResolver: Sendable {
     public init(
         catalog: LocalAppTaskCatalog,
         adapter: any TaskIntentParsingAdapter = PriorityQueuedTaskIntentParsingAdapter(
-            base: ProcessBackedLocalLLMTaskIntentAdapter()
+            base: FallbackTaskIntentParsingAdapter(
+                primary: ProcessBackedLocalLLMTaskIntentAdapter(),
+                fallback: OllamaTaskIntentAdapter()
+            )
         )
     ) {
         self.catalog = catalog
@@ -448,6 +507,7 @@ public struct LocalModelTaskIntentResolver: Sendable {
             TaskIntentAdapterRequest(
                 command: command,
                 taskDefinitions: catalog.taskDefinitions,
+                contextSnippets: SQLiteAgentMemoryStore.shared?.contextSnippets(for: command) ?? [],
                 sourceTraceID: sourceTraceID
             )
         )
@@ -481,6 +541,34 @@ private enum TaskIntentWireCodec {
         let targetAppNameSchema: [String: Any] = allowsDynamicTargets
             ? ["type": "string"]
             : ["type": "string", "enum": Array(Set(taskDefinitions.map(\.targetApp.appName))).sorted()]
+        let actionPlanSchema: [String: Any] = [
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "tools",
+                "inputEntity",
+                "controlID",
+                "focusKey",
+                "verification"
+            ],
+            "properties": [
+                "tools": [
+                    "type": "array",
+                    "maxItems": 8,
+                    "items": [
+                        "type": "string",
+                        "enum": LocalAppActionPlanTool.allCases.map(\.rawValue)
+                    ]
+                ],
+                "inputEntity": ["type": "string"],
+                "controlID": ["type": "string"],
+                "focusKey": ["type": "string"],
+                "verification": [
+                    "type": "string",
+                    "enum": LocalAppActionPlanVerification.allCases.map(\.rawValue)
+                ]
+            ]
+        ]
 
         return [
             "type": "object",
@@ -492,6 +580,7 @@ private enum TaskIntentWireCodec {
                 "normalizedEntities",
                 "confidence",
                 "needsConfirmation",
+                "actionPlan",
                 "metadata"
             ],
             "properties": [
@@ -507,6 +596,7 @@ private enum TaskIntentWireCodec {
                 ],
                 "confidence": ["type": "number", "minimum": 0, "maximum": 1],
                 "needsConfirmation": ["type": "boolean"],
+                "actionPlan": actionPlanSchema,
                 "metadata": [
                     "type": "object",
                     "additionalProperties": ["type": "string"]
@@ -532,6 +622,9 @@ private enum TaskIntentWireCodec {
         guard let definition = exactDefinition ?? dynamicDefinition else {
             return nil
         }
+        guard definition.metadata["modelPlanned"] == "true" || wire.actionPlan.tools.isEmpty else {
+            return nil
+        }
 
         var entities = wire.entities
         var normalizedEntities = normalizedEntities(from: wire, definition: definition)
@@ -554,6 +647,7 @@ private enum TaskIntentWireCodec {
         }
 
         let needsConfirmation = wire.needsConfirmation || missingRequiredEntity != nil
+        let actionPlan = wire.actionPlan.tools.isEmpty ? nil : wire.actionPlan
         let primaryEntity = definition.verificationEntityName
             .flatMap { normalizedEntities[$0] }
             ?? normalizedEntities.values.sorted().first
@@ -571,6 +665,7 @@ private enum TaskIntentWireCodec {
             parserSource: .localModel,
             needsConfirmation: needsConfirmation,
             sourceModelCallID: sourceModelCallID,
+            actionPlan: actionPlan,
             metadata: metadata
         )
     }
@@ -620,6 +715,7 @@ private struct TaskIntentWire: Decodable {
     var normalizedEntities: [String: String]
     var confidence: Double
     var needsConfirmation: Bool
+    var actionPlan: LocalAppActionPlan
     var metadata: [String: String]
 }
 

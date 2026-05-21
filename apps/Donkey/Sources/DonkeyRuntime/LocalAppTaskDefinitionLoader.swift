@@ -71,7 +71,8 @@ public struct LocalAppTaskDefinitionLoader: Sendable {
 
     public static var runtimeSeedDefinitions: [LocalAppTaskDefinition] {
         [
-            LocalAppTaskCatalog.genericLocalItemOpenDefinition
+            LocalAppTaskCatalog.genericLocalItemOpenDefinition,
+            LocalAppTaskCatalog.genericLocalAppInteractionDefinition
         ]
     }
 

@@ -288,6 +288,86 @@ struct LocalAppTaskTests {
     }
 
     @Test
+    func catalogResolvesGenericModelPlannedLocalAppInteraction() throws {
+        let catalog = LocalAppTaskCatalog(
+            taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
+            availabilityProvider: StaticLocalAppAvailabilityProvider(
+                installedBundleIdentifiers: ["com.apple.Music"]
+            )
+        )
+
+        let resolution = catalog.resolve(intent: genericLocalAppInteractionIntent(
+            appName: "Music",
+            query: "Justin Bieber",
+            planTools: [
+                .openOrFocusApp,
+                .observeApp,
+                .focusSearch,
+                .setText,
+                .pressReturn,
+                .pressReturn,
+                .verifyCommand
+            ]
+        ))
+        let intent = try #require(resolution.intent)
+        let definition = try #require(resolution.definition)
+        let localAdapter = LocalAppTaskAdapter(definition: definition)
+        let plan = localAdapter.dryRunPlan(
+            for: intent,
+            observation: LocalAppTaskObservation(
+                appIsRunning: true,
+                appIsFocused: true,
+                availableControls: ["search": true],
+                confidence: 0.7
+            )
+        )
+
+        #expect(resolution.status == .resolved)
+        #expect(intent.taskType == "local_app_interaction")
+        #expect(intent.targetApp.appName == "Music")
+        #expect(intent.targetApp.bundleIdentifier == "com.apple.Music")
+        #expect(definition.metadata["modelPlanned"] == "true")
+        #expect(definition.metadata["plan.tools"] == "app.openOrFocus,app.observe,ui.focusSearch,ui.setText,ui.pressReturn,ui.pressReturn,app.verifyCommand")
+        #expect(plan.terminalState == .completed)
+        #expect(plan.steps.map(\.role) == [
+            .parseIntent,
+            .launchOrFocusApp,
+            .observeApp,
+            .focusControl,
+            .enterText,
+            .submit,
+            .submit,
+            .verifyResult
+        ])
+
+        let commands = localAdapter.guardedKeyboardCommandTemplates(
+            for: intent,
+            issuedAt: timestamp(100)
+        )
+        #expect(commands.map(\.key) == ["Command+F", "Justin Bieber", "Return", "Return"])
+        #expect(commands.first?.metadata["plan.tool"] == "ui.focusSearch")
+    }
+
+    @Test
+    func genericModelPlannedInteractionRequiresTypedActionPlanBeforeExecution() {
+        let catalog = LocalAppTaskCatalog(
+            taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
+            availabilityProvider: StaticLocalAppAvailabilityProvider(
+                installedBundleIdentifiers: ["com.apple.Music"]
+            )
+        )
+
+        let resolution = catalog.resolve(intent: genericLocalAppInteractionIntent(
+            appName: "Music",
+            query: "Justin Bieber",
+            planTools: nil
+        ))
+
+        #expect(resolution.status == .needsConfirmation)
+        #expect(resolution.metadata["reason"] == "missingActionPlan")
+    }
+
+    @Test
     func catalogResolvesStructuredIntentAgainstAvailableInstalledAppDefinition() throws {
         let catalog = LocalAppTaskCatalog(
             taskDefinitions: BuiltInLocalAppTaskDefinitions.benchmarkFixtures,
@@ -411,8 +491,8 @@ struct LocalAppTaskTests {
             loader: loader
         )
 
-        #expect(catalog.taskDefinitions.map(\.taskType) == ["app_open"])
-        #expect(store?.taskDefinitions().map(\.taskType) == ["app_open"])
+        #expect(catalog.taskDefinitions.map(\.taskType) == ["app_open", "local_app_interaction"])
+        #expect(store?.taskDefinitions().map(\.taskType) == ["app_open", "local_app_interaction"])
         #expect(catalog.taskDefinitions.contains { $0.targetApp.appName == "Weather" } == false)
         #expect(catalog.taskDefinitions.contains { $0.targetApp.appName == "Music" } == false)
         #expect(catalog.taskDefinitions.contains { $0.targetApp.appName == "Preview" } == false)
@@ -891,6 +971,44 @@ struct LocalAppTaskTests {
             confidence: confidence,
             parserSource: .localModel,
             metadata: definition.metadata
+        )
+    }
+
+    private func genericLocalAppInteractionIntent(
+        appName: String,
+        query: String,
+        planTools: [LocalAppActionPlanTool]?,
+        confidence: Double = 0.93
+    ) -> TaskIntent {
+        let actionPlan = planTools.map {
+            LocalAppActionPlan(
+                tools: $0,
+                inputEntity: "query",
+                controlID: "search",
+                focusKey: "Command+F",
+                verification: .commandAttempted
+            )
+        }
+        return TaskIntent(
+            intentID: "local_app_interaction-\(slug(query))",
+            taskType: "local_app_interaction",
+            targetApp: LocalAppTarget(appName: appName, titleContains: appName),
+            entities: [
+                "appName": appName,
+                "goal": "play media",
+                "query": query
+            ],
+            normalizedEntities: [
+                "appName": appName,
+                "goal": "play media",
+                "query": query
+            ],
+            confidence: confidence,
+            parserSource: .localModel,
+            actionPlan: actionPlan,
+            metadata: [
+                "requestedItemName": appName
+            ]
         )
     }
 

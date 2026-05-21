@@ -325,7 +325,7 @@ struct AIHarnessAdapterTests {
         let httpClient = FakeAIHTTPClient(
             data: ollamaResponseData(
                 response: """
-                {"taskType":"weather_lookup","targetAppName":"Weather","entities":{"city":"SF"},"normalizedEntities":{"city":"San Francisco"},"confidence":0.93,"needsConfirmation":false,"metadata":{"source":"test"}}
+                {"taskType":"weather_lookup","targetAppName":"Weather","entities":{"city":"SF"},"normalizedEntities":{"city":"San Francisco"},"confidence":0.93,"needsConfirmation":false,"actionPlan":{"tools":[],"inputEntity":"","controlID":"","focusKey":"","verification":"commandAttempted"},"metadata":{"source":"test"}}
                 """
             ),
             statusCode: 200
@@ -373,7 +373,7 @@ struct AIHarnessAdapterTests {
         #expect(body["format"] as? [String: Any] != nil)
         #expect(body["keep_alive"] as? String == "10m")
         let options = try #require(body["options"] as? [String: Any])
-        #expect(options["num_predict"] as? Int == 128)
+        #expect(options["num_predict"] as? Int == 256)
         #expect(options["num_ctx"] as? Int == 2048)
         #expect((body["prompt"] as? String)?.contains("Use only the provided task definitions") == true)
         #expect((body["prompt"] as? String)?.contains("Choose by capability and target app") == true)
@@ -390,7 +390,7 @@ struct AIHarnessAdapterTests {
                 result: LocalJSONSidecarResult(
                     status: .completed,
                     outputData: Data("""
-                    {"outputText":"{\\"taskType\\":\\"media_playback\\",\\"targetAppName\\":\\"Music\\",\\"entities\\":{\\"query\\":\\"cold play\\"},\\"normalizedEntities\\":{\\"query\\":\\"Cold Play\\"},\\"confidence\\":0.91,\\"needsConfirmation\\":false,\\"metadata\\":{\\"source\\":\\"test\\"}}","metadata":{"local.provider":"ollama-sidecar"}}
+                    {"outputText":"{\\"taskType\\":\\"media_playback\\",\\"targetAppName\\":\\"Music\\",\\"entities\\":{\\"query\\":\\"cold play\\"},\\"normalizedEntities\\":{\\"query\\":\\"Cold Play\\"},\\"confidence\\":0.91,\\"needsConfirmation\\":false,\\"actionPlan\\":{\\"tools\\":[],\\"inputEntity\\":\\"\\",\\"controlID\\":\\"\\",\\"focusKey\\":\\"\\",\\"verification\\":\\"commandAttempted\\"},\\"metadata\\":{\\"source\\":\\"test\\"}}","metadata":{"local.provider":"ollama-sidecar"}}
                     """.utf8),
                     latencyMS: 14,
                     metadata: ["sidecar.role": "taskIntent"]
@@ -416,11 +416,44 @@ struct AIHarnessAdapterTests {
     }
 
     @Test
+    func processBackedLocalLLMTaskIntentAdapterDecodesGenericPlannedInteraction() async throws {
+        let adapter = ProcessBackedLocalLLMTaskIntentAdapter(
+            router: AIModelRouter(registry: .defaultHybridPlanner),
+            sidecarRunner: FakeSidecarRunner(
+                result: LocalJSONSidecarResult(
+                    status: .completed,
+                    outputData: Data("""
+                    {"outputText":"{\\"taskType\\":\\"local_app_interaction\\",\\"targetAppName\\":\\"Music\\",\\"entities\\":{\\"appName\\":\\"Music\\",\\"goal\\":\\"play media\\",\\"query\\":\\"justin bieber\\"},\\"normalizedEntities\\":{\\"appName\\":\\"Music\\",\\"goal\\":\\"play media\\",\\"query\\":\\"Justin Bieber\\"},\\"confidence\\":0.91,\\"needsConfirmation\\":false,\\"actionPlan\\":{\\"tools\\":[\\"app.openOrFocus\\",\\"app.observe\\",\\"ui.focusSearch\\",\\"ui.setText\\",\\"ui.pressReturn\\",\\"ui.pressReturn\\",\\"app.verifyCommand\\"],\\"inputEntity\\":\\"query\\",\\"controlID\\":\\"search\\",\\"focusKey\\":\\"Command+F\\",\\"verification\\":\\"commandAttempted\\"},\\"metadata\\":{}}","metadata":{"local.provider":"ollama-sidecar"}}
+                    """.utf8),
+                    latencyMS: 14,
+                    metadata: ["sidecar.role": "taskIntent"]
+                )
+            )
+        )
+
+        let result = await adapter.parseTaskIntent(
+            TaskIntentAdapterRequest(
+                command: "play some justin bieber",
+                taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
+                contextSnippets: ["Music application com.apple.Music"],
+                sourceTraceID: "trace-local-app-plan"
+            )
+        )
+
+        #expect(result.intent?.taskType == "local_app_interaction")
+        #expect(result.intent?.targetApp.appName == "Music")
+        #expect(result.intent?.normalizedEntities["query"] == "Justin Bieber")
+        #expect(result.intent?.actionPlan?.tools.contains(.setText) == true)
+        #expect(result.intent?.actionPlan?.inputEntity == "query")
+        #expect(result.trace.status == .completed)
+    }
+
+    @Test
     func localModelTaskIntentResolverValidatesAgainstCatalogAvailability() async {
         let httpClient = FakeAIHTTPClient(
             data: ollamaResponseData(
                 response: """
-                {"taskType":"weather_lookup","targetAppName":"Weather","entities":{"city":"SF"},"normalizedEntities":{"city":"San Francisco"},"confidence":0.93,"needsConfirmation":false,"metadata":{}}
+                {"taskType":"weather_lookup","targetAppName":"Weather","entities":{"city":"SF"},"normalizedEntities":{"city":"San Francisco"},"confidence":0.93,"needsConfirmation":false,"actionPlan":{"tools":[],"inputEntity":"","controlID":"","focusKey":"","verification":"commandAttempted"},"metadata":{}}
                 """
             ),
             statusCode: 200
@@ -465,7 +498,7 @@ struct AIHarnessAdapterTests {
         let httpClient = FakeAIHTTPClient(
             data: ollamaResponseData(
                 response: """
-                {"taskType":"app_open","targetAppName":"Figma","entities":{"appName":"figma"},"normalizedEntities":{"appName":"Figma"},"confidence":0.94,"needsConfirmation":false,"metadata":{}}
+                {"taskType":"app_open","targetAppName":"Figma","entities":{"appName":"figma"},"normalizedEntities":{"appName":"Figma"},"confidence":0.94,"needsConfirmation":false,"actionPlan":{"tools":[],"inputEntity":"","controlID":"","focusKey":"","verification":"commandAttempted"},"metadata":{}}
                 """
             ),
             statusCode: 200
@@ -557,7 +590,7 @@ struct AIHarnessAdapterTests {
         let httpClient = FakeAIHTTPClient(
             data: ollamaResponseData(
                 response: """
-                {"taskType":"weather_lookup","targetAppName":"Weather","entities":{},"normalizedEntities":{},"confidence":0.2,"needsConfirmation":false,"metadata":{}}
+                {"taskType":"weather_lookup","targetAppName":"Weather","entities":{},"normalizedEntities":{},"confidence":0.2,"needsConfirmation":false,"actionPlan":{"tools":[],"inputEntity":"","controlID":"","focusKey":"","verification":"commandAttempted"},"metadata":{}}
                 """
             ),
             statusCode: 200

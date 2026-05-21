@@ -666,6 +666,9 @@ public struct LocalAppTaskCatalog: Sendable {
         if intent.taskType == Self.genericAppOpenTaskType {
             return resolveGenericAppOpen(intent: intent)
         }
+        if intent.taskType == Self.genericLocalAppInteractionTaskType {
+            return resolveGenericLocalAppInteraction(intent: intent)
+        }
 
         guard let definition = taskDefinitions.first(where: { supports(intent: intent, definition: $0) }) else {
             return LocalAppTaskCatalogResolution(
@@ -780,8 +783,122 @@ public struct LocalAppTaskCatalog: Sendable {
         )
     }
 
+    private func resolveGenericLocalAppInteraction(intent: TaskIntent) -> LocalAppTaskCatalogResolution {
+        let requestedAppName = intent.metadata["requestedItemName"]
+            ?? intent.normalizedEntities["appName"]
+            ?? intent.entities["appName"]
+            ?? intent.targetApp.appName
+        let cleanedRequestedAppName = LocalAppLookup.cleanedLookupName(requestedAppName)
+        guard !cleanedRequestedAppName.isEmpty,
+              cleanedRequestedAppName != LocalAppLookup.cleanedLookupName(Self.genericLocalAppInteractionTarget.appName)
+        else {
+            return LocalAppTaskCatalogResolution(
+                status: .needsConfirmation,
+                intent: intent,
+                definition: Self.genericLocalAppInteractionDefinition,
+                metadata: [
+                    "reason": "appName",
+                    "taskType": Self.genericLocalAppInteractionTaskType
+                ]
+            )
+        }
+
+        guard let plan = intent.actionPlan else {
+            return LocalAppTaskCatalogResolution(
+                status: .needsConfirmation,
+                intent: intent,
+                definition: Self.genericLocalAppInteractionDefinition,
+                metadata: [
+                    "reason": "missingActionPlan",
+                    "taskType": Self.genericLocalAppInteractionTaskType,
+                    "targetApp": cleanedRequestedAppName
+                ]
+            )
+        }
+        guard plan.isExecutable else {
+            return LocalAppTaskCatalogResolution(
+                status: .needsConfirmation,
+                intent: intent,
+                definition: Self.genericLocalAppInteractionDefinition,
+                metadata: [
+                    "reason": "invalidActionPlan",
+                    "taskType": Self.genericLocalAppInteractionTaskType,
+                    "targetApp": cleanedRequestedAppName,
+                    "plan.tools": plan.tools.map(\.rawValue).joined(separator: ",")
+                ]
+            )
+        }
+
+        let inputEntity = plan.inputEntity
+        if plan.requiresTextInput,
+           Self.entityValue(named: inputEntity, in: intent).isEmpty {
+            return LocalAppTaskCatalogResolution(
+                status: .needsConfirmation,
+                intent: intent,
+                definition: Self.genericLocalAppInteractionDefinition,
+                metadata: [
+                    "reason": inputEntity,
+                    "taskType": Self.genericLocalAppInteractionTaskType,
+                    "targetApp": cleanedRequestedAppName
+                ]
+            )
+        }
+
+        let availability = availabilityProvider.availability(namedApp: cleanedRequestedAppName)
+        let target = availability.target
+        let definition = Self.genericLocalAppInteractionDefinition(
+            target: target,
+            plan: plan
+        )
+        var resolvedIntent = intent
+        resolvedIntent.targetApp = target
+        resolvedIntent.normalizedEntities["appName"] = target.appName
+        resolvedIntent.metadata["bundleIdentifier"] = target.bundleIdentifier ?? ""
+        resolvedIntent.metadata["targetApp"] = target.appName
+        resolvedIntent.metadata["requestedItemName"] = cleanedRequestedAppName
+
+        guard availability.isInstalled else {
+            return LocalAppTaskCatalogResolution(
+                status: .appUnavailable,
+                intent: resolvedIntent,
+                definition: definition,
+                availability: availability,
+                metadata: [
+                    "reason": "targetAppUnavailable",
+                    "taskType": definition.taskType,
+                    "targetApp": target.appName,
+                    "requestedItemName": cleanedRequestedAppName,
+                    "lookupProvider": availability.metadata["provider"] ?? "",
+                    "itemKind": availability.metadata["itemKind"] ?? target.metadata["localItem.kind"] ?? ""
+                ]
+            )
+        }
+
+        return LocalAppTaskCatalogResolution(
+            status: .resolved,
+            intent: resolvedIntent,
+            definition: definition,
+            availability: availability,
+            metadata: [
+                "taskType": definition.taskType,
+                "targetApp": target.appName,
+                "requestedItemName": cleanedRequestedAppName,
+                "lookupProvider": availability.metadata["provider"] ?? "",
+                "itemKind": availability.metadata["itemKind"] ?? target.metadata["localItem.kind"] ?? "",
+                "plan.tools": plan.tools.map(\.rawValue).joined(separator: ",")
+            ]
+        )
+    }
+
     public static var genericLocalItemOpenDefinition: LocalAppTaskDefinition {
         genericAppOpenDefinition(target: genericLocalItemTarget)
+    }
+
+    public static var genericLocalAppInteractionDefinition: LocalAppTaskDefinition {
+        genericLocalAppInteractionDefinition(
+            target: genericLocalAppInteractionTarget,
+            plan: .defaultSearchSubmitPlan
+        )
     }
 
     public static func genericAppOpenDefinition(target: LocalAppTarget) -> LocalAppTaskDefinition {
@@ -821,6 +938,125 @@ public struct LocalAppTaskCatalog: Sendable {
         )
     }
 
+    public static func genericLocalAppInteractionDefinition(
+        target: LocalAppTarget,
+        plan: LocalAppActionPlan
+    ) -> LocalAppTaskDefinition {
+        let inputEntity = plan.inputEntity
+        var metadata: [String: String] = [
+            "catalogEntry": "generic-local-app-interaction",
+            "displayTitle": "local app interaction",
+            "taskLabelTemplate": "Use {appName}",
+            "verificationTextKey": inputEntity,
+            "domain": "app",
+            "dynamicTarget": target.metadata["dynamicTarget"] ?? "false",
+            "modelPlanned": "true",
+            "plan.tools": plan.tools.map(\.rawValue).joined(separator: ","),
+            "plan.inputEntity": inputEntity,
+            "plan.allowedTools": LocalAppActionPlanTool.allCases.map(\.rawValue).joined(separator: ",")
+        ]
+        metadata["verificationMode"] = plan.verification == .visibleText
+            ? "visibleText"
+            : "commandAttempted"
+
+        return LocalAppTaskDefinition(
+            taskType: genericLocalAppInteractionTaskType,
+            targetApp: target,
+            triggerTerms: [],
+            entityRules: [
+                LocalAppTaskEntityRule(
+                    name: "appName",
+                    required: true,
+                    metadata: [
+                        "dynamicLookupEntity": "true",
+                        "description": "Requested local app selected by the model"
+                    ]
+                ),
+                LocalAppTaskEntityRule(
+                    name: "goal",
+                    required: true,
+                    metadata: ["description": "Short model-selected action goal"]
+                ),
+                LocalAppTaskEntityRule(
+                    name: "query",
+                    required: false,
+                    metadata: ["description": "Text to enter when the model plan includes set_text"]
+                )
+            ],
+            workflowSteps: Self.workflowSteps(for: plan),
+            observationStrategies: [.accessibility, .windowMetadata, .screenshotForLocalModel],
+            verificationEntityName: inputEntity,
+            metadata: metadata
+        )
+    }
+
+    private static func workflowSteps(
+        for plan: LocalAppActionPlan
+    ) -> [LocalAppTaskWorkflowStepDefinition] {
+        var steps = BuiltInLocalAppTaskDefinitions.commonWorkflowPrefix
+        var submitIndex = 1
+        let inputEntity = plan.inputEntity
+        for tool in plan.tools {
+            switch tool {
+            case .openOrFocusApp, .observeApp:
+                continue
+            case .focusSearch:
+                steps.append(LocalAppTaskWorkflowStepDefinition(
+                    id: "model-plan-focus-search",
+                    role: .focusControl,
+                    summary: "Focus the model-selected search control",
+                    metadata: [
+                        "controlID": plan.controlID,
+                        "key": plan.focusKey,
+                        "plan.tool": tool.rawValue
+                    ]
+                ))
+            case .setText:
+                steps.append(LocalAppTaskWorkflowStepDefinition(
+                    id: "model-plan-set-text",
+                    role: .enterText,
+                    summary: "Enter the model-selected text entity",
+                    metadata: [
+                        "controlID": plan.controlID,
+                        "entityName": inputEntity,
+                        "plan.tool": tool.rawValue
+                    ]
+                ))
+            case .pressReturn:
+                steps.append(LocalAppTaskWorkflowStepDefinition(
+                    id: "model-plan-press-return-\(submitIndex)",
+                    role: .submit,
+                    summary: "Submit the model-planned action",
+                    metadata: [
+                        "key": "Return",
+                        "plan.tool": tool.rawValue
+                    ]
+                ))
+                submitIndex += 1
+            case .verifyCommand, .verifyVisibleText:
+                steps.append(LocalAppTaskWorkflowStepDefinition(
+                    id: "model-plan-verify",
+                    role: .verifyResult,
+                    summary: "Verify the model-planned action",
+                    metadata: ["plan.tool": tool.rawValue]
+                ))
+            }
+        }
+        if steps.contains(where: { $0.role == .verifyResult }) == false {
+            steps.append(LocalAppTaskWorkflowStepDefinition(
+                id: "model-plan-verify",
+                role: .verifyResult,
+                summary: "Verify the model-planned action"
+            ))
+        }
+        return steps
+    }
+
+    private static func entityValue(named entityName: String, in intent: TaskIntent) -> String {
+        (intent.normalizedEntities[entityName] ?? intent.entities[entityName] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func slug(_ value: String) -> String {
         LocalAppTaskIntentParser.normalizedPhrase(value)
             .split(separator: " ")
@@ -828,6 +1064,7 @@ public struct LocalAppTaskCatalog: Sendable {
     }
 
     private static let genericAppOpenTaskType = "app_open"
+    private static let genericLocalAppInteractionTaskType = "local_app_interaction"
     private static let minimumModelIntentConfidence = 0.55
     private static var genericLocalItemTarget: LocalAppTarget {
         LocalAppTarget(
@@ -836,6 +1073,16 @@ public struct LocalAppTaskCatalog: Sendable {
             metadata: [
                 "dynamicTarget": "true",
                 "localItem.kind": "dynamic"
+            ]
+        )
+    }
+    private static var genericLocalAppInteractionTarget: LocalAppTarget {
+        LocalAppTarget(
+            appName: "Local App",
+            titleContains: nil,
+            metadata: [
+                "dynamicTarget": "true",
+                "localItem.kind": LocalItemKind.application.rawValue
             ]
         )
     }
@@ -1056,6 +1303,7 @@ public enum BuiltInLocalAppTaskDefinitions {
     public static var benchmarkFixtures: [LocalAppTaskDefinition] {
         [
             LocalAppTaskCatalog.genericLocalItemOpenDefinition,
+            LocalAppTaskCatalog.genericLocalAppInteractionDefinition,
             weatherLookup,
             mediaPlayback,
             documentFormFill

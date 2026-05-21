@@ -482,9 +482,9 @@ def run_local_llm(request: dict[str, Any]) -> dict[str, Any]:
         max_tokens = 240
     else:
         task_definitions = request.get("taskDefinitions", [])
-        prompt = task_intent_prompt(command, task_definitions)
+        prompt = task_intent_prompt(command, task_definitions, request.get("contextSnippets", []))
         schema = task_intent_schema(task_definitions)
-        max_tokens = 128
+        max_tokens = 256
     body = {
         "model": request.get("modelID") or MODEL_ID,
         "prompt": prompt,
@@ -644,10 +644,15 @@ def pointer_coach_cursor_guide_schema() -> dict[str, Any]:
     }
 
 
-def task_intent_prompt(command: str, task_definitions: list[dict[str, Any]]) -> str:
+def task_intent_prompt(
+    command: str,
+    task_definitions: list[dict[str, Any]],
+    context_snippets: list[Any] | None = None,
+) -> str:
     task_lines: list[str] = []
     for definition in task_definitions:
         target = definition.get("targetApp", {})
+        definition_metadata = definition.get("metadata") or {}
         entity_parts = []
         for rule in definition.get("entityRules", []):
             aliases = ",".join(sorted((rule.get("aliases") or {}).keys()))
@@ -659,29 +664,43 @@ def task_intent_prompt(command: str, task_definitions: list[dict[str, Any]]) -> 
             for step in definition.get("workflowSteps", [])
             if step.get("role") != "parseIntent" and step.get("summary")
         )
-        task_lines.append(
-            " | ".join(
+        model_plan = ""
+        if definition_metadata.get("modelPlanned") == "true":
+            model_plan = " | ".join(
                 [
-                    f"task_type={definition.get('taskType')}",
-                    f"app={target.get('appName')}",
-                    f"bundle={target.get('bundleIdentifier', 'unknown')}",
-                    f"capability={workflow}",
-                    f"entities={'; '.join(entity_parts)}",
-                    f"dynamic_target={(definition.get('metadata') or {}).get('dynamicTarget', 'false')}",
+                    "model_plan=true",
+                    f"allowed_tools={definition_metadata.get('plan.allowedTools', '')}",
+                    "action_plan_required=true",
                 ]
             )
-        )
+        parts = [
+            f"task_type={definition.get('taskType')}",
+            f"app={target.get('appName')}",
+            f"bundle={target.get('bundleIdentifier', 'unknown')}",
+            f"capability={workflow}",
+            f"entities={'; '.join(entity_parts)}",
+            f"dynamic_target={definition_metadata.get('dynamicTarget', 'false')}",
+            model_plan,
+        ]
+        task_lines.append(" | ".join(item for item in parts if item))
+    context = "\n".join(str(item) for item in (context_snippets or [])[:8] if str(item).strip())
 
     return "\n".join(
         [
             "Classify the user's natural-language request into exactly one supported local app task intent, then return strict JSON.",
             "Choose by capability and target app, not by exact wording. The user should not need to remember command phrases.",
             "Do not include reasoning.",
-            "Use only the provided task definitions. Do not invent apps, task types, entities, or actions.",
+            "Use only the provided task definitions. Do not invent task types, unsupported entities, or actions.",
             "If no capability fits, return the closest supported task with confidence below 0.55.",
             "If a required entity is missing, set needsConfirmation=true and include missingEntity in metadata.",
-            "For dynamic local-item capabilities, extract the requested local app/file/folder name into entities.appName and normalizedEntities.appName. Use targetAppName for the resolved item name when you know it.",
+            "For dynamic local-item capabilities, app/file/folder names may come from the request, relevant local cache, or default-app inference; the catalog will verify availability before execution.",
+            "For local_app_interaction, select the most likely local app for the user's goal, set entities.goal, and when text must be entered set entities.query plus normalizedEntities.query.",
+            "For local_app_interaction, fill actionPlan.tools with allowed tools only: app.openOrFocus, app.observe, ui.focusSearch, ui.setText, ui.pressReturn, app.verifyCommand, app.verifyVisibleText.",
+            "For local_app_interaction, set actionPlan.inputEntity to query when ui.setText should type the query, and set actionPlan.controlID/focusKey for the UI control strategy.",
+            "For every other task type, actionPlan.tools must be empty.",
             f"Command: {command}",
+            "Relevant local cache:",
+            context,
             "Supported task capabilities:",
             "\n".join(task_lines),
         ]
@@ -704,6 +723,39 @@ def task_intent_schema(task_definitions: list[dict[str, Any]]) -> dict[str, Any]
     target_app_name_schema: dict[str, Any] = {"type": "string"}
     if not allows_dynamic_targets:
         target_app_name_schema["enum"] = app_names
+    action_plan_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "tools",
+            "inputEntity",
+            "controlID",
+            "focusKey",
+            "verification",
+        ],
+        "properties": {
+            "tools": {
+                "type": "array",
+                "maxItems": 8,
+                "items": {
+                    "type": "string",
+                    "enum": [
+                        "app.openOrFocus",
+                        "app.observe",
+                        "ui.focusSearch",
+                        "ui.setText",
+                        "ui.pressReturn",
+                        "app.verifyCommand",
+                        "app.verifyVisibleText",
+                    ],
+                },
+            },
+            "inputEntity": {"type": "string"},
+            "controlID": {"type": "string"},
+            "focusKey": {"type": "string"},
+            "verification": {"type": "string", "enum": ["commandAttempted", "visibleText"]},
+        },
+    }
 
     return {
         "type": "object",
@@ -715,6 +767,7 @@ def task_intent_schema(task_definitions: list[dict[str, Any]]) -> dict[str, Any]
             "normalizedEntities",
             "confidence",
             "needsConfirmation",
+            "actionPlan",
             "metadata",
         ],
         "properties": {
@@ -724,6 +777,7 @@ def task_intent_schema(task_definitions: list[dict[str, Any]]) -> dict[str, Any]
             "normalizedEntities": {"type": "object", "additionalProperties": {"type": "string"}},
             "confidence": {"type": "number", "minimum": 0, "maximum": 1},
             "needsConfirmation": {"type": "boolean"},
+            "actionPlan": action_plan_schema,
             "metadata": {"type": "object", "additionalProperties": {"type": "string"}},
         },
     }
