@@ -142,9 +142,9 @@ text as an implicit action signal.
 
 User intent must not be inferred with ad hoc phrase, prefix, suffix, substring,
 or regex checks against natural-language command text. Donkey has local LLMs,
-task definitions, runtime catalogs, and cache context for this job. Use them.
+task definitions, runtime catalogs, and agent memory context for this job. Use them.
 The fast classifier may know typed capability buckets such as task ids,
-capability ids, cache entry kinds, and model output statuses. It must not
+capability ids, agent memory entry kinds, and model output statuses. It must not
 recover those buckets by reading natural-language words out of the user's
 prompt.
 
@@ -173,7 +173,7 @@ Generic local-item lookup must follow the same rule. Do not add static command
 verb, lookup prefix, or lookup suffix arrays to guess that text means "open this
 app/file/folder." A typed model or catalog artifact selects the local-item
 lookup capability and extracts the requested item name; after that, the runtime
-may normalize that item name and resolve it through the cache, Spotlight, and
+may normalize that item name and resolve it through agent memory, Spotlight, and
 bounded filesystem lookup.
 
 Instructional visual coaching is the canonical example. The harness may show an
@@ -199,8 +199,8 @@ the same fields.
 
 Remote-bound context must be redacted before provider calls. Local-only context
 can include richer app and observation facts, but should still stay bounded and
-inspectable. Memory retrieval should use target/scope filters, relevance
-thresholds, and prompt-character budgets before summaries are added.
+inspectable. Memory retrieval should use target/scope/kind filters, FTS/vector
+relevance thresholds, and prompt-character budgets before summaries are added.
 
 Context compaction is typed and inspectable. Current turns, policy, active
 target state, runtime capabilities, and trace identifiers are preserved first.
@@ -228,8 +228,8 @@ model classifier or explicit runtime metadata produces a `TaskIntent`. Execution
 may only continue after catalog validation confirms the target app/task,
 required entities, app availability, and safety policy. Weather lookup, media
 playback, and document form-fill are benchmark fixtures for tests and replay
-evaluation, not runtime defaults. Runtime defaults come from the local
-resolution cache, which is seeded with generic capabilities and enriched by
+evaluation, not runtime defaults. Runtime defaults come from the SQLite-backed
+agent memory store, which is seeded with generic capabilities and enriched by
 model-generated or user-reviewed task definition files.
 
 Review is required when the harness can propose work but should not perform it
@@ -270,9 +270,9 @@ workflow scripts to Swift as static strings. The harness may keep generic
 rendering/execution utilities such as string escaping, template interpolation,
 schema validation, AppleScript syntax/language validation, and guarded backend
 dispatch. The actual app-control script for a task must come from a typed
-model/script-generation step, cached resolution metadata, or a user-reviewed
-task definition, and it must be logged with the model/schema/action metadata
-that produced it.
+model/script-generation step, agent memory metadata, or a user-reviewed task
+definition, and it must be logged with the model/schema/action metadata that
+produced it.
 
 If an app task needs AppleScript, the supported shape is: classify the task,
 resolve the target app and entities, ask the model or task-definition layer for
@@ -291,8 +291,8 @@ metadata and runtime item metadata, not one-off branches for individual apps.
 The fast local path must keep working without remote model calls. Local sidecars
 can classify actionable turns, transcribe voice, segment screenshots, or
 summarize UI observations. Provider-backed planners and memory proposals remain
-slow-path helpers and must fail without stopping local control on existing
-validated state.
+slow-path helpers that write through deterministic approval into agent memory
+and must fail without stopping local control on existing validated state.
 
 Local model work that shares the same runtime capacity should enter a priority
 worker. Interactive task-intent parsing runs at user-interactive priority and

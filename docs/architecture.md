@@ -34,12 +34,12 @@ source of truth for behavior and boundaries remains
 |  +----------+-----------+      +----------------------+      +-------+-------+ |
 |             |                                                        ^         |
 |             v                                                        |         |
-|  +----------------------+      +----------------------+              |         |
-|  | Agent Harness        |<---->| Per-Task Coordinator |--------------+         |
-|  | context + routing    |      | lifecycle + policy   |                        |
-|  +----------+-----------+      +----------+-----------+                        |
-|             |                             |                                    |
-|             v                             v                                    |
+|  +----------------------+      +----------------------+      +---------------+ |
+|  | Agent Harness        |<---->| Agent Memory Store   |<---->| Per-Task Coord | |
+|  | context + routing    |      | SQLite FTS/vector    |      | lifecycle     | |
+|  +----------+-----------+      +----------+-----------+      +-------+-------+ |
+|             |                             |                          |         |
+|             v                             v                          v         |
 |  +----------------------+      +----------------------+      +---------------+ |
 |  | Local App Runner     |----->| Capture/Observation  |----->| Action Engine | |
 |  | dry-run or guarded   |      | AX/window/screenshot |      | keyboard/AX   | |
@@ -48,9 +48,9 @@ source of truth for behavior and boundaries remains
 +--------------------------------------------------------------------------------+
 ```
 
-The app shell owns entrypoints, durable task threads, setup, and per-task runtime
-coordination. Capture, observation, model sidecars, task adaptation, and input
-execution stay behind narrow runtime boundaries.
+The app shell owns entrypoints, durable task threads, setup, shared agent
+memory, and per-task runtime coordination. Capture, observation, model sidecars,
+task adaptation, and input execution stay behind narrow runtime boundaries.
 
 ## Pointer Prompt Task Threads
 
@@ -104,14 +104,20 @@ execution stay behind narrow runtime boundaries.
 |             |                                                        |         |
 |             v                                                        v         |
 |  +----------------------+      +----------------------+      +---------------+ |
-|  | Catalog Resolution   |----->| Local App Adapter    |----->| Task Run      | |
-|  | app/task available   |      | steps + verification |      | per-task coord| |
+|  | Agent Memory         |----->| Catalog Resolution   |----->| Local App     | |
+|  | task defs/local item |      | app/task available   |      | Adapter       | |
+|  +----------+-----------+      +----------------------+      +-------+-------+ |
+|             |                                                        |         |
+|             v                                                        v         |
+|  +----------------------+      +----------------------+      +---------------+ |
+|  | Launch / Focus       |----->| Observation          |----->| Task Run      | |
+|  | target app/window    |      | AX + metadata + UI   |      | per-task coord| |
 |  +----------------------+      +----------+-----------+      +-------+-------+ |
 |                                           |                          |         |
 |                                           v                          v         |
 |  +----------------------+      +----------------------+      +---------------+ |
-|  | Launch / Focus       |----->| Observation          |----->| World State   | |
-|  | target app/window    |      | AX + metadata + UI   |      | typed compact | |
+|  | Local Item Validate  |----->| World State          |----->| Reflex Trace  | |
+|  | path/bundle exists   |      | typed compact        |      | source-linked | |
 |  +----------------------+      +----------+-----------+      +-------+-------+ |
 |                                           |                          |         |
 |                                           v                          v         |
@@ -142,6 +148,46 @@ conversation, clarification, review, planning, or action execution. The hot path
 must keep working without a remote model call. Local model output is validated
 into typed contracts before execution, controller output is semantic, and the
 action engine is the only boundary allowed to issue guarded OS input.
+
+## Agent Memory System
+
+```text
++--------------------------------------------------------------------------------+
+|                              Agent Memory Store                                |
++--------------------------------------------------------------------------------+
+|                                                                                |
+|  +----------------------+      +----------------------+      +---------------+ |
+|  | Runtime Writes       |----->| Approval / Validate  |----->| SQLite Store  | |
+|  | lookup/task/provider |      | source/privacy/ttl   |      | records       | |
+|  +----------+-----------+      +----------------------+      +-------+-------+ |
+|             |                                                        |         |
+|             v                                                        v         |
+|  +----------------------+      +----------------------+      +---------------+ |
+|  | Negative Lookups     |      | FTS5 Index           |<-----| Vector Blobs  | |
+|  | expiry required      |      | lexical candidates   |      | Float32 local | |
+|  +----------------------+      +----------+-----------+      +-------+-------+ |
+|                                           |                          |         |
+|                                           v                          v         |
+|  +----------------------+      +----------------------+      +---------------+ |
+|  | Scoped Query         |----->| Rank + Budget        |----->| Harness Hints | |
+|  | target/kind/text     |      | FTS/vector/recency   |      | bounded text  | |
+|  +----------+-----------+      +----------------------+      +-------+-------+ |
+|             |                                                        |         |
+|             v                                                        v         |
+|  +----------------------+      +----------------------+      +---------------+ |
+|  | Local Item Check     |      | Task Definitions     |      | JSONL Export  | |
+|  | path/bundle exists   |      | generated/reviewed   |      | debug only    | |
+|  +----------------------+      +----------------------+      +---------------+ |
+|                                                                                |
++--------------------------------------------------------------------------------+
+```
+
+Agent memory is the durable store for local item records, negative lookups,
+runtime task definitions, target facts, user instructions, safety stops, and
+workflow memory. SQLite is the source of truth; JSONL is only an explicit export
+format for support and debugging. Retrieval always applies scope/kind filters,
+prompt budgets, and availability validation before a record influences planning
+or execution.
 
 ## Local Stack And Model Sidecars
 
@@ -203,8 +249,8 @@ command parser LLM currently uses Ollama as a documented local prerequisite.
 |             |                                                        |         |
 |             |                                                        v         |
 |             |                  +----------------------+      +---------------+ |
-|             |                  | Run Memory           |----->| Redaction     | |
-|             |                  | bounded/source-linked|      | remote-bound  | |
+|             |                  | Agent Memory         |----->| Redaction     | |
+|             |                  | SQLite FTS/vector    |      | remote-bound  | |
 |             |                  +----------+-----------+      +-------+-------+ |
 |             |                             |                          |         |
 |             |                             v                          v         |
@@ -230,5 +276,5 @@ command parser LLM currently uses Ollama as a documented local prerequisite.
 
 Slow models can help with ambiguous commands, recovery, planner hints, memory
 proposals, and observability. Their outputs remain advisory: planner hints expire
-and are validated, memory writes pass deterministic approval, and provider
-failure leaves the fast local loop running on existing state.
+and are validated, memory writes pass deterministic approval into agent memory,
+and provider failure leaves the fast local loop running on existing state.
