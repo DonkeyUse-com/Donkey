@@ -4,6 +4,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 public struct PointerPromptNotchStatusView: View {
+    @State private var renderedSpawnCue: PointerPromptSpawnState?
+    @State private var spawnCueIsExiting = false
+
     private let state: PointerPromptState
     private let updateState: PointerPromptUpdateState
     private let layout: PointerPromptNotchLayout
@@ -16,6 +19,7 @@ public struct PointerPromptNotchStatusView: View {
     private let isCommandInputExpanded: Bool
     private let tasks: [PointerPromptNotchTask]
     private let accentIndex: Int
+    private let spawnState: PointerPromptSpawnState?
     private let commandSubmitted: @MainActor (String) -> Void
     private let commandInputTextHeightChanged: @MainActor (CGFloat) -> Void
     private let commandInputExpansionChanged: @MainActor (Bool) -> Void
@@ -37,6 +41,7 @@ public struct PointerPromptNotchStatusView: View {
         isCommandInputExpanded: Bool,
         tasks: [PointerPromptNotchTask] = [],
         accentIndex: Int,
+        spawnState: PointerPromptSpawnState? = nil,
         commandSubmitted: @escaping @MainActor (String) -> Void,
         commandInputTextHeightChanged: @escaping @MainActor (CGFloat) -> Void,
         commandInputExpansionChanged: @escaping @MainActor (Bool) -> Void,
@@ -57,6 +62,7 @@ public struct PointerPromptNotchStatusView: View {
         self.isCommandInputExpanded = isCommandInputExpanded
         self.tasks = tasks
         self.accentIndex = accentIndex
+        self.spawnState = spawnState
         self.commandSubmitted = commandSubmitted
         self.commandInputTextHeightChanged = commandInputTextHeightChanged
         self.commandInputExpansionChanged = commandInputExpansionChanged
@@ -106,6 +112,10 @@ public struct PointerPromptNotchStatusView: View {
                         value: isExpanded
                     )
             }
+
+            if let renderedSpawnCue {
+                spawnCueArrow(renderedSpawnCue)
+            }
         }
         .frame(width: animatingSurfaceWidth, height: animatingSurfaceHeight, alignment: .top)
         .clipShape(notchSurfaceShape(cornerRadius: animatingSurfaceCornerRadius))
@@ -122,6 +132,10 @@ public struct PointerPromptNotchStatusView: View {
             isTargeted: nil,
             perform: handleDroppedFileProviders
         )
+        .onAppear(perform: updateRenderedSpawnCue)
+        .onChange(of: spawnCueIdentity) {
+            updateRenderedSpawnCue()
+        }
     }
 
     @ViewBuilder
@@ -294,6 +308,24 @@ public struct PointerPromptNotchStatusView: View {
             .position(x: expandedNotchArrowX, y: expandedNotchArrowY)
     }
 
+    private func spawnCueArrow(_ cue: PointerPromptSpawnState) -> some View {
+        let exitOffset = spawnCueExitOffset(for: cue.notchCueAngleDegrees)
+
+        return TaskArrowMark(
+            color: accentColor(for: cue.accentIndex),
+            rotationDegrees: spawnCueIsExiting ? cue.notchCueAngleDegrees : -45
+        )
+        .frame(width: 15, height: 15)
+        .position(x: spawnCueArrowX, y: spawnCueArrowY)
+        .offset(
+            x: spawnCueIsExiting ? exitOffset.width : 0,
+            y: spawnCueIsExiting ? exitOffset.height : 0
+        )
+        .opacity(spawnCueIsExiting ? 0 : 1)
+        .animation(.easeInOut(duration: 0.16), value: spawnCueIsExiting)
+        .accessibilityHidden(true)
+    }
+
     private var expandedUpdateHeader: some View {
         HStack {
             Spacer()
@@ -332,6 +364,58 @@ public struct PointerPromptNotchStatusView: View {
 
     private var expandedNotchArrowY: CGFloat {
         max(14, layout.collapsedVisibleHeight / 2)
+    }
+
+    private var spawnCueArrowX: CGFloat {
+        layout.canRenderTextInTopRow
+            ? max(16, layout.contentHorizontalInset + 6)
+            : collapsedLeadingLaneCenterX
+    }
+
+    private var spawnCueArrowY: CGFloat {
+        max(14, layout.collapsedVisibleHeight / 2)
+    }
+
+    private var spawnCueIdentity: String? {
+        guard let spawnState,
+              spawnState.phase == .notchCue else {
+            return nil
+        }
+
+        return spawnState.id
+    }
+
+    private func updateRenderedSpawnCue() {
+        guard let spawnState,
+              spawnState.phase == .notchCue else {
+            return
+        }
+
+        guard renderedSpawnCue?.id != spawnState.id else { return }
+
+        renderedSpawnCue = spawnState
+        spawnCueIsExiting = false
+        let cueID = spawnState.id
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            guard renderedSpawnCue?.id == cueID else { return }
+
+            spawnCueIsExiting = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) {
+            guard renderedSpawnCue?.id == cueID else { return }
+
+            renderedSpawnCue = nil
+            spawnCueIsExiting = false
+        }
+    }
+
+    private func spawnCueExitOffset(for angleDegrees: Double) -> CGSize {
+        let radians = angleDegrees * .pi / 180
+        let distance: CGFloat = 28
+        return CGSize(
+            width: cos(radians) * distance,
+            height: sin(radians) * distance
+        )
     }
 
     private var expandedCommandOnlyTopPadding: CGFloat {
@@ -738,6 +822,7 @@ public struct PointerPromptNotchStatusView: View {
 
 private struct TaskArrowMark: View {
     var color: Color
+    var rotationDegrees: Double = -45
 
     var body: some View {
         GeometryReader { proxy in
@@ -753,7 +838,7 @@ private struct TaskArrowMark: View {
             .fill(color)
         }
         .aspectRatio(1, contentMode: .fit)
-        .rotationEffect(.degrees(-45))
+        .rotationEffect(.degrees(rotationDegrees))
         .accessibilityHidden(true)
     }
 }

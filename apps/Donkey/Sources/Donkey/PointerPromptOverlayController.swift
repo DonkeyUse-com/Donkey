@@ -12,6 +12,7 @@ final class PointerPromptOverlayController {
     private let activationShortcut: PointerPromptActivationShortcut
     private let microphoneWaveformMeter = MicrophoneWaveformMeter()
     private let coachCursorController = PointerCoachCursorOverlayController()
+    private let spawnOverlayController = PointerPromptSpawnOverlayController()
 
     private var statusPanel: NSPanel?
     private var statusHostingView: PointerPromptHostingView<PointerPromptNotchStatusView>?
@@ -25,7 +26,9 @@ final class PointerPromptOverlayController {
     private var completedActivationTapCount = 0
     private var lastActivationTapCompletedAt: Date?
     private var activationHoldStartedAt: Date?
+    private var spawnVoiceHoldStartedAt: Date?
     private var isVoiceInputActive = false
+    private var activeSpawnVoiceInputID: String?
     private var isStatusExpanded = false
     private var isStatusHostExpanded = false
     // Hover can produce enter/exit samples faster than SwiftUI's spring can settle.
@@ -35,6 +38,7 @@ final class PointerPromptOverlayController {
     private var statusCollapseWorkItem: DispatchWorkItem?
     private var statusExpansionWorkItem: DispatchWorkItem?
     private var statusHostShrinkWorkItem: DispatchWorkItem?
+    private var spawnDesktopEmergeWorkItems: [String: DispatchWorkItem] = [:]
     private var hasPrewarmedInputPanel = false
     private var hasPrewarmedStatusPanelExpansion = false
     private var lastStatusViewSnapshot: StatusPanelViewSnapshot?
@@ -47,6 +51,12 @@ final class PointerPromptOverlayController {
         self.activationShortcut = activationShortcut
         model.coachGuidePresenter = { [weak self] request in
             self?.coachCursorController.show(request: request)
+        }
+        spawnOverlayController.followUpSubmitted = { [weak self] spawnID, taskID, text in
+            self?.model.submitSpawnFollowUp(spawnID: spawnID, taskID: taskID, text: text)
+        }
+        spawnOverlayController.selected = { [weak self] spawnID in
+            self?.model.selectSpawn(id: spawnID)
         }
         microphoneWaveformMeter.onLevelsChanged = { [weak model] levels in
             model?.updateVoiceWaveformLevels(levels)
@@ -171,11 +181,13 @@ final class PointerPromptOverlayController {
         statusExpansionWorkItem = nil
         statusHostShrinkWorkItem?.cancel()
         statusHostShrinkWorkItem = nil
+        cancelSpawnDesktopEmergeWorkItems()
         statusHoverPhase = .collapsed
         stopActivationMonitoring()
         stopAppDeactivationMonitoring()
         microphoneWaveformMeter.stop()
         coachCursorController.close()
+        spawnOverlayController.close()
         inputPanel?.close()
         inputPanel = nil
         statusPanel?.close()
@@ -278,11 +290,20 @@ final class PointerPromptOverlayController {
             return
         }
 
+        if activeSpawnVoiceInputID != nil, !isActivationModifierDown {
+            finishSpawnVoiceInput()
+            resetActivationTapSequence()
+            return
+        }
+
         if isCleanActivationModifierOnly {
             if activationTapStartedAt == nil {
                 let now = Date()
                 activationTapStartedAt = now
                 activationTapIsClean = true
+                if shouldStartSpawnVoiceHoldCandidate() {
+                    spawnVoiceHoldStartedAt = now
+                }
                 if shouldStartVoiceHoldCandidate(at: now) {
                     activationHoldStartedAt = now
                 }
@@ -298,6 +319,7 @@ final class PointerPromptOverlayController {
             completedActivationTapCount = 0
             lastActivationTapCompletedAt = nil
             activationHoldStartedAt = nil
+            spawnVoiceHoldStartedAt = nil
             return
         }
 
@@ -314,6 +336,7 @@ final class PointerPromptOverlayController {
             tapDuration <= activationShortcut.maximumTapDuration
         self.activationTapStartedAt = nil
         activationTapIsClean = false
+        spawnVoiceHoldStartedAt = nil
 
         guard completedCleanTap else {
             resetActivationTapSequence()
@@ -348,6 +371,11 @@ final class PointerPromptOverlayController {
         completedActivationTapCount = 0
         lastActivationTapCompletedAt = nil
         activationHoldStartedAt = nil
+        spawnVoiceHoldStartedAt = nil
+    }
+
+    private func shouldStartSpawnVoiceHoldCandidate() -> Bool {
+        !model.promptState.isActive && !model.spawnStates.isEmpty
     }
 
     private func shouldStartVoiceHoldCandidate(at now: Date) -> Bool {
@@ -362,6 +390,9 @@ final class PointerPromptOverlayController {
     }
 
     private func activateVoiceInputIfNeeded() {
+        activateSpawnVoiceInputIfNeeded()
+        guard activeSpawnVoiceInputID == nil else { return }
+
         guard let holdToVoiceInputDuration = activationShortcut.holdToVoiceInputDuration,
               let activationHoldStartedAt,
               activationTapIsClean,
@@ -392,6 +423,48 @@ final class PointerPromptOverlayController {
         isVoiceInputActive = true
         microphoneWaveformMeter.startAudioCapture()
         model.handle(.voiceInputRequested)
+    }
+
+    private func activateSpawnVoiceInputIfNeeded() {
+        guard activeSpawnVoiceInputID == nil,
+              let spawnVoiceHoldStartedAt,
+              activationTapIsClean,
+              Date().timeIntervalSince(spawnVoiceHoldStartedAt) >= spawnVoiceHoldDuration else {
+            return
+        }
+
+        guard let spawnID = model.beginSpawnVoiceInput() else { return }
+        guard spawnOverlayController.beginVoiceInput(spawnID: spawnID) else {
+            model.cancelSpawnVoiceInput(spawnID: spawnID)
+            return
+        }
+
+        activeSpawnVoiceInputID = spawnID
+        microphoneWaveformMeter.startAudioCapture()
+    }
+
+    private var spawnVoiceHoldDuration: TimeInterval {
+        activationShortcut.holdToVoiceInputDuration ?? 0.35
+    }
+
+    private func finishSpawnVoiceInput() {
+        guard let spawnID = activeSpawnVoiceInputID else { return }
+
+        activeSpawnVoiceInputID = nil
+        spawnVoiceHoldStartedAt = nil
+        let audio = microphoneWaveformMeter.finishAudioCapture()
+        model.transcribeSpawnVoiceAudio(spawnID: spawnID, audio: audio) { [weak self] transcript in
+            guard let self else { return }
+
+            guard let transcript,
+                  !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                self.spawnOverlayController.cancelVoiceInput(spawnID: spawnID)
+                self.model.cancelSpawnVoiceInput(spawnID: spawnID)
+                return
+            }
+
+            self.spawnOverlayController.completeVoiceInput(spawnID: spawnID, text: transcript)
+        }
     }
 
     private func finishVoiceInput() {
@@ -436,6 +509,7 @@ final class PointerPromptOverlayController {
         positionStatusPanel()
         updateStatusHoverExpansion()
         updateStatusPanelView()
+        updateSpawnOverlay()
         resizeActivePanelIfNeeded(inputPanel)
         updateMouseEventPassthrough(for: inputPanel)
 
@@ -529,7 +603,8 @@ final class PointerPromptOverlayController {
     }
 
     private func statusViewSnapshot(metrics: NotchMetrics) -> StatusPanelViewSnapshot {
-        StatusPanelViewSnapshot(
+        let spawnCue = notchSpawnCue(metrics: metrics)
+        return StatusPanelViewSnapshot(
             state: model.promptState,
             updateState: model.updateState,
             layout: metrics.layout,
@@ -541,12 +616,16 @@ final class PointerPromptOverlayController {
             notchCommandInputTextHeight: model.notchCommandInputTextHeight,
             isNotchCommandInputExpanded: model.isNotchCommandInputExpanded,
             notchTasks: model.notchTasks,
-            accentIndex: model.notchAccentIndex
+            accentIndex: model.notchAccentIndex,
+            spawnState: spawnCue,
+            spawnStates: model.spawnStates,
+            selectedSpawnID: model.selectedSpawnID
         )
     }
 
     private func notchStatusView(metrics: NotchMetrics) -> PointerPromptNotchStatusView {
-        PointerPromptNotchStatusView(
+        let spawnCue = notchSpawnCue(metrics: metrics)
+        return PointerPromptNotchStatusView(
             state: model.promptState,
             updateState: model.updateState,
             layout: metrics.layout,
@@ -566,6 +645,7 @@ final class PointerPromptOverlayController {
             isCommandInputExpanded: model.isNotchCommandInputExpanded,
             tasks: model.notchTasks,
             accentIndex: model.notchAccentIndex,
+            spawnState: spawnCue,
             commandSubmitted: { [weak self] text in
                 self?.model.handle(.messageSubmitted(text: text))
             },
@@ -590,8 +670,61 @@ final class PointerPromptOverlayController {
         )
     }
 
+    private func notchSpawnCue(metrics: NotchMetrics) -> PointerPromptSpawnState? {
+        spawnOverlayController.cueState(
+            for: model.notchSpawnCue,
+            screen: activeScreen(),
+            notchMetrics: metrics
+        )
+    }
+
     private func openAvailableUpdate() {
         model.showUpdateUI()
+    }
+
+    private func updateSpawnOverlay() {
+        let screen = activeScreen()
+        let metrics = notchMetrics(for: screen)
+        scheduleSpawnDesktopEmergeIfNeeded()
+        spawnOverlayController.update(
+            spawnStates: model.spawnStates,
+            selectedSpawnID: model.selectedSpawnID,
+            screen: screen,
+            notchMetrics: metrics
+        )
+    }
+
+    private func scheduleSpawnDesktopEmergeIfNeeded() {
+        let cueStates = model.spawnStates.filter { $0.phase == .notchCue }
+        let cueIDs = Set(cueStates.map(\.id))
+        for (spawnID, workItem) in spawnDesktopEmergeWorkItems where !cueIDs.contains(spawnID) {
+            workItem.cancel()
+            spawnDesktopEmergeWorkItems[spawnID] = nil
+        }
+
+        for (index, spawnState) in cueStates.enumerated()
+            where spawnDesktopEmergeWorkItems[spawnState.id] == nil {
+            let workItem = DispatchWorkItem { [weak self] in
+                Task { @MainActor in
+                    guard let self else { return }
+
+                    self.model.markSpawnDesktopEmerged(id: spawnState.id)
+                    self.spawnDesktopEmergeWorkItems[spawnState.id] = nil
+                }
+            }
+            spawnDesktopEmergeWorkItems[spawnState.id] = workItem
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + 0.24 + Double(index) * 0.05,
+                execute: workItem
+            )
+        }
+    }
+
+    private func cancelSpawnDesktopEmergeWorkItems() {
+        for workItem in spawnDesktopEmergeWorkItems.values {
+            workItem.cancel()
+        }
+        spawnDesktopEmergeWorkItems = [:]
     }
 
     private func updateStatusHoverExpansion() {
@@ -1173,6 +1306,9 @@ private struct StatusPanelViewSnapshot: Equatable {
     var isNotchCommandInputExpanded: Bool
     var notchTasks: [PointerPromptNotchTask]
     var accentIndex: Int
+    var spawnState: PointerPromptSpawnState?
+    var spawnStates: [PointerPromptSpawnState]
+    var selectedSpawnID: String?
 }
 
 private enum StatusHoverPhase {

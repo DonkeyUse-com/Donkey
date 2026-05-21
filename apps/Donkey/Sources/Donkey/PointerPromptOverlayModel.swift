@@ -18,6 +18,8 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
     @Published private(set) var isCurrentTaskPaused = false
     @Published private(set) var updateState: PointerPromptUpdateState
     @Published private(set) var notchTasks: [PointerPromptNotchTask]
+    @Published private(set) var spawnStates: [PointerPromptSpawnState] = []
+    @Published private(set) var selectedSpawnID: String?
     var coachGuidePresenter: ((PointerCoachCursorGuideRequest) -> Void)?
 
     private let commandHandler: any PointerPromptCommandHandling
@@ -157,8 +159,52 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         }
     }
 
+    func transcribeSpawnVoiceAudio(
+        spawnID: String,
+        audio: LocalVoiceAudioBuffer?,
+        transcriptReceived: @escaping @MainActor (String?) -> Void
+    ) {
+        guard let audio else {
+            updateSpawn(
+                id: spawnID,
+                label: "No voice captured",
+                inputState: .collapsed
+            )
+            transcriptReceived(nil)
+            return
+        }
+
+        updateSpawn(id: spawnID, label: "Transcribing...")
+        let sourceTraceID = "pointer-prompt-spawn-voice-\(UUID().uuidString)"
+        Task { [weak self, voiceTranscriber] in
+            let result = await voiceTranscriber.transcribe(
+                LocalVoiceTranscriptionRequest(
+                    audio: audio,
+                    sourceTraceID: sourceTraceID
+                )
+            )
+            await MainActor.run {
+                guard let self else { return }
+
+                let transcript = result.transcript?.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if transcript?.isEmpty == false {
+                    self.updateSpawn(id: spawnID, label: "Heard you")
+                    transcriptReceived(transcript)
+                } else {
+                    self.updateSpawn(
+                        id: spawnID,
+                        label: "I didn't catch that",
+                        inputState: .collapsed
+                    )
+                    transcriptReceived(nil)
+                }
+            }
+        }
+    }
+
     private func submitCommand(_ text: String, source: AppHarnessTurnSource = .typedPrompt) {
         let candidates = followUpCandidates()
+        let spawnID = source == .voiceTranscript ? nil : beginSpawn(for: text)
         clearSubmissionInputs()
         promptState.isActive = false
         promptState.leadingSignalLevel = .thinking
@@ -186,7 +232,12 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
             }
 
             await MainActor.run {
-                self?.startCommandRun(text: text, matchedTaskID: matchedTaskID, source: source)
+                self?.startCommandRun(
+                    text: text,
+                    matchedTaskID: matchedTaskID,
+                    source: source,
+                    spawnID: spawnID
+                )
             }
         }
     }
@@ -220,13 +271,111 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         syncPrimaryTaskPausedFlag()
     }
 
+    func markSpawnDesktopEmerged(id spawnID: String) {
+        guard let index = spawnIndex(id: spawnID),
+              spawnStates[index].phase == .notchCue else {
+            return
+        }
+
+        var spawnState = spawnStates[index]
+        spawnState.phase = .traveling
+        spawnState.updatedAt = Date()
+        spawnStates[index] = spawnState
+        selectedSpawnID = spawnID
+    }
+
+    func selectSpawn(id spawnID: String) {
+        guard spawnStates.contains(where: { $0.id == spawnID }) else { return }
+
+        selectedSpawnID = spawnID
+    }
+
+    func beginSpawnVoiceInput() -> String? {
+        let selectedID = selectedSpawnID.flatMap { id in
+            spawn(withID: id).map { spawn -> String? in
+                spawn.taskID != nil && (spawn.phase == .holding || spawn.phase == .traveling) ? id : nil
+            } ?? nil
+        } ?? nil
+        guard let spawnID = selectedID ?? latestInteractableSpawnID() else { return nil }
+
+        updateSpawn(
+            id: spawnID,
+            label: "Listening...",
+            phase: .holding,
+            inputState: .editing
+        )
+        selectedSpawnID = spawnID
+        return spawnID
+    }
+
+    func completeSpawnVoiceInput(spawnID: String, transcript: String?) {
+        let trimmedText = transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmedText.isEmpty,
+              let taskID = spawn(withID: spawnID)?.taskID else {
+            updateSpawn(
+                id: spawnID,
+                label: "I didn't catch that",
+                inputState: .collapsed
+            )
+            return
+        }
+
+        submitSpawnFollowUp(spawnID: spawnID, taskID: taskID, text: trimmedText)
+    }
+
+    func cancelSpawnVoiceInput(spawnID: String) {
+        updateSpawn(
+            id: spawnID,
+            label: "Paused",
+            inputState: .collapsed
+        )
+    }
+
+    func submitSpawnFollowUp(spawnID: String, taskID: String, text: String) {
+        let fallbackState = PointerPromptSpawnState(
+            id: spawnID,
+            taskID: taskID,
+            commandText: text,
+            label: "Routing follow-up",
+            accentIndex: notchAccentIndex,
+            phase: .holding
+        )
+        let state = spawn(withID: spawnID) ?? fallbackState
+        guard let submission = PointerPromptSpawnLifecycle.followUpSubmission(
+            from: state,
+            text: text
+        ) else { return }
+
+        updateSpawn(
+            id: submission.spawnID,
+            taskID: submission.taskID,
+            commandText: submission.text,
+            label: "Routing follow-up",
+            phase: .holding,
+            inputState: .collapsed
+        )
+        startCommandRun(
+            text: submission.text,
+            matchedTaskID: submission.taskID,
+            source: .followUp,
+            spawnID: submission.spawnID
+        )
+    }
+
     private func startCommandRun(
         text: String,
         matchedTaskID: String?,
-        source: AppHarnessTurnSource = .typedPrompt
+        source: AppHarnessTurnSource = .typedPrompt,
+        spawnID: String? = nil
     ) {
         let isFollowUp = matchedTaskID != nil
         let task = taskForSubmittedCommand(text: text, matchedTaskID: matchedTaskID)
+        updateSpawn(
+            id: spawnID,
+            taskID: task.id,
+            label: "Finding destination",
+            accentIndex: task.accentIndex
+        )
         activeTaskIDs.insert(task.id)
         lastActiveTaskID = task.id
         appendTaskEvent(taskID: task.id, role: .user, text: text)
@@ -240,7 +389,12 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         promptState.leadingSignalLevel = .thinking
         promptState.promptText = task.title
         syncPrimaryTaskPausedFlag()
-        let context = commandContext(taskID: task.id, isFollowUp: isFollowUp, source: source)
+        let context = commandContext(
+            taskID: task.id,
+            isFollowUp: isFollowUp,
+            source: source,
+            spawnID: spawnID
+        )
         Task { [weak self, commandHandler] in
             let result = await commandHandler.handleSubmittedCommand(text, context: context)
             await MainActor.run {
@@ -263,6 +417,7 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
                 if let cursorGuideRequest = result.cursorGuideRequest {
                     self.coachGuidePresenter?(cursorGuideRequest)
                 }
+                self.finishSpawn(id: spawnID, result: result)
             }
         }
     }
@@ -316,6 +471,143 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
 
     var notchCommandInputSurfaceHeight: CGFloat {
         max(92, notchCommandInputTextHeight + 60)
+    }
+
+    private func beginSpawn(
+        for text: String,
+        label: String = "Routing task",
+        taskID: String? = nil,
+        accentIndex: Int? = nil
+    ) -> String {
+        let spawnID = UUID().uuidString
+        let displayText = Self.taskLabel(for: text)
+        let spawnState = PointerPromptSpawnState(
+            id: spawnID,
+            taskID: taskID,
+            commandText: text,
+            label: label,
+            accentIndex: accentIndex ?? Self.nextAccentIndex(after: notchAccentIndex),
+            phase: .notchCue
+        )
+        spawnStates.append(spawnState)
+        selectedSpawnID = spawnID
+        promptState.promptText = displayText
+        promptState.leadingSignalLevel = .thinking
+        return spawnID
+    }
+
+    private func updateSpawn(
+        id spawnID: String?,
+        taskID: String? = nil,
+        commandText: String? = nil,
+        label: String? = nil,
+        accentIndex: Int? = nil,
+        targetHint: PointerPromptSpawnTargetHint? = nil,
+        phase: PointerPromptSpawnPhase? = nil,
+        inputState: PointerPromptSpawnInputState? = nil
+    ) {
+        guard let spawnID,
+              let index = spawnIndex(id: spawnID) else {
+            return
+        }
+
+        var spawnState = spawnStates[index]
+        if let taskID {
+            spawnState.taskID = taskID
+        }
+        if let commandText {
+            spawnState.commandText = commandText
+        }
+        if let label,
+           !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            spawnState.label = label
+        }
+        if let accentIndex {
+            spawnState.accentIndex = accentIndex
+        }
+        if let targetHint {
+            spawnState.targetHint = targetHint
+        }
+        if let phase {
+            if spawnState.phase != .notchCue || phase == .fading {
+                spawnState.phase = phase
+            }
+        }
+        if let inputState {
+            spawnState.inputState = inputState
+        }
+        spawnState.updatedAt = Date()
+        spawnStates[index] = spawnState
+    }
+
+    private func finishSpawn(
+        id spawnID: String?,
+        result: PointerPromptCommandHandlingResult
+    ) {
+        guard let spawnID,
+              let index = spawnIndex(id: spawnID) else {
+            return
+        }
+
+        var spawnState = spawnStates[index]
+        spawnState.label = Self.spawnCompletionLabel(for: result)
+        spawnState.updatedAt = Date()
+
+        switch result.threadStatus {
+        case .waitingForClarification, .waitingForReview, .needsAttention:
+            spawnState.phase = .holding
+            spawnStates[index] = spawnState
+        case .running, .paused:
+            spawnState.phase = .holding
+            spawnStates[index] = spawnState
+        case .chatting, .completed, .failed:
+            spawnStates[index] = spawnState
+            scheduleSpawnFade(id: spawnID)
+        }
+    }
+
+    private func scheduleSpawnFade(id spawnID: String) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self,
+                  let index = self.spawnIndex(id: spawnID) else {
+                return
+            }
+
+            var spawnState = self.spawnStates[index]
+            spawnState.phase = .fading
+            spawnState.updatedAt = Date()
+            self.spawnStates[index] = spawnState
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                self?.removeSpawn(id: spawnID)
+            }
+        }
+    }
+
+    var notchSpawnCue: PointerPromptSpawnState? {
+        spawnStates.last { $0.phase == .notchCue }
+    }
+
+    private func spawnIndex(id spawnID: String) -> Int? {
+        spawnStates.firstIndex { $0.id == spawnID }
+    }
+
+    private func spawn(withID spawnID: String) -> PointerPromptSpawnState? {
+        spawnStates.first { $0.id == spawnID }
+    }
+
+    private func latestInteractableSpawnID() -> String? {
+        spawnStates
+            .last {
+                $0.taskID != nil && ($0.phase == .holding || $0.phase == .traveling)
+            }?
+            .id
+    }
+
+    private func removeSpawn(id spawnID: String) {
+        spawnStates.removeAll { $0.id == spawnID }
+        if selectedSpawnID == spawnID {
+            selectedSpawnID = latestInteractableSpawnID()
+        }
     }
 
     private func prependTask(_ task: PointerPromptNotchTask) {
@@ -403,7 +695,8 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
     private func commandContext(
         taskID: String,
         isFollowUp: Bool,
-        source: AppHarnessTurnSource = .typedPrompt
+        source: AppHarnessTurnSource = .typedPrompt,
+        spawnID: String? = nil
     ) -> PointerPromptCommandContext? {
         guard let task = task(withID: taskID) else { return nil }
 
@@ -412,8 +705,24 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
             recentEvents: Array(taskStore.loadEvents(taskID: taskID).suffix(10)),
             assets: taskStore.loadAssets(taskID: taskID),
             isFollowUp: isFollowUp,
-            turnSource: source
+            turnSource: source,
+            spawnProgressChanged: spawnProgressHandler(for: spawnID)
         )
+    }
+
+    private func spawnProgressHandler(
+        for spawnID: String?
+    ) -> (@MainActor @Sendable (PointerPromptSpawnProgressUpdate) -> Void)? {
+        guard let spawnID else { return nil }
+
+        return { [weak self] update in
+            self?.updateSpawn(
+                id: spawnID,
+                label: update.label,
+                targetHint: update.targetHint,
+                phase: update.phase
+            )
+        }
     }
 
     private func followUpCandidates() -> [PointerPromptFollowUpCandidate] {
@@ -535,6 +844,27 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
 
     private static func taskStatus(for result: PointerPromptCommandHandlingResult) -> PointerPromptTaskStatus {
         result.threadStatus
+    }
+
+    private static func spawnCompletionLabel(for result: PointerPromptCommandHandlingResult) -> String {
+        switch result.threadStatus {
+        case .waitingForClarification:
+            return "Waiting for detail"
+        case .waitingForReview:
+            return "Waiting for your review"
+        case .needsAttention:
+            return "Needs your attention"
+        case .running:
+            return "Working"
+        case .paused:
+            return "Paused"
+        case .chatting:
+            return result.summary.isEmpty ? "Answered" : truncated(result.summary, maxLength: 42)
+        case .completed:
+            return "Done"
+        case .failed:
+            return "Stopped"
+        }
     }
 
     private static func nextAccentIndex(after currentIndex: Int) -> Int {

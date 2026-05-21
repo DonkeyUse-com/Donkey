@@ -32,12 +32,13 @@ struct DocumentFormFillReviewRequest: Equatable, Sendable {
     var traceID: String
 }
 
-struct PointerPromptCommandContext: Equatable, Sendable {
+struct PointerPromptCommandContext: Sendable {
     var task: PointerPromptNotchTask
     var recentEvents: [PointerPromptTaskEvent]
     var assets: [PointerPromptTaskAsset]
     var isFollowUp: Bool
     var turnSource: AppHarnessTurnSource = .typedPrompt
+    var spawnProgressChanged: (@MainActor @Sendable (PointerPromptSpawnProgressUpdate) -> Void)?
 }
 
 protocol PointerPromptCommandHandling: Sendable {
@@ -103,6 +104,10 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
             )
         )
         if let cursorGuideRequest = cursorGuideResolution.guideRequest {
+            await reportSpawnProgress(
+                PointerPromptSpawnProgressUpdate(label: "Showing you"),
+                context: context
+            )
             let result = PointerPromptCommandHandlingResult(
                 status: .completed,
                 threadStatus: .chatting,
@@ -142,6 +147,10 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
         logRouting(command: command, traceID: traceID, taskID: taskID, routing: routing)
         switch routing.outcome.decision.kind {
         case .respond:
+            await reportSpawnProgress(
+                PointerPromptSpawnProgressUpdate(label: "Answering"),
+                context: context
+            )
             let result = PointerPromptCommandHandlingResult(
                 status: .completed,
                 threadStatus: .chatting,
@@ -156,6 +165,10 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
             logHandlingResult(result, stage: "conversation", hint: routingHint(for: routing))
             return result
         case .askClarification:
+            await reportSpawnProgress(
+                PointerPromptSpawnProgressUpdate(label: "Waiting for detail"),
+                context: context
+            )
             let result = PointerPromptCommandHandlingResult(
                 status: .needsConfirmation,
                 threadStatus: .waitingForClarification,
@@ -184,6 +197,10 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
             logHandlingResult(result, stage: "empty", hint: "Empty command; no action was run.")
             return result
         case .openReview, .runLocalTask:
+            await reportSpawnProgress(
+                PointerPromptSpawnProgressUpdate(label: "Finding destination"),
+                context: context
+            )
             break
         }
 
@@ -207,6 +224,16 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
         )
         let resolution = localModelResult.resolution
         let parseLatencyMS = Self.uptimeMilliseconds() - parseStartedAt
+        if let definition = resolution.definition {
+            await reportSpawnProgress(
+                PointerPromptSpawnProgressUpdate(
+                    label: "Opening \(definition.targetApp.appName)",
+                    targetHint: Self.spawnTargetHint(for: definition.targetApp),
+                    phase: .holding
+                ),
+                context: context
+            )
+        }
         logModelResolution(
             command: modelCommand,
             traceID: traceID,
@@ -252,6 +279,10 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
         )
 
         if Self.shouldRespondWithoutLocalTask(resolution) {
+            await reportSpawnProgress(
+                PointerPromptSpawnProgressUpdate(label: "Answering"),
+                context: context
+            )
             let response = "I couldn't find a supported local action for that yet."
             let decision = AppHarnessDecision(
                 kind: .respond,
@@ -333,6 +364,24 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
         await coordinatorRegistry.resume(
             taskID: taskID,
             reason: "Pointer prompt resumed task"
+        )
+    }
+
+    private func reportSpawnProgress(
+        _ update: PointerPromptSpawnProgressUpdate,
+        context: PointerPromptCommandContext?
+    ) async {
+        guard let spawnProgressChanged = context?.spawnProgressChanged else { return }
+
+        await spawnProgressChanged(update)
+    }
+
+    private static func spawnTargetHint(for target: LocalAppTarget) -> PointerPromptSpawnTargetHint {
+        PointerPromptSpawnTargetHint(
+            appName: target.appName,
+            bundleIdentifier: target.bundleIdentifier,
+            titleContains: target.titleContains,
+            metadata: target.metadata
         )
     }
 
