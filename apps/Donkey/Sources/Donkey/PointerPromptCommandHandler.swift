@@ -5,6 +5,12 @@ import Foundation
 import OSLog
 
 private enum PointerPromptLog {
+    #if DEBUG
+    static let isEnabled = true
+    #else
+    static let isEnabled = false
+    #endif
+
     static let commands = Logger(subsystem: "com.donkey.app", category: "pointer-prompt")
 }
 
@@ -336,6 +342,8 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
         taskID: String,
         routing: AppHarnessRoutingResult
     ) {
+        guard PointerPromptLog.isEnabled else { return }
+
         let decision = routing.outcome.decision.kind.rawValue
         let router = routing.outcome.metadata["router"] ?? "unknown"
         let resolution = routing.outcome.resolution?.status.rawValue ?? "none"
@@ -353,6 +361,8 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
         taskID: String,
         context: PointerPromptCommandContext?
     ) {
+        guard PointerPromptLog.isEnabled else { return }
+
         let source = context?.turnSource.rawValue ?? AppHarnessTurnSource.typedPrompt.rawValue
         let isFollowUp = context?.isFollowUp ?? false
         PointerPromptLog.commands.notice(
@@ -367,6 +377,8 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
         trace: AIModelCallTrace,
         latencyMS: Double
     ) {
+        guard PointerPromptLog.isEnabled else { return }
+
         let taskType = resolution.definition?.taskType ?? resolution.intent?.taskType ?? ""
         let reason = resolution.metadata["reason"] ?? ""
         let latency = Self.formatLatency(latencyMS)
@@ -380,6 +392,8 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
         stage: String,
         hint: String
     ) {
+        guard PointerPromptLog.isEnabled else { return }
+
         let taskLabel = result.taskLabel ?? ""
         PointerPromptLog.commands.notice(
             "command finished traceID=\(result.traceID, privacy: .public) stage=\(stage, privacy: .public) status=\(result.status.rawValue, privacy: .public) threadStatus=\(result.threadStatus.rawValue, privacy: .public) summary=\(result.summary, privacy: .public) taskLabel=\(taskLabel, privacy: .public) hint=\(hint, privacy: .public)"
