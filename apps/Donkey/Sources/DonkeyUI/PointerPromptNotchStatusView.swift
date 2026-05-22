@@ -228,13 +228,15 @@ public struct PointerPromptNotchStatusView: View {
                 .frame(width: 13, height: 13)
                 .position(x: collapsedLeadingLaneCenterX, y: layout.collapsedVisibleHeight / 2)
 
-            Text(compactTopRowStatusText)
-                .font(.system(size: 9, weight: .regular))
-                .foregroundStyle(Color.white.opacity(0.72))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .frame(width: collapsedSideLaneWidth, height: layout.collapsedVisibleHeight)
-                .position(x: collapsedTrailingLaneCenterX, y: layout.collapsedVisibleHeight / 2)
+            if let compactTopRowStatusText {
+                Text(compactTopRowStatusText)
+                    .font(.system(size: 9, weight: .regular))
+                    .foregroundStyle(Color.white.opacity(0.72))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .frame(width: collapsedSideLaneWidth, height: layout.collapsedVisibleHeight)
+                    .position(x: collapsedTrailingLaneCenterX, y: layout.collapsedVisibleHeight / 2)
+            }
         }
         .frame(
             width: animatingSurfaceWidth,
@@ -693,11 +695,11 @@ public struct PointerPromptNotchStatusView: View {
         }
     }
 
-    private var compactTopRowStatusText: String {
+    private var compactTopRowStatusText: String? {
         if let primaryTask {
             switch primaryTask.status {
             case .chatting:
-                return "Chat"
+                return nil
             case .running:
                 return "Run"
             case .paused:
