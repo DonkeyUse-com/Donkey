@@ -16,6 +16,15 @@ The app bundle version defaults to `0.1.0` build `1`. Override it for local rele
 DONKEY_APP_VERSION="0.1.1" DONKEY_APP_BUILD="2" ./scripts/package-donkey-app.sh
 ```
 
+The app bundle registers the `donkey://auth/callback` sign-in callback and
+opens the site `/mac-auth` handoff for Google OAuth before the overlay starts.
+Packaged apps point at `https://donkeyuse.com` by default. Override the web base
+URL only for local or staging auth testing:
+
+```bash
+DONKEY_WEB_BASE_URL="http://localhost:3000" ./scripts/package-donkey-app.sh
+```
+
 For distribution through the site, publish the disk image:
 
 ```text

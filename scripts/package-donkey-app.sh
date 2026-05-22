@@ -11,6 +11,8 @@ RUNTIME_PACKAGE_BASE_URL="${DONKEY_RUNTIME_PACKAGE_BASE_URL:-}"
 RUNTIME_PACKAGE_MANIFEST_URLS="${DONKEY_RUNTIME_PACKAGE_MANIFEST_URLS:-}"
 APP_VERSION="${DONKEY_APP_VERSION:-0.1.0}"
 APP_BUILD="${DONKEY_APP_BUILD:-1}"
+WEB_BASE_URL="${DONKEY_WEB_BASE_URL:-https://donkeyuse.com}"
+AUTH_CALLBACK_SCHEME="${DONKEY_AUTH_CALLBACK_SCHEME:-donkey}"
 SPARKLE_FEED_URL="${DONKEY_SPARKLE_FEED_URL:-}"
 SPARKLE_PUBLIC_ED_KEY="${DONKEY_SPARKLE_PUBLIC_ED_KEY:-}"
 RUNTIME_MANIFEST_PUBLIC_KEYS="${DONKEY_RUNTIME_MANIFEST_PUBLIC_KEYS:-}"
@@ -341,6 +343,21 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <string>$APP_BUILD</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
+  <key>DonkeyWebBaseURL</key>
+  <string>$WEB_BASE_URL</string>
+  <key>DonkeyAuthCallbackScheme</key>
+  <string>$AUTH_CALLBACK_SCHEME</string>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>ai.donkey.Donkey.auth</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>$AUTH_CALLBACK_SCHEME</string>
+      </array>
+    </dict>
+  </array>
   <key>NSMicrophoneUsageDescription</key>
   <string>Donkey uses the microphone for local voice commands.</string>
   <key>NSScreenCaptureUsageDescription</key>
