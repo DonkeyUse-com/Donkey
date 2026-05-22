@@ -85,14 +85,20 @@ On first launch, Donkey opens setup and starts installing required local runtime
 
 Each sidecar supports setup-time model weight preparation. During setup, Donkey calls the sidecar with `prepareModelWeights`; the sidecar downloads or warms the configured model cache and reports cached/downloaded status before health check. The local command-parser LLM is setup-managed too: Donkey packages a `local-llm` sidecar whose release manifest must include a model-weight download URL, checksum, and local inference backend requirement. The default package uses a Donkey-managed GGUF weight download with a `llama-cpp-python` backend. Actionable prompt turns are parsed through `DONKEY_LOCAL_LLM_RUNNER`; if that local runtime is unavailable, task-intent parsing fails clearly. Donkey does not fall back to a user-managed Ollama daemon. The Parakeet runner can fetch the Hugging Face snapshot when `huggingface_hub` is available and transcribes through NVIDIA NeMo when the local Python backend is installed.
 
-Configure model-weight URLs when packaging:
+The packaged local command-parser model lives in
+`config/local-llm-models.json`. Change that file when updating the product
+default; packaging and dev runtime refresh both read it. Eval-only candidate
+lists live with the eval fixtures under `evals/task-intent/`. Set
+`DONKEY_LOCAL_LLM_MODEL_CONFIG` to test a different runtime-default config file.
+
+Override model-weight URLs when packaging:
 
 ```bash
 DONKEY_PARAKEET_MODEL_URL="https://..." \
 DONKEY_PARAKEET_MODEL_SHA256="..." \
 DONKEY_YOLO_MODEL_URL="https://..." \
 DONKEY_YOLO_MODEL_SHA256="..." \
-DONKEY_LOCAL_LLM_MODEL_ID="qwen3-0.6b-q4_0" \
+DONKEY_LOCAL_LLM_MODEL_ID="qwen2.5-0.5b-instruct-q4_k_m" \
 DONKEY_LOCAL_LLM_MODEL_URL="https://..." \
 DONKEY_LOCAL_LLM_MODEL_SHA256="..." \
 ./scripts/package-donkey-app.sh

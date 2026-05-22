@@ -15,6 +15,7 @@ SPARKLE_FEED_URL="${DONKEY_SPARKLE_FEED_URL:-}"
 SPARKLE_PUBLIC_ED_KEY="${DONKEY_SPARKLE_PUBLIC_ED_KEY:-}"
 RUNTIME_MANIFEST_PUBLIC_KEYS="${DONKEY_RUNTIME_MANIFEST_PUBLIC_KEYS:-}"
 RUNTIME_REQUIRE_CRYPTO_SIGNATURES="${DONKEY_RUNTIME_REQUIRE_CRYPTO_SIGNATURES:-0}"
+LOCAL_LLM_MODEL_CONFIG="${DONKEY_LOCAL_LLM_MODEL_CONFIG:-$ROOT_DIR/config/local-llm-models.json}"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
@@ -29,6 +30,35 @@ mkdir -p "$CACHE_DIR/clang" "$CACHE_DIR/swiftpm" "$CACHE_DIR/home"
 export CLANG_MODULE_CACHE_PATH="$CACHE_DIR/clang"
 export SWIFTPM_CACHE_PATH="$CACHE_DIR/swiftpm"
 export HOME="$CACHE_DIR/home"
+
+load_local_llm_model_defaults() {
+  local config_path="$1"
+  python3 - "$config_path" <<'PY'
+import json
+import shlex
+import sys
+from pathlib import Path
+
+config_path = Path(sys.argv[1])
+config = json.loads(config_path.read_text())
+model = config.get("defaultModel")
+if not isinstance(model, dict):
+    raise SystemExit(f"defaultModel not found in {config_path}")
+requirements = config.get("runtimeRequirements") if isinstance(config.get("runtimeRequirements"), list) else []
+requirements_text = "\n".join(str(item) for item in requirements if str(item).strip())
+values = {
+    "LOCAL_LLM_MODEL_ID_DEFAULT": str(model.get("modelID") or ""),
+    "LOCAL_LLM_MODEL_URL_DEFAULT": str(model.get("downloadURL") or ""),
+    "LOCAL_LLM_MODEL_SHA256_DEFAULT": str(model.get("sha256") or model.get("expectedSHA256") or ""),
+    "LOCAL_LLM_MODEL_FILENAME_DEFAULT": str(model.get("filename") or "model.gguf"),
+    "LOCAL_LLM_RUNTIME_REQUIREMENTS": requirements_text,
+}
+for key, value in values.items():
+    print(f"{key}={shlex.quote(value)}")
+PY
+}
+
+eval "$(load_local_llm_model_defaults "$LOCAL_LLM_MODEL_CONFIG")"
 
 manifest_download_url_entry() {
   local runtime_id="$1"
@@ -208,7 +238,7 @@ mkdir -p "$RUNTIME_PACKAGE_DIR"
 make_runtime_package "parakeet-transcriber" "donkey-parakeet-transcriber" "nvidia/parakeet-tdt-0.6b-v3" "voiceTranscription" "${DONKEY_PARAKEET_MODEL_URL:-}" "${DONKEY_PARAKEET_MODEL_SHA256:-}" "${DONKEY_PARAKEET_MODEL_FILENAME:-parakeet-model.bin}" $'huggingface_hub>=0.25,<1'
 make_runtime_package "yolo-segmenter" "donkey-yolo-segmenter" "ultralytics/yolo26n-seg" "screenshotSegmentation" "${DONKEY_YOLO_MODEL_URL:-}" "${DONKEY_YOLO_MODEL_SHA256:-}" "${DONKEY_YOLO_MODEL_FILENAME:-yolo26n-seg.pt}" $'ultralytics>=8.3,<9\nopencv-python-headless>=4.10,<5'
 make_binary_runtime_package "ui-understander" "donkey-ui-understander" "$UI_UNDERSTANDER_EXECUTABLE" "apple-vision-text-recognition" "uiUnderstanding"
-make_runtime_package "local-llm" "donkey-local-llm" "${DONKEY_LOCAL_LLM_MODEL_ID:-qwen3-0.6b-q4_0}" "localLLM" "${DONKEY_LOCAL_LLM_MODEL_URL:-https://huggingface.co/ggml-org/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_0.gguf}" "${DONKEY_LOCAL_LLM_MODEL_SHA256:-da2572f16c06133561ce56accaa822216f2391ef4d37fba427801cd6736417d4}" "${DONKEY_LOCAL_LLM_MODEL_FILENAME:-Qwen3-0.6B-Q4_0.gguf}" $'llama-cpp-python>=0.3,<0.4'
+make_runtime_package "local-llm" "donkey-local-llm" "${DONKEY_LOCAL_LLM_MODEL_ID:-$LOCAL_LLM_MODEL_ID_DEFAULT}" "localLLM" "${DONKEY_LOCAL_LLM_MODEL_URL:-$LOCAL_LLM_MODEL_URL_DEFAULT}" "${DONKEY_LOCAL_LLM_MODEL_SHA256:-$LOCAL_LLM_MODEL_SHA256_DEFAULT}" "${DONKEY_LOCAL_LLM_MODEL_FILENAME:-$LOCAL_LLM_MODEL_FILENAME_DEFAULT}" "$LOCAL_LLM_RUNTIME_REQUIREMENTS"
 
 RESOURCE_BUNDLE="$(find "$BUILD_DIR/.build" -path "*/release/Donkey_Donkey.bundle" -type d | head -n 1 || true)"
 if [ -n "$RESOURCE_BUNDLE" ]; then

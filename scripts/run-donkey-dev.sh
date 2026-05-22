@@ -10,6 +10,7 @@ DEV_RUNTIME_SETUP_SCRIPT="$ROOT_DIR/scripts/setup-dev-local-runtimes.py"
 PACKAGE_SCRIPT="$ROOT_DIR/scripts/package-donkey-app.sh"
 DEV_RUNTIME_PACKAGE_DIR="${DONKEY_DEV_RUNTIME_PACKAGE_DIR:-$ROOT_DIR/dist/LocalRuntimePackages}"
 DEV_RUNTIME_ENV_FILE="${DONKEY_DEV_RUNTIME_ENV_FILE:-$ROOT_DIR/dist/donkey-dev-runtime-manifests.env}"
+LOCAL_LLM_MODEL_CONFIG="${DONKEY_LOCAL_LLM_MODEL_CONFIG:-$ROOT_DIR/config/local-llm-models.json}"
 LOG_PID=""
 
 cleanup() {
@@ -70,12 +71,14 @@ dev_runtime_packages_need_refresh() {
   if [ ! -d "$DEV_RUNTIME_PACKAGE_DIR" ]; then
     return 0
   fi
-  python3 - "$DEV_RUNTIME_PACKAGE_DIR" <<'PY'
+  python3 - "$DEV_RUNTIME_PACKAGE_DIR" "$LOCAL_LLM_MODEL_CONFIG" <<'PY'
 import json
+import os
 import sys
 from pathlib import Path
 
 package_dir = Path(sys.argv[1])
+config_path = Path(sys.argv[2])
 expected_runtimes = {"local-llm", "parakeet-transcriber", "ui-understander", "yolo-segmenter"}
 for runtime_id in expected_runtimes:
     if not (package_dir / runtime_id / "manifest.json").exists():
@@ -90,6 +93,28 @@ except Exception:
 metadata = manifest.get("metadata") if isinstance(manifest.get("metadata"), dict) else {}
 files = manifest.get("files") if isinstance(manifest.get("files"), list) else []
 requirements_path = package_dir / "local-llm" / "requirements.txt"
+try:
+    config = json.loads(config_path.read_text())
+except Exception:
+    raise SystemExit(0)
+model = config.get("defaultModel")
+if not isinstance(model, dict):
+    raise SystemExit(0)
+expected_model_id = os.environ.get("DONKEY_LOCAL_LLM_MODEL_ID") or str(model.get("modelID") or "")
+expected_model_url = os.environ.get("DONKEY_LOCAL_LLM_MODEL_URL") or str(model.get("downloadURL") or "")
+expected_model_sha256 = (
+    os.environ.get("DONKEY_LOCAL_LLM_MODEL_SHA256")
+    or str(model.get("sha256") or model.get("expectedSHA256") or "")
+)
+expected_model_filename = os.environ.get("DONKEY_LOCAL_LLM_MODEL_FILENAME") or str(model.get("filename") or "")
+if str(manifest.get("modelID") or "") != expected_model_id:
+    raise SystemExit(0)
+if str(metadata.get("modelWeights.downloadURL") or "") != expected_model_url:
+    raise SystemExit(0)
+if str(metadata.get("modelWeights.sha256") or "") != expected_model_sha256:
+    raise SystemExit(0)
+if str(metadata.get("modelWeights.filename") or "") != expected_model_filename:
+    raise SystemExit(0)
 if not str(metadata.get("modelWeights.downloadURL") or "").strip():
     raise SystemExit(0)
 if not str(metadata.get("modelWeights.sha256") or "").strip():

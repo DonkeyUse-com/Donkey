@@ -373,7 +373,7 @@ struct LocalModelRuntimeSetupTests {
             relativePath: "bin/donkey-local-llm",
             runtimeID: "local-llm",
             runtimeVersion: "1.2.3",
-            modelID: "qwen3-0.6b-q4_0",
+            modelID: "qwen2.5-0.5b-instruct-q4_k_m",
             metadataJSON: #"{"modelWeights.status":"missing","modelWeights.provider":"donkey-managed-download"}"#
         )
         let manager = try LocalModelRuntimeSetupManager(baseDirectory: root)
@@ -382,7 +382,7 @@ struct LocalModelRuntimeSetupTests {
             executableURL: healthExecutable,
             downloadedDirectory: download,
             runtimeVersion: "1.2.3",
-            modelID: "qwen3-0.6b-q4_0",
+            modelID: "qwen2.5-0.5b-instruct-q4_k_m",
             sidecarProtocolVersion: "v1"
         )
 

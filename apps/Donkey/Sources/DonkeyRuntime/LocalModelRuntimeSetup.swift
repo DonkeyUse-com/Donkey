@@ -468,7 +468,7 @@ public struct LocalModelRuntimeSetupManager: Sendable {
             displayName: "Local command parser LLM",
             environmentVariableName: "DONKEY_LOCAL_LLM_RUNNER",
             expectedExecutableRelativePath: "bin/donkey-local-llm",
-            modelName: "qwen3-0.6b-q4_0",
+            modelName: "qwen2.5-0.5b-instruct-q4_k_m",
             downloadPageURL: nil,
             manifestURL: Self.defaultPackageManifestURL(for: .localLLM),
             installSteps: [

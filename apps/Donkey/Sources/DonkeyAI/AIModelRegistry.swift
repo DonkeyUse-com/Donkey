@@ -104,11 +104,11 @@ public struct AIModelRegistry: Codable, Equatable, Sendable {
     public static let defaultHybridPlanner = AIModelRegistry(
         entries: [
             AIModelRegistryEntry(
-                id: "local-runtime-task-intent-qwen3-0-6b",
+                id: "local-runtime-task-intent-qwen2-5-0-5b-instruct",
                 role: .taskIntent,
                 provider: .localRuntime,
-                modelID: "qwen3-0.6b-q4_0",
-                endpoint: URL(string: "local://qwen3-0.6b-q4_0/task-intent")!,
+                modelID: "qwen2.5-0.5b-instruct-q4_k_m",
+                endpoint: URL(string: "local://qwen2.5-0.5b-instruct-q4_k_m/task-intent")!,
                 capabilities: [.textInput, .structuredOutputs],
                 timeoutMS: 20_000,
                 promptVersion: "task-intent-v1",

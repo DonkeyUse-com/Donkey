@@ -4,7 +4,7 @@ import DonkeyRuntime
 import Foundation
 import Testing
 
-private let defaultLocalRuntimeModelID = "qwen3-0.6b-q4_0"
+private let defaultLocalRuntimeModelID = "qwen2.5-0.5b-instruct-q4_k_m"
 // Only used in explicit Ollama adapter unit tests; it is not a default runtime dependency.
 private let explicitOllamaFixtureModelID = "qwen3:8b"
 
@@ -83,7 +83,7 @@ struct AIHarnessAdapterTests {
             )
         )
 
-        #expect(selected.id == "local-runtime-task-intent-qwen3-0-6b")
+        #expect(selected.id == "local-runtime-task-intent-qwen2-5-0-5b-instruct")
         #expect(selected.role == .taskIntent)
         #expect(selected.provider == .localRuntime)
         #expect(selected.modelID == defaultLocalRuntimeModelID)
