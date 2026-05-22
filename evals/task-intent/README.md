@@ -43,7 +43,7 @@ Run a small live sidecar sample against the local LLM sidecar:
 
 ```bash
 DONKEY_RUNTIME_ID=local-llm \
-DONKEY_MODEL_ID=qwen3-0.6b-q4_0 \
+DONKEY_MODEL_ID=qwen2.5-0.5b-instruct-q4_k_m \
 python3 scripts/evals/run_task_intent_sidecar_evals.py --app Safari --limit 3
 ```
 
@@ -51,9 +51,35 @@ Run the full suite:
 
 ```bash
 DONKEY_RUNTIME_ID=local-llm \
-DONKEY_MODEL_ID=qwen3-0.6b-q4_0 \
+DONKEY_MODEL_ID=qwen2.5-0.5b-instruct-q4_k_m \
 python3 scripts/evals/run_task_intent_sidecar_evals.py
 ```
+
+Compare the small local-model candidates before changing the packaged default:
+
+```bash
+python3 scripts/evals/run_task_intent_sidecar_evals.py \
+  --compare-default-candidates
+```
+
+For a quick smoke test, keep the same comparison path but limit the suite:
+
+```bash
+python3 scripts/evals/run_task_intent_sidecar_evals.py \
+  --compare-default-candidates \
+  --limit 10
+```
+
+Candidate GGUF downloads are stored under the gitignored
+`evals/task-intent/model-cache/` directory. Per-model reports and the ranked
+comparison summary are written under the gitignored
+`evals/task-intent/model-comparison/` directory. The comparison decision ranks
+models by pass rate first, then failed count, average latency, and model size.
+The candidate list comes from
+`evals/task-intent/local-llm-model-candidates.json`; pass
+`--candidate-config path/to/candidates.json` to test another candidate set. The
+single-model default comes from `config/local-llm-models.json`; pass
+`--model-config path/to/config.json` to test another packaged-default config.
 
 The runner writes a JSON report to
 `evals/task-intent/macos-default-apps-v1.latest-report.json` by default. That

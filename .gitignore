@@ -12,5 +12,9 @@ xcuserdata/
 ## Build artifacts
 /dist/
 
+## Eval artifacts
+/evals/task-intent/model-cache/
+/evals/task-intent/model-comparison/
+
 ## Project policy
 # Keep Package.resolved tracked for reproducible dependency resolution.
