@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$ROOT_DIR/apps/Donkey"
 LOG_SCRIPT="$ROOT_DIR/scripts/tail-donkey-logs.sh"
+DONKEY_BIN="$APP_DIR/.build/debug/Donkey"
 LOG_PID=""
 
 cleanup() {
@@ -57,8 +58,13 @@ killall Donkey >/dev/null 2>&1 || true
 cd "$APP_DIR"
 
 echo "Building Donkey..."
-swift build
+swift build --quiet
+
+if [ ! -x "$DONKEY_BIN" ]; then
+  echo "Built Donkey executable was not found at $DONKEY_BIN." >&2
+  exit 1
+fi
 
 echo "Starting Donkey..."
 start_logger
-swift run Donkey
+"$DONKEY_BIN"

@@ -154,6 +154,11 @@ if [ "$INCLUDE_DEBUG" -eq 1 ]; then
   LOG_COMMAND+=(--debug)
 fi
 
-echo "Predicate: $PREDICATE" >&2
-echo "Press Ctrl-C to stop." >&2
-exec "${LOG_COMMAND[@]}"
+exec "${LOG_COMMAND[@]}" 2> >(
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [[ "$line" == "Filtering the log data using "* ]]; then
+      continue
+    fi
+    printf '%s\n' "$line" >&2
+  done
+)
