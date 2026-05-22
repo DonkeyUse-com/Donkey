@@ -17,18 +17,17 @@ For document-writing plans, Donkey also validates the model output itself: a sho
 
 ## Decision Flow
 
-The pointer prompt records the user-visible turn, builds a bounded context packet, and routes it through the harness. Narrow non-semantic primitives, such as empty input and numeric arithmetic, can be handled directly. Semantic decisions go through typed model boundaries.
+The pointer prompt records the user-visible turn, builds a bounded context packet, and routes it through the harness. Empty input can be handled directly. Semantic decisions go through typed model boundaries.
 
 For local app work, the model receives:
 
 - the current command
 - supported runtime task definitions
-- relevant agent-memory snippets, such as installed local apps, files, folders, and learned task definitions
 - safety and execution expectations encoded in task metadata
 
 The model returns strict JSON, not free-form instructions. The result is decoded into a `TaskIntent`. If the intent names an existing task definition, the catalog validates that definition. If it names the generic local-app interaction capability, the catalog resolves the requested app from local memory and app lookup, then materializes a transient task definition from the typed `actionPlan`.
 
-For dynamic local-item and local-app interaction capabilities, the app or item name may be directly stated, retrieved from memory snippets, or inferred as the likely default local app for the user's goal. That inference is not execution authority; the catalog still resolves and verifies the target before any action runs.
+For dynamic local-item and local-app interaction capabilities, the app or item name comes from the typed model output. Catalog and memory matching happen after that typed output exists, so lookup is scoped to structured fields such as `targetAppName`, `entities.appName`, or a resolved target id. That inference is not execution authority; the catalog still resolves and verifies the target before any action runs.
 
 The `TaskIntent` wire format always includes an `actionPlan` object. Non-planned task types must return an empty `actionPlan.tools` array; non-empty action plans are accepted only for task definitions that explicitly opt into model-planned local-app interaction.
 
@@ -96,6 +95,6 @@ Weather, Music, and document form-fill fixtures remain useful for tests and repl
 
 - Prompt command handling starts in `apps/Donkey/Sources/Donkey/PointerPromptCommandHandler.swift`.
 - Harness routing and context packet assembly live in `apps/Donkey/Sources/DonkeyRuntime/AppHarnessTurnRouter.swift`.
-- Task-intent model adapters live in `apps/Donkey/Sources/DonkeyAI/OllamaTaskIntentAdapter.swift`.
+- Task-intent parsing protocol and the process-backed local runtime adapter live in `apps/Donkey/Sources/DonkeyAI/OllamaTaskIntentAdapter.swift`; the Ollama adapter in that file is an explicit adapter, not the default runtime path.
 - Catalog validation and generic local-app interaction materialization live in `apps/Donkey/Sources/DonkeyRuntime/LocalAppTaskCatalog.swift`.
 - Guarded execution lives in `apps/Donkey/Sources/DonkeyRuntime/LocalAppTaskLiveRunner.swift` and the action-engine backends.

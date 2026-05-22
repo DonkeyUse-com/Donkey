@@ -211,7 +211,7 @@ public struct ProviderBackedSlowPlannerHintGenerator: SlowPlannerHintGenerating 
     public init(
         localAdapter: OllamaPlannerHintAdapter = OllamaPlannerHintAdapter(),
         onlineAdapter: OpenAIPlannerHintAdapter = OpenAIPlannerHintAdapter(),
-        providerOrder: [AIModelProvider] = [.ollama, .openAI]
+        providerOrder: [AIModelProvider] = [.openAI]
     ) {
         self.localAdapter = localAdapter
         self.onlineAdapter = onlineAdapter

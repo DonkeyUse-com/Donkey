@@ -208,7 +208,7 @@ mkdir -p "$RUNTIME_PACKAGE_DIR"
 make_runtime_package "parakeet-transcriber" "donkey-parakeet-transcriber" "nvidia/parakeet-tdt-0.6b-v3" "voiceTranscription" "${DONKEY_PARAKEET_MODEL_URL:-}" "${DONKEY_PARAKEET_MODEL_SHA256:-}" "${DONKEY_PARAKEET_MODEL_FILENAME:-parakeet-model.bin}" $'huggingface_hub>=0.25,<1'
 make_runtime_package "yolo-segmenter" "donkey-yolo-segmenter" "ultralytics/yolo26n-seg" "screenshotSegmentation" "${DONKEY_YOLO_MODEL_URL:-}" "${DONKEY_YOLO_MODEL_SHA256:-}" "${DONKEY_YOLO_MODEL_FILENAME:-yolo26n-seg.pt}" $'ultralytics>=8.3,<9\nopencv-python-headless>=4.10,<5'
 make_binary_runtime_package "ui-understander" "donkey-ui-understander" "$UI_UNDERSTANDER_EXECUTABLE" "apple-vision-text-recognition" "uiUnderstanding"
-make_runtime_package "local-llm" "donkey-local-llm" "${DONKEY_LOCAL_LLM_MODEL_ID:-qwen3:8b}" "localLLM" "" "" "${DONKEY_LOCAL_LLM_MODEL_FILENAME:-ollama-qwen3-8b}"
+make_runtime_package "local-llm" "donkey-local-llm" "${DONKEY_LOCAL_LLM_MODEL_ID:-qwen3-0.6b-q4_0}" "localLLM" "${DONKEY_LOCAL_LLM_MODEL_URL:-https://huggingface.co/ggml-org/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_0.gguf}" "${DONKEY_LOCAL_LLM_MODEL_SHA256:-da2572f16c06133561ce56accaa822216f2391ef4d37fba427801cd6736417d4}" "${DONKEY_LOCAL_LLM_MODEL_FILENAME:-Qwen3-0.6B-Q4_0.gguf}" $'llama-cpp-python>=0.3,<0.4'
 
 RESOURCE_BUNDLE="$(find "$BUILD_DIR/.build" -path "*/release/Donkey_Donkey.bundle" -type d | head -n 1 || true)"
 if [ -n "$RESOURCE_BUNDLE" ]; then

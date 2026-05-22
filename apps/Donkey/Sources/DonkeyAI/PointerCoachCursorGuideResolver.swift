@@ -103,6 +103,9 @@ public struct ProcessBackedLocalLLMAgentVisualizationPlanResolver: AgentVisualiz
             cacheSnippets: request.cacheSnippets,
             sourceTraceID: request.sourceTraceID,
             modelID: entry.modelID,
+            cacheDirectory: LocalModelRuntimeExecutableResolver().modelCacheDirectoryPath(
+                environmentVariableName: "DONKEY_LOCAL_LLM_RUNNER"
+            ),
             metadata: [
                 "schemaID": Self.schemaID,
                 "promptVersion": entry.promptVersion
@@ -314,6 +317,7 @@ private struct LocalLLMAgentVisualizationPlanSidecarRequest: Codable, Equatable,
     var cacheSnippets: [String]
     var sourceTraceID: String
     var modelID: String
+    var cacheDirectory: String?
     var metadata: [String: String]
 }
 

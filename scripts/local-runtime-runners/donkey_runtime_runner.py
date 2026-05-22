@@ -3,8 +3,8 @@
 
 The app packages this file with small executable wrappers for each runtime. It
 keeps the Donkey sidecar protocol stable while allowing each runtime package to
-prepare model weights and call a real local backend when the user's machine has
-the required runtime installed.
+prepare model weights and call a packaged local backend through the sidecar
+protocol.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -32,10 +31,12 @@ ROLE = os.environ.get("DONKEY_RUNTIME_ROLE", "")
 MODEL_URL = os.environ.get("DONKEY_MODEL_URL", "")
 MODEL_SHA256 = os.environ.get("DONKEY_MODEL_SHA256", "")
 MODEL_FILENAME = os.environ.get("DONKEY_MODEL_FILENAME", "model.bin")
-OLLAMA_ENDPOINT = os.environ.get("DONKEY_OLLAMA_ENDPOINT", "http://127.0.0.1:11434")
 MANAGED_PYTHON_ENV = "DONKEY_RUNTIME_MANAGED_PYTHON"
 
 DEFAULT_RUNTIME_REQUIREMENTS: dict[str, list[str]] = {
+    "local-llm": [
+        "llama-cpp-python>=0.3,<0.4",
+    ],
     "parakeet-transcriber": [
         "huggingface_hub>=0.25,<1",
     ],
@@ -112,7 +113,7 @@ def run_with_managed_python_if_needed(operation: Any, request: dict[str, Any]) -
         return None
     if RUNTIME_ID not in DEFAULT_RUNTIME_REQUIREMENTS:
         return None
-    if operation not in {"prepareModelWeights", None}:
+    if operation not in {"prepareModelWeights", "healthCheck", None}:
         return None
 
     requirements = runtime_requirements()
@@ -241,11 +242,14 @@ def prepare_model_weights(request: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(cache_dir, str) or not cache_dir:
         return error_payload("missingCacheDirectory")
 
-    if RUNTIME_ID == "local-llm":
-        return prepare_ollama_model(cache_dir)
-
     target_dir = safe_model_dir(cache_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
+
+    if RUNTIME_ID == "local-llm" and not MODEL_URL:
+        return error_payload(
+            "missingModelWeightDownloadURL",
+            {"cacheDirectory": cache_dir, "modelWeights.status": "notConfigured"},
+        )
 
     if RUNTIME_ID == "parakeet-transcriber" and not MODEL_URL:
         return prepare_huggingface_snapshot(cache_dir)
@@ -283,67 +287,6 @@ def prepared(cache_dir: str, extra: dict[str, Any] | None = None) -> dict[str, A
         "cacheDirectory": cache_dir,
         "metadata": metadata({"modelWeights.status": "downloaded", **(extra or {})}),
     }
-
-
-def prepare_ollama_model(cache_dir: str) -> dict[str, Any]:
-    if ollama_has_model(MODEL_ID):
-        return prepared(
-            cache_dir,
-            {
-                "modelWeights.status": "cached",
-                "modelWeights.provider": "ollama",
-                "modelWeights.ollamaModel": MODEL_ID,
-            },
-        )
-
-    if shutil.which("ollama"):
-        completed = subprocess.run(
-            ["ollama", "pull", MODEL_ID],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-        if completed.returncode == 0:
-            return prepared(
-                cache_dir,
-                {
-                    "modelWeights.provider": "ollama",
-                    "modelWeights.ollamaModel": MODEL_ID,
-                },
-            )
-        return prepared(
-            cache_dir,
-            {
-                "reason": "ollamaPullFailed",
-                "modelWeights.status": "externalUnavailable",
-                "modelWeights.provider": "ollama",
-                "modelWeights.ollamaModel": MODEL_ID,
-                "stderr": completed.stderr[-400:],
-            },
-        )
-
-    try:
-        payload = json.dumps({"model": MODEL_ID, "stream": False}).encode("utf-8")
-        post_json("/api/pull", payload, timeout=1800)
-        return prepared(
-            cache_dir,
-            {
-                "modelWeights.provider": "ollama",
-                "modelWeights.ollamaModel": MODEL_ID,
-            },
-        )
-    except Exception as exc:  # noqa: BLE001
-        return prepared(
-            cache_dir,
-            {
-                "reason": "ollamaUnavailable",
-                "modelWeights.status": "externalUnavailable",
-                "modelWeights.provider": "ollama",
-                "modelWeights.ollamaModel": MODEL_ID,
-                "detail": str(exc),
-            },
-        )
 
 
 def prepare_huggingface_snapshot(cache_dir: str) -> dict[str, Any]:
@@ -426,7 +369,13 @@ def download_model_file(url: str, target_file: Path, expected_sha256: str, cache
             )
 
     tmp_file.replace(target_file)
-    return prepared(cache_dir, {"modelWeights.path": str(target_file)})
+    return prepared(
+        cache_dir,
+        {
+            "modelWeights.path": str(target_file),
+            "modelWeights.provider": "donkey-managed-download",
+        },
+    )
 
 
 def sha256_file(path: Path) -> str:
@@ -441,22 +390,41 @@ def health_check(request: dict[str, Any]) -> dict[str, Any]:
     cache_dir = request.get("cacheDirectory")
     weights_status = "missing"
     provider = ""
+    status = "ok"
+    reason = ""
 
-    if RUNTIME_ID == "local-llm":
-        weights_status = "cached" if ollama_has_model(MODEL_ID) else "missing"
-        provider = "ollama"
-    elif isinstance(cache_dir, str) and cache_dir:
+    if isinstance(cache_dir, str) and cache_dir:
         model_file = Path(cache_dir) / MODEL_FILENAME
         model_dir = safe_model_dir(cache_dir)
         weights_status = "cached" if model_file.exists() or any(model_dir.glob("*")) else "missing"
+        if model_file.exists():
+            provider = "donkey-managed-download"
+
+    if RUNTIME_ID == "local-llm" and not os.environ.get("DONKEY_LOCAL_LLM_COMMAND"):
+        try:
+            import llama_cpp  # type: ignore # noqa: F401
+        except Exception as exc:  # noqa: BLE001
+            status = "error"
+            reason = "localLLMBackendUnavailable"
+            provider = provider or "llama-cpp-python"
+            extra_detail = str(exc)
+        else:
+            provider = provider or "llama-cpp-python"
+            extra_detail = ""
+    else:
+        extra_detail = ""
 
     extra = {
         "runtime.package": "donkey-runner-package",
         "modelWeights.status": weights_status,
         "modelWeights.provider": provider,
     }
+    if reason:
+        extra["reason"] = reason
+    if extra_detail:
+        extra["detail"] = extra_detail
     return {
-        "status": "ok",
+        "status": status,
         "runtimeID": RUNTIME_ID,
         "runtimeVersion": RUNTIME_VERSION,
         "modelID": MODEL_ID,
@@ -466,81 +434,158 @@ def health_check(request: dict[str, Any]) -> dict[str, Any]:
 
 
 def run_local_llm(request: dict[str, Any]) -> dict[str, Any]:
-    command = request.get("command", "")
-    schema_id = (request.get("metadata") or {}).get("schemaID", "")
-    is_task_intent_request = False
-    if schema_id == "task_followup_resolution_v1":
-        candidates = request.get("candidates", [])
-        prompt = task_followup_prompt(command, candidates)
-        schema = task_followup_schema(candidates)
-        max_tokens = 96
-    elif schema_id == "agent_visualization_plan":
-        prompt = agent_visualization_plan_prompt(
-            command,
-            request.get("runtimeCapabilities", []),
-            request.get("cacheSnippets", []),
-        )
-        schema = agent_visualization_plan_schema()
-        max_tokens = 240
-    else:
-        is_task_intent_request = True
-        task_definitions = request.get("taskDefinitions", [])
-        prompt = task_intent_prompt(command, task_definitions, request.get("contextSnippets", []))
-        schema = task_intent_schema(task_definitions)
-        max_tokens = 512
-    body = {
-        "model": selected_ollama_model(str(request.get("modelID") or MODEL_ID)),
-        "prompt": prompt,
-        "stream": False,
-        "format": schema,
-        "options": {
-            "num_ctx": 2048,
-            "num_predict": max_tokens,
-            "temperature": 0,
-            "top_p": 0.8,
-        },
-        "keep_alive": "10m",
-    }
+    cache_dir = request.get("cacheDirectory")
+    model_file = Path(cache_dir) / MODEL_FILENAME if isinstance(cache_dir, str) and cache_dir else None
+    if model_file is None or not model_file.exists():
+        return {
+            "outputText": "",
+            "metadata": metadata(
+                {
+                    "reason": "localLLMModelWeightsMissing",
+                    "modelWeights.status": "missing",
+                    "modelWeights.provider": "donkey-managed-download",
+                }
+            ),
+        }
+
+    external_command = os.environ.get("DONKEY_LOCAL_LLM_COMMAND")
+    if external_command:
+        backend_request = dict(request)
+        backend_metadata = dict(backend_request.get("metadata") or {})
+        backend_metadata["modelWeights.path"] = str(model_file)
+        backend_metadata["modelWeights.provider"] = "donkey-managed-download"
+        backend_request["metadata"] = backend_metadata
+        return run_external_json_command(external_command, backend_request)
+
+    return run_llama_cpp_local_llm(request, model_file)
+
+
+def run_llama_cpp_local_llm(request: dict[str, Any], model_file: Path) -> dict[str, Any]:
+    try:
+        from llama_cpp import Llama  # type: ignore
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "outputText": "",
+            "metadata": metadata(
+                {
+                    "reason": "localLLMBackendUnavailable",
+                    "modelWeights.status": "cached",
+                    "modelWeights.path": str(model_file),
+                    "modelWeights.provider": "donkey-managed-download",
+                    "backend.provider": "llama-cpp-python",
+                    "detail": str(exc),
+                }
+            ),
+        }
+
+    prompt, max_tokens = local_llm_prompt_and_limit(request)
     started = time.monotonic()
     try:
-        response = post_json(
-            "/api/generate",
-            json.dumps(body).encode("utf-8"),
-            timeout=local_llm_timeout_seconds(),
+        llm = Llama(
+            model_path=str(model_file),
+            n_ctx=local_llm_int_env("DONKEY_LOCAL_LLM_CONTEXT_TOKENS", 4096),
+            n_threads=local_llm_int_env("DONKEY_LOCAL_LLM_THREADS", max(1, os.cpu_count() or 1)),
+            verbose=False,
+        )
+        response = llm(
+            prompt,
+            max_tokens=max_tokens,
+            temperature=0,
+            top_p=0.8,
+            stop=["<|im_end|>", "\n\n\n"],
         )
         latency_ms = (time.monotonic() - started) * 1000
-        output_text = str(response.get("response", ""))
-        response_metadata = {
-            "local.provider": "ollama-sidecar",
-            "http.status": "200",
-            "latency.localLLMGenerationMS": f"{latency_ms:.3f}",
-        }
-        requested_model = str(request.get("modelID") or MODEL_ID)
-        if body["model"] != requested_model:
-            response_metadata.update(
-                {
-                    "modelFallback.originalModelID": requested_model,
-                    "modelFallback.selectedModelID": body["model"],
-                    "modelFallback.reason": "requestedModelUnavailable",
-                }
-            )
-        if is_task_intent_request:
+        choices = response.get("choices") if isinstance(response, dict) else []
+        output_text = ""
+        if choices and isinstance(choices[0], dict):
+            output_text = str(choices[0].get("text") or "").strip()
+        schema_id = str((request.get("metadata") or {}).get("schemaID") or "")
+        if schema_id in {"", "task_intent_v1"}:
             output_text, repair_metadata = repair_task_intent_output(
                 output_text,
-                command=str(command),
-                model_id=str(body["model"]),
+                command=str(request.get("command") or ""),
+                model_id=MODEL_ID,
                 context_snippets=request.get("contextSnippets", []),
             )
-            response_metadata.update(repair_metadata)
+        else:
+            repair_metadata = {}
         return {
             "outputText": output_text,
-            "metadata": metadata(response_metadata),
+            "metadata": metadata(
+                {
+                    "local.provider": "llama-cpp-python",
+                    "backend.provider": "llama-cpp-python",
+                    "latency.localLLMGenerationMS": f"{latency_ms:.3f}",
+                    "modelWeights.status": "cached",
+                    "modelWeights.path": str(model_file),
+                    "modelWeights.provider": "donkey-managed-download",
+                    **repair_metadata,
+                }
+            ),
         }
     except Exception as exc:  # noqa: BLE001
         return {
             "outputText": "",
-            "metadata": metadata({"reason": "localLLMGenerationFailed", "detail": str(exc)}),
+            "metadata": metadata(
+                {
+                    "reason": "localLLMGenerationFailed",
+                    "modelWeights.status": "cached",
+                    "modelWeights.path": str(model_file),
+                    "modelWeights.provider": "donkey-managed-download",
+                    "backend.provider": "llama-cpp-python",
+                    "detail": str(exc),
+                }
+            ),
         }
+
+
+def local_llm_prompt_and_limit(request: dict[str, Any]) -> tuple[str, int]:
+    command = str(request.get("command") or "")
+    schema_id = str((request.get("metadata") or {}).get("schemaID") or "")
+    if schema_id == "task_followup_resolution_v1":
+        candidates = request.get("candidates", [])
+        return json_prompt(
+            task_followup_prompt(command, candidates),
+            task_followup_schema(candidates),
+        ), 160
+    if schema_id == "agent_visualization_plan":
+        return json_prompt(
+            agent_visualization_plan_prompt(
+                command,
+                request.get("runtimeCapabilities", []),
+                request.get("cacheSnippets", []),
+            ),
+            agent_visualization_plan_schema(),
+        ), 320
+    task_definitions = request.get("taskDefinitions", [])
+    return json_prompt(
+        task_intent_prompt(command, task_definitions, request.get("contextSnippets", [])),
+        task_intent_schema(task_definitions),
+    ), 640
+
+
+def json_prompt(instructions: str, schema: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            "<|im_start|>system",
+            "You are Donkey's local structured-output command parser.",
+            "Return only one valid JSON object. Do not include markdown, explanations, or thinking text.",
+            "<|im_end|>",
+            "<|im_start|>user",
+            instructions,
+            "JSON schema:",
+            json.dumps(schema, separators=(",", ":")),
+            "<|im_end|>",
+            "<|im_start|>assistant",
+        ]
+    )
+
+
+def local_llm_int_env(name: str, default_value: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, str(default_value))))
+    except ValueError:
+        return default_value
 
 
 def repair_task_intent_output(
@@ -549,6 +594,7 @@ def repair_task_intent_output(
     model_id: str,
     context_snippets: list[Any] | None = None,
 ) -> tuple[str, dict[str, str]]:
+    _ = (command, model_id, context_snippets)
     intent = decode_json_object(output_text)
     if not isinstance(intent, dict):
         return output_text, {}
@@ -556,78 +602,9 @@ def repair_task_intent_output(
     output_metadata: dict[str, str] = {}
     if clear_empty_conversation_mode(intent):
         output_metadata["modelPlan.clearedEmptyConversationMode"] = "true"
-
-    chain_metadata = repair_app_chain_metadata(
-        intent,
-        command=command,
-        model_id=model_id,
-        context_snippets=context_snippets or [],
-    )
-    output_metadata.update(chain_metadata)
-
-    if not should_repair_document_text_payload(intent, command):
-        if output_metadata:
-            return json.dumps(intent, separators=(",", ":")), output_metadata
-        return output_text, {}
-
-    started = time.monotonic()
-    try:
-        response = post_json(
-            "/api/generate",
-            json.dumps(
-                {
-                    "model": model_id,
-                    "prompt": document_text_payload_prompt(command),
-                    "stream": False,
-                    "format": document_text_payload_schema(),
-                    "options": {
-                        "num_ctx": 1024,
-                        "num_predict": 220,
-                        "temperature": 0.35,
-                        "top_p": 0.9,
-                    },
-                    "keep_alive": "10m",
-                }
-            ).encode("utf-8"),
-            timeout=min(local_llm_timeout_seconds(), 15),
-        )
-        latency_ms = (time.monotonic() - started) * 1000
-        payload = decode_json_object(str(response.get("response", "")))
-        metadata = {
-            "modelPlan.textPayloadRepair": "attempted",
-            "latency.textPayloadRepairMS": f"{latency_ms:.3f}",
-        }
-        if isinstance(payload, dict) and bool(payload.get("canWrite")):
-            text = str(payload.get("text") or "").strip()
-            if text:
-                set_intent_query(intent, text)
-                intent_metadata = intent.setdefault("metadata", {})
-                if isinstance(intent_metadata, dict):
-                    intent_metadata.pop("responseMode", None)
-                    intent_metadata.pop("assistantResponse", None)
-                    intent_metadata.pop("notActionableReason", None)
-                    intent_metadata["modelPlan.repairedTextPayload"] = "true"
-                metadata["modelPlan.textPayloadRepair"] = "completed"
-                metadata.update(output_metadata)
-                return json.dumps(intent, separators=(",", ":")), metadata
-
-        assistant_response = "I can help, but I need a clearer thing to write before opening an app."
-        if isinstance(payload, dict):
-            candidate_response = str(payload.get("assistantResponse") or "").strip()
-            if candidate_response:
-                assistant_response = candidate_response
-        mark_intent_as_conversation(intent, assistant_response, "contentGenerationDeclined")
-        metadata["modelPlan.textPayloadRepair"] = "conversation"
-        metadata.update(output_metadata)
-        return json.dumps(intent, separators=(",", ":")), metadata
-    except Exception as exc:  # noqa: BLE001
-        output_metadata.update(
-            {
-            "modelPlan.textPayloadRepair": "failed",
-            "modelPlan.textPayloadRepairError": str(exc)[:240],
-            }
-        )
+    if output_metadata:
         return json.dumps(intent, separators=(",", ":")), output_metadata
+    return output_text, {}
 
 
 def clear_empty_conversation_mode(intent: dict[str, Any]) -> bool:
@@ -653,65 +630,8 @@ def repair_app_chain_metadata(
     model_id: str,
     context_snippets: list[Any],
 ) -> dict[str, str]:
-    if existing_app_chain(intent):
-        return {}
-    if not should_consider_app_chain_repair(intent):
-        return {}
-
-    started = time.monotonic()
-    try:
-        response = post_json(
-            "/api/generate",
-            json.dumps(
-                {
-                    "model": model_id,
-                    "prompt": app_chain_repair_prompt(command, intent, context_snippets),
-                    "stream": False,
-                    "format": app_chain_repair_schema(),
-                    "options": {
-                        "num_ctx": 1024,
-                        "num_predict": 180,
-                        "temperature": 0,
-                        "top_p": 0.8,
-                    },
-                    "keep_alive": "10m",
-                }
-            ).encode("utf-8"),
-            timeout=min(local_llm_timeout_seconds(), 15),
-        )
-        latency_ms = (time.monotonic() - started) * 1000
-        payload = decode_json_object(str(response.get("response", "")))
-        metadata = {
-            "modelPlan.appChainRepair": "attempted",
-            "latency.appChainRepairMS": f"{latency_ms:.3f}",
-        }
-        if not isinstance(payload, dict) or not bool(payload.get("needsChain")):
-            metadata["modelPlan.appChainRepair"] = "notNeeded"
-            return metadata
-
-        app_chain = [str(item).strip() for item in payload.get("appChain", []) if str(item).strip()]
-        target_app = target_app_name(intent)
-        if target_app and (not app_chain or normalized_words(app_chain[-1]) != normalized_words(target_app)):
-            app_chain.append(target_app)
-        if len(app_chain) < 2:
-            metadata["modelPlan.appChainRepair"] = "invalid"
-            return metadata
-
-        source_apps = [item for item in app_chain[:-1]]
-        intent_metadata = intent.setdefault("metadata", {})
-        if isinstance(intent_metadata, dict):
-            intent_metadata["appChain"] = json.dumps(app_chain, separators=(",", ":"))
-            intent_metadata["sourceApps"] = json.dumps(source_apps, separators=(",", ":"))
-            reason = str(payload.get("reason") or "").strip()
-            if reason:
-                intent_metadata["chainReason"] = reason
-        metadata["modelPlan.appChainRepair"] = "completed"
-        return metadata
-    except Exception as exc:  # noqa: BLE001
-        return {
-            "modelPlan.appChainRepair": "failed",
-            "modelPlan.appChainRepairError": str(exc)[:240],
-        }
+    _ = (intent, command, model_id, context_snippets)
+    return {}
 
 
 def existing_app_chain(intent: dict[str, Any]) -> list[str]:
@@ -938,35 +858,6 @@ def command_contains_quoted(query: str, command: str) -> bool:
         return False
     lowered_command = command.lower()
     return any(f"{quote}{trimmed.lower()}{quote}" in lowered_command for quote in ["\"", "'", "`"])
-
-
-def selected_ollama_model(requested_model_id: str) -> str:
-    names = ollama_model_names()
-    if requested_model_id in names or f"{requested_model_id}:latest" in names:
-        return requested_model_id
-
-    for prefix in [
-        "qwen3",
-        "qwen2.5",
-        "llama3.1",
-        "llama3",
-        "mistral",
-        "gemma3",
-        "gemma2",
-    ]:
-        for name in names:
-            if name == prefix or name.startswith(f"{prefix}:"):
-                return name
-
-    return requested_model_id
-
-
-def local_llm_timeout_seconds() -> int:
-    raw_value = os.environ.get("DONKEY_LOCAL_LLM_TIMEOUT_SECONDS", "20")
-    try:
-        return max(1, int(raw_value))
-    except ValueError:
-        return 20
 
 
 def task_followup_prompt(command: str, candidates: list[dict[str, Any]]) -> str:
@@ -1405,70 +1296,6 @@ def run_external_json_command(command: str, request: dict[str, Any]) -> dict[str
     if isinstance(payload, dict):
         return payload
     return error_payload("externalCommandInvalidPayload")
-
-
-def ollama_has_model(model_id: str) -> bool:
-    names = set(ollama_model_names())
-    if names:
-        return model_id in names or f"{model_id}:latest" in names
-    return False
-
-
-def ollama_model_names() -> list[str]:
-    try:
-        tags = get_json("/api/tags", timeout=3)
-        models = tags.get("models", [])
-        names = []
-        for item in models:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name") or "")
-            size = int(item.get("size") or 0)
-            if name and ":cloud" not in name and size > 0:
-                names.append(name)
-        return names
-    except Exception:  # noqa: BLE001
-        pass
-
-    if shutil.which("ollama"):
-        completed = subprocess.run(
-            ["ollama", "list"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            check=False,
-        )
-        if completed.returncode == 0:
-            names = []
-            for line in completed.stdout.splitlines()[1:]:
-                parts = line.split()
-                if not parts:
-                    continue
-                name = parts[0]
-                if name and ":cloud" not in name:
-                    names.append(name)
-            return names
-    return []
-
-
-def get_json(path: str, timeout: int) -> dict[str, Any]:
-    with urllib.request.urlopen(OLLAMA_ENDPOINT + path, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
-
-
-def post_json(path: str, payload: bytes, timeout: int) -> dict[str, Any]:
-    request = urllib.request.Request(
-        OLLAMA_ENDPOINT + path,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"ollama HTTP {exc.code}: {detail}") from exc
 
 
 if __name__ == "__main__":

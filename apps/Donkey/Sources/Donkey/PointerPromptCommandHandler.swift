@@ -101,7 +101,7 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
             AgentVisualizationPlanResolverRequest(
                 command: command,
                 runtimeCapabilities: Self.runtimeCapabilities(for: catalog),
-                cacheSnippets: memoryStore?.contextSnippets(for: command) ?? [],
+                cacheSnippets: [],
                 sourceTraceID: traceID
             )
         )
@@ -531,8 +531,6 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
     private func routingHint(for routing: AppHarnessRoutingResult) -> String {
         let router = routing.outcome.metadata["router"] ?? ""
         switch router {
-        case "simpleArithmetic":
-            return "Answered a simple arithmetic question locally; no app workflow was run."
         case "followUpActionContext":
             return "Follow-up turn is being treated as an action for the existing task."
         case "modelIntent":
@@ -769,7 +767,7 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
             ),
             recentEvents: context?.recentEvents ?? [],
             assets: context?.assets ?? [],
-            memory: SQLiteAgentMemoryStore.shared?.contextSnippets(for: command) ?? [],
+            memory: [],
             policy: ["localInput": "guarded"]
         )
     }

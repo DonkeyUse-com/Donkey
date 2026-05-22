@@ -361,6 +361,38 @@ struct LocalModelRuntimeSetupTests {
     }
 
     @Test
+    func recheckHealthFailsWhenModelWeightsAreMissing() async throws {
+        let root = temporaryDirectory()
+        let download = temporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: download)
+        }
+        let healthExecutable = try makeHealthExecutable(
+            root: download,
+            relativePath: "bin/donkey-local-llm",
+            runtimeID: "local-llm",
+            runtimeVersion: "1.2.3",
+            modelID: "qwen3-0.6b-q4_0",
+            metadataJSON: #"{"modelWeights.status":"missing","modelWeights.provider":"donkey-managed-download"}"#
+        )
+        let manager = try LocalModelRuntimeSetupManager(baseDirectory: root)
+        try manager.registerExecutable(
+            runtimeID: .localLLM,
+            executableURL: healthExecutable,
+            downloadedDirectory: download,
+            runtimeVersion: "1.2.3",
+            modelID: "qwen3-0.6b-q4_0",
+            sidecarProtocolVersion: "v1"
+        )
+
+        let report = try await manager.recheckHealth(runtimeID: .localLLM)
+
+        #expect(report.state == .failed)
+        #expect(report.metadata["modelWeights.status"] == "missing")
+    }
+
+    @Test
     func prepareModelWeightsRunsSidecarPreparationProtocol() async throws {
         let root = temporaryDirectory()
         let download = temporaryDirectory()
@@ -481,12 +513,13 @@ struct LocalModelRuntimeSetupTests {
         relativePath: String,
         runtimeID: String,
         runtimeVersion: String,
-        modelID: String
+        modelID: String,
+        metadataJSON: String = #"{"health":"ok"}"#
     ) throws -> URL {
         let script = """
         #!/bin/sh
         cat >/dev/null
-        printf '{"status":"ok","runtimeID":"\(runtimeID)","runtimeVersion":"\(runtimeVersion)","modelID":"\(modelID)","protocolVersion":"v1","metadata":{"health":"ok"}}'
+        printf '{"status":"ok","runtimeID":"\(runtimeID)","runtimeVersion":"\(runtimeVersion)","modelID":"\(modelID)","protocolVersion":"v1","metadata":\(metadataJSON)}'
         """
         let url = relativePath
             .split(separator: "/")

@@ -140,6 +140,13 @@ text as an implicit action signal.
 
 ## Intent Classification Rules
 
+The core rule is model-first: never string-match raw user input to infer what
+the user wants. Natural language has too many variations for phrase lists,
+prefixes, suffixes, regexes, greeting classifiers, or app-name checks to be a
+reliable decision boundary. Pass the turn through an LLM or another typed
+model/runtime boundary first. Once structured output exists, deterministic code
+may validate and match typed fields.
+
 User intent must not be inferred with ad hoc phrase, prefix, suffix, substring,
 or regex checks against natural-language command text. Donkey has local LLMs,
 task definitions, runtime catalogs, and agent memory context for this job. Use them.
@@ -149,10 +156,10 @@ recover those buckets by reading natural-language words out of the user's
 prompt.
 
 Allowed deterministic checks are narrow primitives whose correctness does not
-depend on open-ended language semantics: empty input, numeric-only arithmetic
-expression extraction, exact schema validation, explicit metadata flags, and
-bounded normalization of lookup text after a typed decision has already selected
-a lookup path. These checks must stay generic and must not encode app-specific
+depend on open-ended language semantics: empty input, exact schema validation,
+explicit metadata flags, and bounded normalization of lookup text after a typed
+decision has already selected a lookup path. These checks must stay generic and
+must not encode app-specific
 or workflow-specific user phrasing.
 
 Disallowed checks include code that decides a user's semantic intent from
@@ -192,11 +199,13 @@ what can be acted on, and what policies apply.
 
 A useful context packet includes the current turn, a bounded summary of recent
 thread events, relevant assets, active action state, selected app/window facts
-when available, task definitions and supported capabilities, retrieved memory,
-permission policy, safety state, and trace ids. The packet should be shaped for
-the consumer: conversation response, intent classification, planner hint,
-review-plan creation, memory retrieval, observation, and recovery do not need
-the same fields.
+when available, task definitions and supported capabilities, permission policy,
+safety state, and trace ids. The packet should be shaped for the consumer:
+conversation response, intent classification, planner hint, review-plan
+creation, memory retrieval, observation, and recovery do not need the same
+fields. Query-matched memory for natural-language prompt text should not be
+added before intent classification; retrieve memory after the typed model
+output provides a structured target or scope.
 
 Remote-bound context must be redacted before provider calls. Local-only context
 can include richer app and observation facts, but should still stay bounded and
@@ -223,11 +232,10 @@ the harness should ask for that exact entity or invite an upload. The prompt
 should name the missing detail rather than using generic copy like "Need more
 detail".
 
-Action execution is for validated, supported tasks. The fast turn classifier can
-answer narrow non-semantic turns such as numeric arithmetic; otherwise the local
-model classifier or explicit runtime metadata produces a `TaskIntent`. Execution
-may only continue after catalog validation confirms the target app/task,
-required entities, app availability, and safety policy. The default runtime
+Action execution is for validated, supported tasks. The local model classifier
+or explicit runtime metadata produces a `TaskIntent`. Execution may only
+continue after catalog validation confirms the target app/task, required
+entities, app availability, and safety policy. The default runtime
 capabilities are generic local-item open plus generic model-planned local-app
 interaction; the latter materializes a transient task definition from an
 allowlisted typed `actionPlan` before execution. Weather lookup, media

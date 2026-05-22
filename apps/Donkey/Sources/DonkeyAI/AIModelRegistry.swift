@@ -104,38 +104,21 @@ public struct AIModelRegistry: Codable, Equatable, Sendable {
     public static let defaultHybridPlanner = AIModelRegistry(
         entries: [
             AIModelRegistryEntry(
-                id: "local-runtime-task-intent-qwen3",
+                id: "local-runtime-task-intent-qwen3-0-6b",
                 role: .taskIntent,
                 provider: .localRuntime,
-                modelID: "qwen3:8b",
-                endpoint: URL(string: "local://qwen3-8b/task-intent")!,
+                modelID: "qwen3-0.6b-q4_0",
+                endpoint: URL(string: "local://qwen3-0.6b-q4_0/task-intent")!,
                 capabilities: [.textInput, .structuredOutputs],
                 timeoutMS: 20_000,
                 promptVersion: "task-intent-v1",
                 evalStatus: .candidate,
-                docsURL: URL(string: "https://ollama.com/library/qwen3")!,
+                docsURL: URL(string: "local://donkey/local-llm")!,
                 rollbackID: nil,
                 metadata: [
                     "local": "true",
                     "runtime": "donkey-local-llm-sidecar",
                     "sidecarEnvironmentVariable": "DONKEY_LOCAL_LLM_RUNNER"
-                ]
-            ),
-            AIModelRegistryEntry(
-                id: "ollama-task-intent-local",
-                role: .taskIntent,
-                provider: .ollama,
-                modelID: "qwen3:8b",
-                endpoint: URL(string: "http://127.0.0.1:11434/api/generate")!,
-                capabilities: [.textInput, .structuredOutputs],
-                timeoutMS: 20_000,
-                promptVersion: "task-intent-v1",
-                evalStatus: .candidate,
-                docsURL: URL(string: "https://docs.ollama.com/api")!,
-                rollbackID: nil,
-                metadata: [
-                    "local": "true",
-                    "docsSource": "official Ollama API docs"
                 ]
             ),
             AIModelRegistryEntry(
@@ -162,23 +145,6 @@ public struct AIModelRegistry: Codable, Equatable, Sendable {
                     "lastVerifiedAt": "2026-05-17",
                     "docsSource": "official NVIDIA Hugging Face model card",
                     "fallbackPolicy": "none"
-                ]
-            ),
-            AIModelRegistryEntry(
-                id: "ollama-planner-hint-local",
-                role: .plannerHint,
-                provider: .ollama,
-                modelID: "qwen3:8b",
-                endpoint: URL(string: "http://127.0.0.1:11434/api/generate")!,
-                capabilities: [.textInput, .structuredOutputs],
-                timeoutMS: 8_000,
-                promptVersion: "planner-hint-v1",
-                evalStatus: .candidate,
-                docsURL: URL(string: "https://docs.ollama.com/api")!,
-                rollbackID: nil,
-                metadata: [
-                    "local": "true",
-                    "docsSource": "official Ollama API docs"
                 ]
             ),
             AIModelRegistryEntry(

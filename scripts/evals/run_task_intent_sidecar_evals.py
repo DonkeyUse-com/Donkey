@@ -22,7 +22,7 @@ from typing import Any
 DEFAULT_EVAL_PATH = Path("evals/task-intent/macos-default-apps-v1.jsonl")
 DEFAULT_REPORT_PATH = Path("evals/task-intent/macos-default-apps-v1.latest-report.json")
 DEFAULT_SIDECAR = Path("scripts/local-runtime-runners/donkey_runtime_runner.py")
-DEFAULT_MODEL_ID = "qwen3:8b"
+DEFAULT_MODEL_ID = "qwen3-0.6b-q4_0"
 SCHEMA_ID = "task_intent_v1"
 
 

@@ -81,9 +81,9 @@ DONKEY_RUNTIME_PACKAGE_MANIFEST_URLS="parakeet-transcriber=https://example.com/d
 ./scripts/package-donkey-app.sh
 ```
 
-On first launch, Donkey shows one setup button for local runtimes. Setup downloads the configured sidecar packages, verifies their manifests/checksums/signatures, registers them in Application Support, asks them to prepare model weights, and health-checks them. The packages do not include Parakeet or YOLO model weights; they contain protocol-speaking runner entrypoints for the local command parser, Parakeet voice transcription, and YOLO screenshot segmentation. UI understanding ships as a local Swift sidecar that uses Apple's on-device Vision text recognition and does not need downloaded model weights. If setup fails, clicking the same button retries failed or not-yet-attempted runtimes while keeping completed installs. The setup window can also be reopened from the app settings.
+On first launch, Donkey opens setup and starts installing required local runtimes. Setup downloads the configured sidecar packages, verifies their manifests/checksums/signatures, registers them in Application Support, asks them to prepare model weights, and health-checks them. The packages do not include model weights; they contain protocol-speaking runner entrypoints for the local command parser, Parakeet voice transcription, and YOLO screenshot segmentation. UI understanding ships as a local Swift sidecar that uses Apple's on-device Vision text recognition and does not need downloaded model weights. If setup fails, clicking the same button retries failed or not-yet-attempted runtimes while keeping completed installs. The setup window can also be reopened from the app settings.
 
-Each sidecar supports setup-time model weight preparation. During setup, Donkey calls the sidecar with `prepareModelWeights`; the sidecar downloads or warms the configured model cache and reports cached/downloaded status before health check. The local command-parser LLM is setup-managed too: Donkey packages a `local-llm` sidecar that pulls `qwen3:8b` through Ollama by default, then actionable prompt turns are parsed through `DONKEY_LOCAL_LLM_RUNNER` instead of a direct in-app Ollama request. If the configured Ollama model is missing at runtime but another local, non-cloud Ollama model is installed, Donkey can retry the task-intent parse with that model and records the fallback in model metadata. The Parakeet runner can fetch the Hugging Face snapshot when `huggingface_hub` is available and transcribes through NVIDIA NeMo when the local Python backend is installed.
+Each sidecar supports setup-time model weight preparation. During setup, Donkey calls the sidecar with `prepareModelWeights`; the sidecar downloads or warms the configured model cache and reports cached/downloaded status before health check. The local command-parser LLM is setup-managed too: Donkey packages a `local-llm` sidecar whose release manifest must include a model-weight download URL, checksum, and local inference backend requirement. The default package uses a Donkey-managed GGUF weight download with a `llama-cpp-python` backend. Actionable prompt turns are parsed through `DONKEY_LOCAL_LLM_RUNNER`; if that local runtime is unavailable, task-intent parsing fails clearly. Donkey does not fall back to a user-managed Ollama daemon. The Parakeet runner can fetch the Hugging Face snapshot when `huggingface_hub` is available and transcribes through NVIDIA NeMo when the local Python backend is installed.
 
 Configure model-weight URLs when packaging:
 
@@ -92,7 +92,9 @@ DONKEY_PARAKEET_MODEL_URL="https://..." \
 DONKEY_PARAKEET_MODEL_SHA256="..." \
 DONKEY_YOLO_MODEL_URL="https://..." \
 DONKEY_YOLO_MODEL_SHA256="..." \
-DONKEY_LOCAL_LLM_MODEL_ID="qwen3:8b" \
+DONKEY_LOCAL_LLM_MODEL_ID="qwen3-0.6b-q4_0" \
+DONKEY_LOCAL_LLM_MODEL_URL="https://..." \
+DONKEY_LOCAL_LLM_MODEL_SHA256="..." \
 ./scripts/package-donkey-app.sh
 ```
 
@@ -107,7 +109,35 @@ DONKEY_RUNTIME_REQUIRE_CRYPTO_SIGNATURES="1" \
 ./scripts/package-donkey-app.sh
 ```
 
-If a model URL/backend is missing for a file-backed sidecar, Ollama is unavailable for the local LLM sidecar, or Parakeet's local Python backend is missing, setup or runtime calls fail clearly with a retryable needs-attention state instead of pretending the runtime is usable.
+If a model URL/backend is missing for a sidecar or Parakeet's local Python backend is missing, setup or runtime calls fail clearly with a retryable needs-attention state instead of pretending the runtime is usable.
+
+## Dev Runtime Manifests
+
+For local development, `scripts/run-donkey-dev.sh` bootstraps local runtime packages and manifest files from `dist/LocalRuntimePackages/` before launching the debug app:
+
+```bash
+./scripts/run-donkey-dev.sh
+```
+
+If runtime packages are missing, stale, or still have the old local-LLM package without a model URL/checksum/backend requirement, the dev runner calls `scripts/package-donkey-app.sh` first. It then regenerates the dev manifest env file and loads it for the debug launch.
+
+The dev runner automatically creates and loads:
+
+```text
+dist/donkey-dev-runtime-manifests.env
+```
+
+That env file points `DONKEY_RUNTIME_PACKAGE_MANIFEST_URLS` at generated `file://` manifests under `dist/LocalRuntimeDevManifests/`. Those dev manifests rewrite each runtime file entry to a local `file://` download URL, so the debug app can install runtimes into Application Support without first installing `/Applications/Donkey.app`.
+
+After building the debug executable, `run-donkey-dev.sh` runs `scripts/setup-dev-local-runtimes.py`. The helper installs any missing, invalid, or stale-version local runtime packages into Application Support, then asks newly installed sidecars to prepare model weights and run a health check. For `local-llm`, that first prepare pass may create a managed Python environment, install `llama-cpp-python`, and download the configured GGUF model file; this is foreground work, not a silent background repair. Already-current runtime registrations are left alone, so the setup pass is a one-time dev bootstrap unless local packages change. Runtime setup failures are reported as warnings and the debug app still launches.
+
+To regenerate the env file manually:
+
+```bash
+scripts/create-dev-runtime-manifests.py
+```
+
+Set `DONKEY_DEV_RUNTIME_AUTO_PACKAGE=0` to skip automatic package refresh. Set `DONKEY_DEV_RUNTIME_PACKAGE_REFRESH=1` to force a package refresh before launch. Set `DONKEY_DEV_RUNTIME_MANIFESTS=0` to make `run-donkey-dev.sh` skip manifest generation. Set `DONKEY_DEV_RUNTIME_SETUP=0` to skip the missing-runtime setup pass. Set `DONKEY_DEV_RUNTIME_PREPARE=0` to install/register missing packages without running model preparation or health checks. Set `DONKEY_DEV_RUNTIME_FORCE_SETUP=1` to reinstall from the dev manifests even when the registry already points at the same runtime version. Set `DONKEY_DEV_RUNTIME_ENV_FILE`, `DONKEY_DEV_RUNTIME_PACKAGE_DIR`, or `DONKEY_DEV_RUNTIME_BASE_DIR` to use different local paths.
 
 Developer diagnostics:
 

@@ -16,13 +16,12 @@ struct AppHarnessTurnRouterTests {
         #expect(result.outcome.decision.kind == .runLocalTask)
         #expect(result.outcome.decision.traceID == "trace-chat")
         #expect(result.outcome.metadata["router"] == "modelIntent")
-        #expect(result.outcome.resolution?.status == .unsupportedCommand)
-        #expect(result.outcome.resolution?.metadata["reason"] == "modelIntentRequired")
+        #expect(result.outcome.resolution == nil)
         #expect(result.outcome.assistantResponse == nil)
     }
 
     @Test
-    func simpleArithmeticRoutesToLocalAnswerWithoutCommandWords() {
+    func arithmeticQuestionAlsoDefersToModelIntentRouting() {
         let result = router().route(
             request: AppHarnessTurnRequest(
                 turn: AppHarnessTurn(text: "What is 2+2?", source: .typedPrompt)
@@ -30,9 +29,10 @@ struct AppHarnessTurnRouterTests {
             traceID: "trace-math"
         )
 
-        #expect(result.outcome.decision.kind == .respond)
-        #expect(result.outcome.metadata["router"] == "simpleArithmetic")
-        #expect(result.outcome.assistantResponse == "2 + 2 = 4.")
+        #expect(result.outcome.decision.kind == .runLocalTask)
+        #expect(result.outcome.metadata["router"] == "modelIntent")
+        #expect(result.outcome.resolution == nil)
+        #expect(result.outcome.assistantResponse == nil)
     }
 
     @Test
@@ -46,7 +46,7 @@ struct AppHarnessTurnRouterTests {
 
         #expect(result.outcome.decision.kind == .runLocalTask)
         #expect(result.outcome.metadata["router"] == "modelIntent")
-        #expect(result.outcome.resolution?.status == .unsupportedCommand)
+        #expect(result.outcome.resolution == nil)
     }
 
     @Test
@@ -60,7 +60,7 @@ struct AppHarnessTurnRouterTests {
 
         #expect(result.outcome.decision.kind == .runLocalTask)
         #expect(result.outcome.metadata["router"] == "modelIntent")
-        #expect(result.outcome.resolution?.status == .unsupportedCommand)
+        #expect(result.outcome.resolution == nil)
     }
 
     @Test
@@ -74,8 +74,7 @@ struct AppHarnessTurnRouterTests {
 
         #expect(result.outcome.decision.kind == .runLocalTask)
         #expect(result.outcome.metadata["router"] == "modelIntent")
-        #expect(result.outcome.resolution?.status == .unsupportedCommand)
-        #expect(result.outcome.resolution?.metadata["reason"] == "modelIntentRequired")
+        #expect(result.outcome.resolution == nil)
     }
 
     @Test
@@ -90,7 +89,7 @@ struct AppHarnessTurnRouterTests {
         #expect(result.contextPacket.currentTurn.source == .voiceTranscript)
         #expect(result.outcome.decision.kind == .runLocalTask)
         #expect(result.outcome.metadata["router"] == "modelIntent")
-        #expect(result.outcome.resolution?.status == .unsupportedCommand)
+        #expect(result.outcome.resolution == nil)
     }
 
     @Test
@@ -104,8 +103,7 @@ struct AppHarnessTurnRouterTests {
 
         #expect(result.outcome.decision.kind == .runLocalTask)
         #expect(result.outcome.metadata["router"] == "modelIntent")
-        #expect(result.outcome.resolution?.status == .unsupportedCommand)
-        #expect(result.outcome.resolution?.metadata["reason"] == "modelIntentRequired")
+        #expect(result.outcome.resolution == nil)
     }
 
     @Test

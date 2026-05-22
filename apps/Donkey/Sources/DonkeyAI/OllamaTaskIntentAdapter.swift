@@ -85,6 +85,9 @@ public struct ProcessBackedLocalLLMTaskIntentAdapter: TaskIntentParsingAdapter {
             contextSnippets: request.contextSnippets,
             sourceTraceID: request.sourceTraceID,
             modelID: entry.modelID,
+            cacheDirectory: LocalModelRuntimeExecutableResolver().modelCacheDirectoryPath(
+                environmentVariableName: "DONKEY_LOCAL_LLM_RUNNER"
+            ),
             metadata: [
                 "schemaID": Self.schemaID,
                 "promptVersion": entry.promptVersion
@@ -251,6 +254,7 @@ private struct LocalLLMTaskIntentSidecarRequest: Codable, Equatable, Sendable {
     var contextSnippets: [String]
     var sourceTraceID: String
     var modelID: String
+    var cacheDirectory: String?
     var metadata: [String: String]
 }
 
@@ -653,56 +657,6 @@ public struct OllamaTaskIntentAdapter: TaskIntentParsingAdapter {
     }
 }
 
-public struct FallbackTaskIntentParsingAdapter: TaskIntentParsingAdapter {
-    public var primary: any TaskIntentParsingAdapter
-    public var fallback: any TaskIntentParsingAdapter
-
-    public init(
-        primary: any TaskIntentParsingAdapter,
-        fallback: any TaskIntentParsingAdapter
-    ) {
-        self.primary = primary
-        self.fallback = fallback
-    }
-
-    public func parseTaskIntent(_ request: TaskIntentAdapterRequest) async -> TaskIntentAdapterResult {
-        let primaryResult = await primary.parseTaskIntent(request)
-        guard primaryResult.intent == nil,
-              [.invalidOutput, .providerOutage, .timeout].contains(primaryResult.trace.status)
-        else {
-            return primaryResult
-        }
-
-        let fallbackResult = await fallback.parseTaskIntent(request)
-        guard fallbackResult.intent != nil else {
-            var trace = primaryResult.trace
-            trace.metadata["fallback.status"] = fallbackResult.trace.status.rawValue
-            trace.metadata["fallback.validation"] = fallbackResult.trace.validationStatus
-            trace.metadata["fallback.provider"] = fallbackResult.trace.provider.rawValue
-            trace.metadata["fallback.modelID"] = fallbackResult.trace.modelID
-            if let reason = fallbackResult.trace.metadata["reason"] ?? fallbackResult.trace.metadata["modelFallback.reason"] {
-                trace.metadata["fallback.reason"] = reason
-            }
-            if let httpStatus = fallbackResult.trace.metadata["http.status"] {
-                trace.metadata["fallback.http.status"] = httpStatus
-            }
-            if let bodyPreview = fallbackResult.trace.metadata["http.bodyPreview"] {
-                trace.metadata["fallback.http.bodyPreview"] = bodyPreview
-            }
-            if let selectedModelID = fallbackResult.trace.metadata["modelFallback.selectedModelID"] {
-                trace.metadata["fallback.modelFallback.selectedModelID"] = selectedModelID
-            }
-            return TaskIntentAdapterResult(intent: nil, trace: trace)
-        }
-
-        var trace = fallbackResult.trace
-        trace.metadata["fallback.primaryStatus"] = primaryResult.trace.status.rawValue
-        trace.metadata["fallback.primaryValidation"] = primaryResult.trace.validationStatus
-        trace.metadata["fallback.used"] = "true"
-        return TaskIntentAdapterResult(intent: fallbackResult.intent, trace: trace)
-    }
-}
-
 public struct LocalModelTaskIntentResolver: Sendable {
     public var catalog: LocalAppTaskCatalog
     public var adapter: any TaskIntentParsingAdapter
@@ -710,10 +664,7 @@ public struct LocalModelTaskIntentResolver: Sendable {
     public init(
         catalog: LocalAppTaskCatalog,
         adapter: any TaskIntentParsingAdapter = PriorityQueuedTaskIntentParsingAdapter(
-            base: FallbackTaskIntentParsingAdapter(
-                primary: ProcessBackedLocalLLMTaskIntentAdapter(),
-                fallback: OllamaTaskIntentAdapter()
-            )
+            base: ProcessBackedLocalLLMTaskIntentAdapter()
         )
     ) {
         self.catalog = catalog
@@ -724,14 +675,13 @@ public struct LocalModelTaskIntentResolver: Sendable {
         command: String,
         sourceTraceID: String
     ) async -> (resolution: LocalAppTaskCatalogResolution, trace: AIModelCallTrace) {
-        let result = await adapter.parseTaskIntent(
-            TaskIntentAdapterRequest(
-                command: command,
-                taskDefinitions: catalog.taskDefinitions,
-                contextSnippets: SQLiteAgentMemoryStore.shared?.contextSnippets(for: command) ?? [],
-                sourceTraceID: sourceTraceID
-            )
+        let request = TaskIntentAdapterRequest(
+            command: command,
+            taskDefinitions: catalog.taskDefinitions,
+            contextSnippets: [],
+            sourceTraceID: sourceTraceID
         )
+        let result = await adapter.parseTaskIntent(request)
 
         guard let intent = result.intent else {
             var metadata = [

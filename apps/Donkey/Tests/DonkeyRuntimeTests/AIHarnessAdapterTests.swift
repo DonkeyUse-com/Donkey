@@ -4,6 +4,10 @@ import DonkeyRuntime
 import Foundation
 import Testing
 
+private let defaultLocalRuntimeModelID = "qwen3-0.6b-q4_0"
+// Only used in explicit Ollama adapter unit tests; it is not a default runtime dependency.
+private let explicitOllamaFixtureModelID = "qwen3:8b"
+
 @Suite
 struct AIHarnessAdapterTests {
     @Test
@@ -52,7 +56,7 @@ struct AIHarnessAdapterTests {
         let registry = AIModelRegistry(
             entries: [
                 entry(id: "online", provider: .openAI, modelID: "gpt-5.2", evalStatus: .candidate),
-                entry(id: "local", provider: .ollama, modelID: "qwen3:8b", evalStatus: .candidate)
+                entry(id: "local", provider: .localRuntime, modelID: defaultLocalRuntimeModelID, evalStatus: .candidate)
             ]
         )
         let router = AIModelRouter(registry: registry)
@@ -65,7 +69,7 @@ struct AIHarnessAdapterTests {
         )
 
         #expect(selected.id == "local")
-        #expect(selected.provider == .ollama)
+        #expect(selected.provider == .localRuntime)
     }
 
     @Test
@@ -79,11 +83,26 @@ struct AIHarnessAdapterTests {
             )
         )
 
-        #expect(selected.id == "local-runtime-task-intent-qwen3")
+        #expect(selected.id == "local-runtime-task-intent-qwen3-0-6b")
         #expect(selected.role == .taskIntent)
         #expect(selected.provider == .localRuntime)
-        #expect(selected.modelID == "qwen3:8b")
+        #expect(selected.modelID == defaultLocalRuntimeModelID)
         #expect(selected.timeoutMS == 20_000)
+    }
+
+    @Test
+    func defaultPlannerHintRouteDoesNotUseOllama() throws {
+        let router = AIModelRouter(registry: .defaultHybridPlanner)
+
+        let selected = try router.route(
+            AIModelRouteRequest(
+                jobType: .plannerHint,
+                privacyMode: .privacySensitive
+            )
+        )
+
+        #expect(selected.id == "openai-planner-hint-default")
+        #expect(selected.provider == .openAI)
     }
 
     @Test
@@ -338,7 +357,7 @@ struct AIHarnessAdapterTests {
                             id: "local-intent",
                             role: .taskIntent,
                             provider: .ollama,
-                            modelID: "qwen3:8b",
+                            modelID: explicitOllamaFixtureModelID,
                             endpoint: URL(string: "http://127.0.0.1:11434/api/generate")!,
                             promptVersion: "task-intent-v1"
                         )
@@ -368,7 +387,7 @@ struct AIHarnessAdapterTests {
         let request = try #require(httpClient.requests.first)
         #expect(request.url?.absoluteString == "http://127.0.0.1:11434/api/generate")
         let body = try #require(request.httpBodyJSONObject)
-        #expect(body["model"] as? String == "qwen3:8b")
+        #expect(body["model"] as? String == explicitOllamaFixtureModelID)
         #expect(body["stream"] as? Bool == false)
         #expect(body["format"] as? [String: Any] != nil)
         #expect(body["keep_alive"] as? String == "10m")
@@ -391,7 +410,7 @@ struct AIHarnessAdapterTests {
         let httpClient = SequencedFakeAIHTTPClient(
             responses: [
                 HTTPStub(
-                    data: Data(#"{"error":"model 'qwen3:8b' not found"}"#.utf8),
+                    data: Data("{\"error\":\"model '\(explicitOllamaFixtureModelID)' not found\"}".utf8),
                     statusCode: 404
                 ),
                 HTTPStub(
@@ -416,7 +435,7 @@ struct AIHarnessAdapterTests {
                             id: "local-intent",
                             role: .taskIntent,
                             provider: .ollama,
-                            modelID: "qwen3:8b",
+                            modelID: explicitOllamaFixtureModelID,
                             endpoint: URL(string: "http://127.0.0.1:11434/api/generate")!,
                             promptVersion: "task-intent-v1"
                         )
@@ -440,7 +459,7 @@ struct AIHarnessAdapterTests {
         #expect(result.intent?.normalizedEntities["query"] == "Justin Bieber")
         #expect(result.trace.status == .completed)
         #expect(result.trace.modelID == "llama3:latest")
-        #expect(result.trace.metadata["modelFallback.originalModelID"] == "qwen3:8b")
+        #expect(result.trace.metadata["modelFallback.originalModelID"] == explicitOllamaFixtureModelID)
         #expect(result.trace.metadata["modelFallback.selectedModelID"] == "llama3:latest")
         #expect(httpClient.requests.map { $0.url?.path } == ["/api/generate", "/api/tags", "/api/generate"])
         let fallbackRequest = try #require(httpClient.requests.last)
@@ -456,7 +475,7 @@ struct AIHarnessAdapterTests {
                 result: LocalJSONSidecarResult(
                     status: .completed,
                     outputData: Data("""
-                    {"outputText":"{\\"taskType\\":\\"media_playback\\",\\"targetAppName\\":\\"Music\\",\\"entities\\":{\\"query\\":\\"cold play\\"},\\"normalizedEntities\\":{\\"query\\":\\"Cold Play\\"},\\"confidence\\":0.91,\\"needsConfirmation\\":false,\\"actionPlan\\":{\\"tools\\":[],\\"inputEntity\\":\\"\\",\\"controlID\\":\\"\\",\\"focusKey\\":\\"\\",\\"verification\\":\\"commandAttempted\\"},\\"metadata\\":{\\"source\\":\\"test\\"}}","metadata":{"local.provider":"ollama-sidecar"}}
+                    {"outputText":"{\\"taskType\\":\\"media_playback\\",\\"targetAppName\\":\\"Music\\",\\"entities\\":{\\"query\\":\\"cold play\\"},\\"normalizedEntities\\":{\\"query\\":\\"Cold Play\\"},\\"confidence\\":0.91,\\"needsConfirmation\\":false,\\"actionPlan\\":{\\"tools\\":[],\\"inputEntity\\":\\"\\",\\"controlID\\":\\"\\",\\"focusKey\\":\\"\\",\\"verification\\":\\"commandAttempted\\"},\\"metadata\\":{\\"source\\":\\"test\\"}}","metadata":{"local.provider":"donkey-local-llm-sidecar"}}
                     """.utf8),
                     latencyMS: 14,
                     metadata: ["sidecar.role": "taskIntent"]
@@ -478,7 +497,7 @@ struct AIHarnessAdapterTests {
         #expect(result.intent?.metadata["parser"] == "local-llm-sidecar-v1")
         #expect(result.trace.provider == .localRuntime)
         #expect(result.trace.status == .completed)
-        #expect(result.trace.metadata["local.provider"] == "ollama-sidecar")
+        #expect(result.trace.metadata["local.provider"] == "donkey-local-llm-sidecar")
     }
 
     @Test
@@ -489,7 +508,7 @@ struct AIHarnessAdapterTests {
                 result: LocalJSONSidecarResult(
                     status: .completed,
                     outputData: Data("""
-                    {"outputText":"{\\"taskType\\":\\"local_app_interaction\\",\\"targetAppName\\":\\"Music\\",\\"entities\\":{\\"appName\\":\\"Music\\",\\"goal\\":\\"play media\\",\\"query\\":\\"justin bieber\\"},\\"normalizedEntities\\":{\\"appName\\":\\"Music\\",\\"goal\\":\\"play media\\",\\"query\\":\\"Justin Bieber\\"},\\"confidence\\":0.91,\\"needsConfirmation\\":false,\\"actionPlan\\":{\\"tools\\":[\\"app.openOrFocus\\",\\"app.observe\\",\\"ui.focusSearch\\",\\"ui.setText\\",\\"ui.pressReturn\\",\\"ui.pressReturn\\",\\"app.verifyCommand\\"],\\"inputEntity\\":\\"query\\",\\"controlID\\":\\"search\\",\\"focusKey\\":\\"Command+F\\",\\"verification\\":\\"commandAttempted\\"},\\"metadata\\":{}}","metadata":{"local.provider":"ollama-sidecar"}}
+                    {"outputText":"{\\"taskType\\":\\"local_app_interaction\\",\\"targetAppName\\":\\"Music\\",\\"entities\\":{\\"appName\\":\\"Music\\",\\"goal\\":\\"play media\\",\\"query\\":\\"justin bieber\\"},\\"normalizedEntities\\":{\\"appName\\":\\"Music\\",\\"goal\\":\\"play media\\",\\"query\\":\\"Justin Bieber\\"},\\"confidence\\":0.91,\\"needsConfirmation\\":false,\\"actionPlan\\":{\\"tools\\":[\\"app.openOrFocus\\",\\"app.observe\\",\\"ui.focusSearch\\",\\"ui.setText\\",\\"ui.pressReturn\\",\\"ui.pressReturn\\",\\"app.verifyCommand\\"],\\"inputEntity\\":\\"query\\",\\"controlID\\":\\"search\\",\\"focusKey\\":\\"Command+F\\",\\"verification\\":\\"commandAttempted\\"},\\"metadata\\":{}}","metadata":{"local.provider":"donkey-local-llm-sidecar"}}
                     """.utf8),
                     latencyMS: 14,
                     metadata: ["sidecar.role": "taskIntent"]
@@ -528,7 +547,7 @@ struct AIHarnessAdapterTests {
                         {"taskType":"local_app_interaction","targetAppName":"Music","entities":{"appName":"Music","goal":"play media","query":"justin bieber"},"normalizedEntities":{"appName":"Music","goal":"play media","query":"Justin Bieber"},"confidence":0.91,"needsConfirmation":false,"actionPlan":{"tools":["app.openOrFocus","app.observe","ui.focusSearch","ui.setText","ui.pressReturn","app.verifyCommand"],"inputEntity":"query","controlID":"search","focusKey":"Command+F","verification":"commandAttempted"},"metadata":{}}
                         ```
                         """,
-                        metadata: ["local.provider": "ollama-sidecar"]
+                        metadata: ["local.provider": "donkey-local-llm-sidecar"]
                     ),
                     latencyMS: 14,
                     metadata: ["sidecar.role": "taskIntent"]
@@ -562,7 +581,7 @@ struct AIHarnessAdapterTests {
                         outputText: "",
                         metadata: [
                             "reason": "localLLMGenerationFailed",
-                            "detail": "ollama HTTP 404: model 'qwen3:8b' not found"
+                            "detail": "local LLM backend unavailable for \(defaultLocalRuntimeModelID)"
                         ]
                     ),
                     latencyMS: 14,
@@ -584,7 +603,7 @@ struct AIHarnessAdapterTests {
         #expect(result.trace.validationStatus == "notValidated")
         #expect(result.trace.metadata["reason"] == "localLLMGenerationFailed")
         #expect(result.trace.metadata["modelOutput.empty"] == "true")
-        #expect(result.trace.metadata["detail"]?.contains("qwen3:8b") == true)
+        #expect(result.trace.metadata["detail"]?.contains(defaultLocalRuntimeModelID) == true)
     }
 
     @Test
@@ -599,8 +618,7 @@ struct AIHarnessAdapterTests {
                         {"taskType":"local_app_interaction","targetAppName":"com.apple.Music","entities":{"appName":"Music","goal":"play some justin bieber"},"normalizedEntities":{"query":"Justin Bieber"},"confidence":1.0,"needsConfirmation":false,"actionPlan":{"tools":["app.openOrFocus","ui.focusSearch"],"inputEntity":"query","controlID":"","focusKey":"","verification":"commandAttempted"},"metadata":{}}
                         """,
                         metadata: [
-                            "local.provider": "ollama-sidecar",
-                            "modelFallback.selectedModelID": "llama3:latest"
+                            "local.provider": "donkey-local-llm-sidecar"
                         ]
                     ),
                     latencyMS: 14,
@@ -669,7 +687,7 @@ struct AIHarnessAdapterTests {
                         status: .completed,
                         outputData: try localLLMSidecarOutputData(
                             outputText: example.outputText,
-                            metadata: ["local.provider": "ollama-sidecar"]
+                            metadata: ["local.provider": "donkey-local-llm-sidecar"]
                         ),
                         latencyMS: 14,
                         metadata: ["sidecar.role": "taskIntent"]
@@ -725,7 +743,7 @@ struct AIHarnessAdapterTests {
                                 id: "local-intent",
                                 role: .taskIntent,
                                 provider: .ollama,
-                                modelID: "qwen3:8b",
+                                modelID: explicitOllamaFixtureModelID,
                                 endpoint: URL(string: "http://127.0.0.1:11434/api/generate")!,
                                 promptVersion: "task-intent-v1"
                             )
@@ -773,7 +791,7 @@ struct AIHarnessAdapterTests {
                                 id: "local-intent",
                                 role: .taskIntent,
                                 provider: .ollama,
-                                modelID: "qwen3:8b",
+                                modelID: explicitOllamaFixtureModelID,
                                 endpoint: URL(string: "http://127.0.0.1:11434/api/generate")!,
                                 promptVersion: "task-intent-v1"
                             )
@@ -820,6 +838,27 @@ struct AIHarnessAdapterTests {
     }
 
     @Test
+    func localModelTaskIntentResolverDoesNotFallbackToCommandTextWhenRuntimeUnavailable() async {
+        let resolver = LocalModelTaskIntentResolver(
+            catalog: LocalAppTaskCatalog(
+                taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
+                availabilityProvider: StaticLocalAppAvailabilityProvider(installedBundleIdentifiers: ["com.apple.Music"])
+            ),
+            adapter: UnavailableTaskIntentAdapter()
+        )
+
+        let result = await resolver.resolve(
+            command: "play some justin bieber",
+            sourceTraceID: "trace-resolve-no-command-text-fallback"
+        )
+
+        #expect(result.resolution.status == .needsConfirmation)
+        #expect(result.resolution.intent == nil)
+        #expect(result.resolution.metadata["reason"] == "localModelIntentUnavailable")
+        #expect(result.trace.status == .providerOutage)
+    }
+
+    @Test
     func localModelTaskIntentResolverAsksForDetailsInsteadOfUnsupportedWhenRuntimeUnavailable() async {
         let resolver = LocalModelTaskIntentResolver(
             catalog: LocalAppTaskCatalog(
@@ -837,6 +876,45 @@ struct AIHarnessAdapterTests {
         #expect(result.resolution.status == .needsConfirmation)
         #expect(result.resolution.metadata["reason"] == "localModelIntentUnavailable")
         #expect(result.resolution.metadata["modelCallStatus"] == "providerOutage")
+    }
+
+    @Test
+    func localModelTaskIntentResolverPreservesStructuredConversationForGreeting() async throws {
+        let adapter = ProcessBackedLocalLLMTaskIntentAdapter(
+            router: AIModelRouter(registry: .defaultHybridPlanner),
+            sidecarRunner: FakeSidecarRunner(
+                result: LocalJSONSidecarResult(
+                    status: .completed,
+                    outputData: try localLLMSidecarOutputData(
+                        outputText: """
+                        {"taskType":"local_app_interaction","targetAppName":"Local App","entities":{},"normalizedEntities":{},"confidence":0.2,"needsConfirmation":false,"actionPlan":{"tools":[],"inputEntity":"","controlID":"","focusKey":"","verification":"commandAttempted"},"metadata":{"responseMode":"conversation","assistantResponse":"Hello! How can I help?"}}
+                        """,
+                        metadata: ["local.provider": "donkey-local-llm"]
+                    ),
+                    latencyMS: 14,
+                    metadata: ["sidecar.role": "taskIntent"]
+                )
+            )
+        )
+        let resolver = LocalModelTaskIntentResolver(
+            catalog: LocalAppTaskCatalog(
+                taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
+                availabilityProvider: StaticLocalAppAvailabilityProvider(installedBundleIdentifiers: [])
+            ),
+            adapter: adapter
+        )
+
+        let result = await resolver.resolve(
+            command: "hello there",
+            sourceTraceID: "trace-structured-greeting"
+        )
+
+        #expect(result.resolution.status == .needsConfirmation)
+        #expect(result.resolution.intent?.taskType == "local_app_interaction")
+        #expect(result.resolution.metadata["reason"] == "lowConfidenceIntent")
+        #expect(result.resolution.metadata["responseMode"] == "conversation")
+        #expect(result.resolution.metadata["assistantResponse"] == "Hello! How can I help?")
+        #expect(result.trace.status == .completed)
     }
 
     @Test
@@ -862,7 +940,7 @@ struct AIHarnessAdapterTests {
                                 id: "local-intent",
                                 role: .taskIntent,
                                 provider: .ollama,
-                                modelID: "qwen3:8b",
+                                modelID: explicitOllamaFixtureModelID,
                                 endpoint: URL(string: "http://127.0.0.1:11434/api/generate")!,
                                 promptVersion: "task-intent-v1"
                             )
@@ -906,7 +984,7 @@ struct AIHarnessAdapterTests {
                                 id: "local-intent",
                                 role: .taskIntent,
                                 provider: .ollama,
-                                modelID: "qwen3:8b",
+                                modelID: explicitOllamaFixtureModelID,
                                 endpoint: URL(string: "http://127.0.0.1:11434/api/generate")!,
                                 promptVersion: "task-intent-v1"
                             )
@@ -939,7 +1017,7 @@ struct AIHarnessAdapterTests {
                         outputText: """
                         {"taskType":"local_app_interaction","targetAppName":"Notes","entities":{"appName":"Notes","goal":"write requested text","query":"a people"},"normalizedEntities":{"appName":"Notes","goal":"write requested text","query":"a people"},"confidence":0.9,"needsConfirmation":false,"actionPlan":{"tools":["app.openOrFocus","ui.newDocument","ui.setText"],"inputEntity":"query","controlID":"editor","focusKey":"","verification":"commandAttempted"},"metadata":{}}
                         """,
-                        metadata: ["local.provider": "ollama-sidecar"]
+                        metadata: ["local.provider": "donkey-local-llm-sidecar"]
                     ),
                     latencyMS: 14,
                     metadata: ["sidecar.role": "taskIntent"]
@@ -974,7 +1052,7 @@ struct AIHarnessAdapterTests {
                         outputText: """
                         {"taskType":"local_app_interaction","targetAppName":"Notes","entities":{"appName":"Notes","goal":"write requested text","query":"hello"},"normalizedEntities":{"appName":"Notes","goal":"write requested text","query":"hello"},"confidence":0.9,"needsConfirmation":false,"actionPlan":{"tools":["app.openOrFocus","ui.newDocument","ui.setText"],"inputEntity":"query","controlID":"editor","focusKey":"","verification":"commandAttempted"},"metadata":{}}
                         """,
-                        metadata: ["local.provider": "ollama-sidecar"]
+                        metadata: ["local.provider": "donkey-local-llm-sidecar"]
                     ),
                     latencyMS: 14,
                     metadata: ["sidecar.role": "taskIntent"]
@@ -1007,7 +1085,7 @@ struct AIHarnessAdapterTests {
                         outputText: """
                         {"taskType":"local_app_interaction","targetAppName":"Notes","entities":{"appName":"Notes","goal":"write requested text","query":"A complete piece of text generated for the user writing request."},"normalizedEntities":{"appName":"Notes","goal":"write requested text","query":"A complete piece of text generated for the user writing request."},"confidence":0.9,"needsConfirmation":false,"actionPlan":{"tools":["app.openOrFocus","ui.newDocument","ui.setText"],"inputEntity":"query","controlID":"editor","focusKey":"","verification":"commandAttempted"},"metadata":{}}
                         """,
-                        metadata: ["local.provider": "ollama-sidecar"]
+                        metadata: ["local.provider": "donkey-local-llm-sidecar"]
                     ),
                     latencyMS: 14,
                     metadata: ["sidecar.role": "taskIntent"]
@@ -1041,7 +1119,7 @@ struct AIHarnessAdapterTests {
                         outputText: """
                         {"taskType":"local_app_interaction","targetAppName":"Notes","entities":{"appName":"Notes","goal":"write requested text","query":""},"normalizedEntities":{"appName":"Notes","goal":"write requested text","query":""},"confidence":0.9,"needsConfirmation":false,"actionPlan":{"tools":["app.openOrFocus","ui.newDocument","ui.setText"],"inputEntity":"query","controlID":"editor","focusKey":"","verification":"commandAttempted"},"metadata":{}}
                         """,
-                        metadata: ["local.provider": "ollama-sidecar"]
+                        metadata: ["local.provider": "donkey-local-llm-sidecar"]
                     ),
                     latencyMS: 14,
                     metadata: ["sidecar.role": "taskIntent"]
@@ -1075,7 +1153,7 @@ struct AIHarnessAdapterTests {
                         outputText: """
                         {"taskType":"local_app_interaction","targetAppName":"Numbers","entities":{"appName":"Numbers","goal":"create requested table","query":"Market capital of the 10 largest companies in S&P"},"normalizedEntities":{"appName":"Numbers","goal":"create requested table","query":"Market capital of the 10 largest companies in S&P"},"confidence":0.9,"needsConfirmation":false,"actionPlan":{"tools":["app.openOrFocus","app.observe","ui.newDocument","ui.setText"],"inputEntity":"query","controlID":"editor","focusKey":"","verification":"commandAttempted"},"metadata":{}}
                         """,
-                        metadata: ["local.provider": "ollama-sidecar"]
+                        metadata: ["local.provider": "donkey-local-llm-sidecar"]
                     ),
                     latencyMS: 14,
                     metadata: ["sidecar.role": "taskIntent"]
@@ -1284,7 +1362,7 @@ struct AIHarnessAdapterTests {
                         entry(
                             id: "local-planner",
                             provider: .ollama,
-                            modelID: "qwen3:8b",
+                            modelID: explicitOllamaFixtureModelID,
                             endpoint: URL(string: "http://127.0.0.1:11434/api/generate")!
                         )
                     ]
@@ -1304,7 +1382,7 @@ struct AIHarnessAdapterTests {
         let request = try #require(httpClient.requests.first)
         #expect(request.url?.absoluteString == "http://127.0.0.1:11434/api/generate")
         let body = try #require(request.httpBodyJSONObject)
-        #expect(body["model"] as? String == "qwen3:8b")
+        #expect(body["model"] as? String == explicitOllamaFixtureModelID)
         #expect(body["stream"] as? Bool == false)
         #expect(body["format"] as? [String: Any] != nil)
         #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
@@ -1319,7 +1397,7 @@ struct AIHarnessAdapterTests {
                         entry(
                             id: "local-planner",
                             provider: .ollama,
-                            modelID: "qwen3:8b",
+                            modelID: explicitOllamaFixtureModelID,
                             endpoint: URL(string: "http://127.0.0.1:11434/api/generate")!
                         )
                     ]
@@ -1356,6 +1434,13 @@ struct AIHarnessAdapterTests {
         #expect(result.metadata["openAI.status"] == "completed")
         #expect(result.metadata["selectedProvider"] == "openAI")
         #expect(result.metadata["selectedModelID"] == "gpt-5.2")
+    }
+
+    @Test
+    func providerBackedSlowPlannerDefaultOrderSkipsOllama() {
+        let planner = ProviderBackedSlowPlannerHintGenerator()
+
+        #expect(planner.providerOrder == [.openAI])
     }
 
     @Test
@@ -1498,7 +1583,7 @@ struct AIHarnessAdapterTests {
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
             .replacingOccurrences(of: "\n", with: "\\n")
-        return Data("{\"model\":\"qwen3:8b\",\"response\":\"\(escaped)\",\"done\":true}".utf8)
+        return Data("{\"model\":\"\(explicitOllamaFixtureModelID)\",\"response\":\"\(escaped)\",\"done\":true}".utf8)
     }
 
     private func providerOutput(
@@ -1717,7 +1802,7 @@ private struct UnavailableTaskIntentAdapter: TaskIntentParsingAdapter {
                 id: "model-call-unavailable",
                 role: .taskIntent,
                 provider: .localRuntime,
-                modelID: "qwen3:8b",
+                modelID: defaultLocalRuntimeModelID,
                 promptVersion: "task-intent-v1",
                 schemaID: "task_intent_v1",
                 latencyMS: nil,

@@ -11,6 +11,12 @@ Use `plans/master-plan.md` as the active implementation driver when it exists an
 
 Use other `plans/` files only for background unless the user explicitly asks to plan from them or the master plan names them as cleanup targets. Do not let older plans override the current master plan.
 
+## Harness And LLM Work
+
+Before changing the agent harness, task-intent routing, local-model adapters, LLM prompts, memory retrieval for prompt handling, or local-app decision code, read `docs/guides/agent-harness.md`.
+
+Never infer semantic intent by string matching raw user input. Do not add phrase lists, prefixes, suffixes, regexes, app-name checks, greeting/help classifiers, or other natural-language command-text matching to decide what the user wants. Raw user text has too many variations to handle reliably. Pass the turn through an LLM or another typed model/runtime boundary first, get structured output, then do deterministic matching only on that structured output or on non-semantic technical fields.
+
 ## Site Project
 
 Before changing `site/` UI, routes, API handlers, or data access patterns:

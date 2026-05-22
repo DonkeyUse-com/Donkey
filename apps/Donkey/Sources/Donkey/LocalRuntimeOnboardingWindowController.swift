@@ -27,6 +27,7 @@ final class LocalRuntimeOnboardingWindowController: NSWindowController {
             await model.refresh()
             guard model.needsSetup else { return }
             showSetup()
+            await model.setup()
         }
     }
 

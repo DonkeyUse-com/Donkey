@@ -116,6 +116,9 @@ public struct ProcessBackedLocalLLMTaskFollowUpResolver: PointerPromptFollowUpRe
             candidates: request.candidates,
             sourceTraceID: request.sourceTraceID,
             modelID: entry.modelID,
+            cacheDirectory: LocalModelRuntimeExecutableResolver().modelCacheDirectoryPath(
+                environmentVariableName: "DONKEY_LOCAL_LLM_RUNNER"
+            ),
             metadata: [
                 "schemaID": Self.schemaID,
                 "promptVersion": entry.promptVersion
@@ -232,6 +235,7 @@ private struct LocalLLMTaskFollowUpSidecarRequest: Codable, Equatable, Sendable 
     var candidates: [PointerPromptFollowUpCandidate]
     var sourceTraceID: String
     var modelID: String
+    var cacheDirectory: String?
     var metadata: [String: String]
 }
 

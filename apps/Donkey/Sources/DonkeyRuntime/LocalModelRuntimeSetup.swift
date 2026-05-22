@@ -468,18 +468,17 @@ public struct LocalModelRuntimeSetupManager: Sendable {
             displayName: "Local command parser LLM",
             environmentVariableName: "DONKEY_LOCAL_LLM_RUNNER",
             expectedExecutableRelativePath: "bin/donkey-local-llm",
-            modelName: "qwen3:8b",
-            downloadPageURL: URL(string: "https://ollama.com/library/qwen3"),
+            modelName: "qwen3-0.6b-q4_0",
+            downloadPageURL: nil,
             manifestURL: Self.defaultPackageManifestURL(for: .localLLM),
             installSteps: [
                 "Click Set Up in Donkey after installing the app.",
-                "Donkey asks the local LLM runner to download and cache qwen3:8b.",
+                "Donkey downloads and verifies the configured local command-parser model weights.",
                 "Donkey records bin/donkey-local-llm in Application Support."
             ],
             metadata: [
                 "sidecar.role": "localLLM",
-                "modelWeights.provider": "ollama",
-                "modelWeights.ollamaModel": "qwen3:8b"
+                "modelWeights.provider": "donkey-managed-download"
             ]
         )
     ]
@@ -827,14 +826,36 @@ public struct LocalModelRuntimeSetupManager: Sendable {
             )
         }
 
-        guard let response = try? Self.decoder().decode(LocalModelRuntimeHealthResponse.self, from: result.outputData),
-              response.status == "ok"
-        else {
+        guard let response = try? Self.decoder().decode(LocalModelRuntimeHealthResponse.self, from: result.outputData) else {
             return LocalModelRuntimeHealthReport(
                 runtimeID: runtimeID,
                 state: .invalidOutput,
                 latencyMS: result.latencyMS,
                 metadata: result.metadata
+            )
+        }
+
+        let metadata = result.metadata.merging(response.metadata) { current, _ in current }
+        guard response.status == "ok" else {
+            return LocalModelRuntimeHealthReport(
+                runtimeID: runtimeID,
+                state: .failed,
+                runtimeVersion: response.runtimeVersion,
+                modelID: response.modelID,
+                sidecarProtocolVersion: response.protocolVersion,
+                latencyMS: result.latencyMS,
+                metadata: metadata
+            )
+        }
+        if ["missing", "notConfigured", "externalUnavailable"].contains(metadata["modelWeights.status"] ?? "") {
+            return LocalModelRuntimeHealthReport(
+                runtimeID: runtimeID,
+                state: .failed,
+                runtimeVersion: response.runtimeVersion,
+                modelID: response.modelID,
+                sidecarProtocolVersion: response.protocolVersion,
+                latencyMS: result.latencyMS,
+                metadata: metadata
             )
         }
 
@@ -845,7 +866,7 @@ public struct LocalModelRuntimeSetupManager: Sendable {
             modelID: response.modelID,
             sidecarProtocolVersion: response.protocolVersion,
             latencyMS: result.latencyMS,
-            metadata: result.metadata.merging(response.metadata) { current, _ in current }
+            metadata: metadata
         )
     }
 
@@ -1005,6 +1026,17 @@ public struct LocalModelRuntimeSetupManager: Sendable {
 
     public func executablePath(environmentVariableName: String) throws -> String? {
         try configuredEnvironment()[environmentVariableName]
+    }
+
+    public func modelCacheDirectoryPath(environmentVariableName: String) throws -> String? {
+        guard let spec = specs.first(where: { $0.environmentVariableName == environmentVariableName }) else {
+            return nil
+        }
+        let registry = try loadRegistry()
+        guard let installation = registry.installations[spec.id.rawValue] else {
+            return nil
+        }
+        return modelCacheDirectory(for: installation).path
     }
 
     @discardableResult
@@ -1271,5 +1303,9 @@ public struct LocalModelRuntimeExecutableResolver: Sendable {
 
     public func executablePath(environmentVariableName: String) -> String? {
         try? setupManagerFactory().executablePath(environmentVariableName: environmentVariableName)
+    }
+
+    public func modelCacheDirectoryPath(environmentVariableName: String) -> String? {
+        try? setupManagerFactory().modelCacheDirectoryPath(environmentVariableName: environmentVariableName)
     }
 }

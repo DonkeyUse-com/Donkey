@@ -233,7 +233,8 @@ registration, health checks, model-prep hooks, retryable first-run setup,
 settings access, repair/remove lifecycle helpers, support status export, and
 package-local Python wheelhouses built for the release target. The UI
 understanding backend is a packaged Swift sidecar using Apple Vision, and the
-command parser LLM currently uses Ollama as a documented local prerequisite.
+command parser LLM uses an app-managed `local-llm` sidecar with setup-downloaded
+model weights instead of a user-managed Ollama prerequisite.
 
 ## Slower AI Harness
 

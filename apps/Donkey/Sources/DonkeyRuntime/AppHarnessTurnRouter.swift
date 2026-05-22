@@ -460,11 +460,6 @@ public struct AppHarnessTurnRouter: Sendable {
             )
         }
 
-        let modelIntentResolution = LocalAppTaskCatalogResolution(
-            status: .unsupportedCommand,
-            metadata: ["reason": "modelIntentRequired"]
-        )
-
         let classification = turnClassifier.classify(
             text: trimmedText,
             request: request,
@@ -478,28 +473,9 @@ public struct AppHarnessTurnRouter: Sendable {
                     decision: decision(
                         kind: .runLocalTask,
                         traceID: traceID,
-                        resolution: modelIntentResolution,
                         metadata: ["router": "followUpActionContext"]
                     ),
-                    resolution: modelIntentResolution,
                     metadata: ["router": "followUpActionContext"]
-                )
-            )
-        }
-
-        if classification.kind == .answer,
-           let response = classification.response {
-            return AppHarnessRoutingResult(
-                contextPacket: packet,
-                outcome: AppHarnessRoutingOutcome(
-                    decision: decision(
-                        kind: .respond,
-                        traceID: traceID,
-                        message: response,
-                        metadata: ["router": classification.router]
-                    ),
-                    assistantResponse: response,
-                    metadata: ["router": classification.router].merging(classification.metadata) { current, _ in current }
                 )
             )
         }
@@ -510,10 +486,8 @@ public struct AppHarnessTurnRouter: Sendable {
                 decision: decision(
                     kind: .runLocalTask,
                     traceID: traceID,
-                    resolution: modelIntentResolution,
                     metadata: ["router": "modelIntent"]
                 ),
-                resolution: modelIntentResolution,
                 metadata: ["router": "modelIntent"].merging(classification.metadata) { current, _ in current }
             )
         )

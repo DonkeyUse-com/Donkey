@@ -43,7 +43,7 @@ Run a small live sidecar sample against the local LLM sidecar:
 
 ```bash
 DONKEY_RUNTIME_ID=local-llm \
-DONKEY_MODEL_ID=qwen3:8b \
+DONKEY_MODEL_ID=qwen3-0.6b-q4_0 \
 python3 scripts/evals/run_task_intent_sidecar_evals.py --app Safari --limit 3
 ```
 
@@ -51,7 +51,7 @@ Run the full suite:
 
 ```bash
 DONKEY_RUNTIME_ID=local-llm \
-DONKEY_MODEL_ID=qwen3:8b \
+DONKEY_MODEL_ID=qwen3-0.6b-q4_0 \
 python3 scripts/evals/run_task_intent_sidecar_evals.py
 ```
 
