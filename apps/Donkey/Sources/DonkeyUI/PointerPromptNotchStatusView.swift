@@ -790,7 +790,7 @@ public struct PointerPromptNotchStatusView: View {
     }
 
     private func accentColor(for index: Int) -> Color {
-        Self.accentColors[((index % Self.accentColors.count) + Self.accentColors.count) % Self.accentColors.count]
+        Self.accentColors[PointerPromptAccentPalette.normalizedIndex(index)]
     }
 
     private static let accentColors: [Color] = [

@@ -54,6 +54,8 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         self.documentReviewController = documentReviewController
         let restoredTasks = Self.restoredTasks(from: taskStore.loadRecentTasks(limit: Self.notchTaskDisplayLimit))
         notchTasks = restoredTasks
+        notchAccentIndex = restoredTasks.first.map { PointerPromptAccentPalette.normalizedIndex($0.accentIndex) }
+            ?? PointerPromptAccentPalette.firstIndex
         isCurrentTaskPaused = restoredTasks.first?.status == .paused
         updateState = PointerPromptUpdateState(
             currentVersion: updateChecker.currentVersion
@@ -296,7 +298,12 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         spawnID: String? = nil
     ) {
         let isFollowUp = matchedTaskID != nil
-        let task = taskForSubmittedCommand(text: text, matchedTaskID: matchedTaskID)
+        let reservedAccentIndex = spawnID.flatMap { spawn(withID: $0)?.accentIndex }
+        let task = taskForSubmittedCommand(
+            text: text,
+            matchedTaskID: matchedTaskID,
+            reservedAccentIndex: reservedAccentIndex
+        )
         updateSpawn(
             id: spawnID,
             taskID: task.id,
@@ -409,12 +416,19 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         let spawnID = UUID().uuidString
         let displayText = Self.taskLabel(for: text)
         let labelText = label ?? Self.collapsedDisplayText(for: text)
+        let spawnAccentIndex: Int
+        if let accentIndex {
+            spawnAccentIndex = PointerPromptAccentPalette.normalizedIndex(accentIndex)
+        } else {
+            spawnAccentIndex = nextRoundRobinAccentIndex()
+        }
+        notchAccentIndex = spawnAccentIndex
         let spawnState = PointerPromptSpawnState(
             id: spawnID,
             taskID: taskID,
             commandText: text,
             label: labelText,
-            accentIndex: accentIndex ?? Self.nextAccentIndex(after: notchAccentIndex),
+            accentIndex: spawnAccentIndex,
             phase: .notchCue
         )
         spawnStates.append(spawnState)
@@ -573,18 +587,24 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         promptState.isVoiceInputActive = false
     }
 
-    private func taskForSubmittedCommand(text: String, matchedTaskID: String?) -> PointerPromptNotchTask {
+    private func taskForSubmittedCommand(
+        text: String,
+        matchedTaskID: String?,
+        reservedAccentIndex: Int? = nil
+    ) -> PointerPromptNotchTask {
         if let matchedTaskID,
            var task = task(withID: matchedTaskID) {
             task.detail = "Running"
             task.status = .running
             task.updatedAt = Date()
+            notchAccentIndex = PointerPromptAccentPalette.normalizedIndex(task.accentIndex)
             prependTask(task)
             return task
         }
 
         let taskLabel = Self.taskLabel(for: text)
-        let nextAccentIndex = Self.nextAccentIndex(after: notchAccentIndex)
+        let nextAccentIndex = reservedAccentIndex.map(PointerPromptAccentPalette.normalizedIndex)
+            ?? nextRoundRobinAccentIndex()
         notchAccentIndex = nextAccentIndex
         let task = PointerPromptNotchTask(
             id: UUID().uuidString,
@@ -613,7 +633,7 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
             return recentTask
         }
 
-        let nextAccentIndex = Self.nextAccentIndex(after: notchAccentIndex)
+        let nextAccentIndex = nextRoundRobinAccentIndex()
         notchAccentIndex = nextAccentIndex
         let task = PointerPromptNotchTask(
             id: UUID().uuidString,
@@ -820,9 +840,12 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         }
     }
 
-    private static func nextAccentIndex(after currentIndex: Int) -> Int {
-        let accentCount = 8
-        return (currentIndex + 1) % accentCount
+    private func nextRoundRobinAccentIndex() -> Int {
+        guard let mostRecentAccentIndex = spawnStates.last?.accentIndex ?? notchTasks.first?.accentIndex else {
+            return PointerPromptAccentPalette.firstIndex
+        }
+
+        return PointerPromptAccentPalette.index(after: mostRecentAccentIndex)
     }
 
     private static func taskLabel(for text: String) -> String {

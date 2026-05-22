@@ -662,11 +662,11 @@ public struct PointerPromptSpawnOverlayView: View {
     }
 
     private func accentColor(for index: Int) -> Color {
-        Self.accentColors[((index % Self.accentColors.count) + Self.accentColors.count) % Self.accentColors.count]
+        Self.accentColors[PointerPromptAccentPalette.normalizedIndex(index)]
     }
 
     private func inputAccentColor(for index: Int) -> Color {
-        Self.inputAccentColors[((index % Self.inputAccentColors.count) + Self.inputAccentColors.count) % Self.inputAccentColors.count]
+        Self.inputAccentColors[PointerPromptAccentPalette.normalizedIndex(index)]
     }
 
     private static let accentColors: [Color] = [
