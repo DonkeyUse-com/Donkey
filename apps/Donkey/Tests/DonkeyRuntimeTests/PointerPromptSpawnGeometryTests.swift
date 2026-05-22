@@ -104,6 +104,77 @@ struct PointerPromptSpawnGeometryTests {
     }
 
     @Test @MainActor
+    func spawnOverlayKeepsTravelAngleAfterCursorArrives() async throws {
+        let viewModel = PointerPromptSpawnOverlayViewModel()
+        let origin = CGPoint(x: 600, y: -24)
+        let destination = CGPoint(x: 420, y: 282)
+        let screenSize = CGSize(width: 1200, height: 800)
+        let state = PointerPromptSpawnState(
+            id: "spawn-1",
+            commandText: "hi there",
+            label: "hi there",
+            accentIndex: 1,
+            phase: .traveling
+        )
+        let expectedAngle = PointerPromptSpawnGeometry.angleDegrees(
+            from: origin,
+            to: destination
+        )
+
+        viewModel.show(
+            state: state,
+            origin: origin,
+            destination: destination,
+            screenSize: screenSize
+        )
+
+        #expect(abs(viewModel.cursorAngleDegrees - expectedAngle) < 0.0001)
+
+        try await Task.sleep(nanoseconds: 900_000_000)
+
+        #expect(viewModel.position == destination)
+        #expect(viewModel.isHolding)
+        #expect(abs(viewModel.cursorAngleDegrees - expectedAngle) < 0.0001)
+    }
+
+    @Test @MainActor
+    func spawnOverlayRunsTerminalTailAnimationBeforeWorkingPulse() async throws {
+        let viewModel = PointerPromptSpawnOverlayViewModel()
+        let origin = CGPoint(x: 600, y: -24)
+        let destination = CGPoint(x: 420, y: 282)
+        let state = PointerPromptSpawnState(
+            id: "spawn-1",
+            commandText: "hi there",
+            label: "hi there",
+            accentIndex: 1,
+            phase: .traveling
+        )
+
+        viewModel.show(
+            state: state,
+            origin: origin,
+            destination: destination,
+            screenSize: CGSize(width: 1200, height: 800)
+        )
+
+        let landedBeforeWorkingDelay = UInt64(
+            (PointerPromptSpawnOverlayViewModel.travelDuration + 0.15) * 1_000_000_000
+        )
+        try await Task.sleep(nanoseconds: landedBeforeWorkingDelay)
+
+        #expect(viewModel.isHolding)
+        #expect(!viewModel.isWorking)
+
+        let workingDelay = UInt64(
+            (PointerPromptSpawnOverlayViewModel.terminalTailAnimationDuration + 0.2) * 1_000_000_000
+        )
+        try await Task.sleep(nanoseconds: workingDelay)
+
+        #expect(viewModel.isWorking)
+        #expect(abs(viewModel.terminalTailAngleDegrees) < 0.0001)
+    }
+
+    @Test @MainActor
     func spawnLabelOnlyExpandsOnHoverWhenCollapsedTextOverflows() {
         let viewModel = PointerPromptSpawnOverlayViewModel()
         let shortState = PointerPromptSpawnState(

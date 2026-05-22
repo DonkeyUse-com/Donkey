@@ -14,6 +14,10 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
     @Published public private(set) var opacity: Double = 0
     @Published public private(set) var isHolding = false
     @Published public private(set) var isSelected = false
+    @Published public private(set) var cursorAngleDegrees =
+        PointerPromptSpawnGeometry.defaultExitAngleDegrees
+    @Published public private(set) var terminalTailAngleDegrees = 0.0
+    @Published public private(set) var isWorking = false
     @Published public private(set) var isLabelHovered = false
     @Published public private(set) var isLabelEditing = false
     @Published public var draftText = ""
@@ -180,6 +184,12 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
         self.screenSize = screenSize
         self.opacity = 0
         self.isHolding = false
+        self.cursorAngleDegrees = PointerPromptSpawnGeometry.angleDegrees(
+            from: origin,
+            to: destination
+        )
+        self.terminalTailAngleDegrees = 0
+        self.isWorking = false
         self.viewportOrigin = .zero
         self.viewportSize = .zero
         self.isLabelHovered = false
@@ -222,8 +232,14 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
 
         animationGeneration += 1
         let generation = animationGeneration
+        cursorAngleDegrees = PointerPromptSpawnGeometry.angleDegrees(
+            from: position,
+            to: destination
+        )
+        terminalTailAngleDegrees = 0
         self.destination = destination
         self.isHolding = false
+        self.isWorking = false
         withAnimation(.easeOut(duration: 0.12)) {
             self.opacity = 1
         }
@@ -242,6 +258,8 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
 
             self.state = nil
             self.isHolding = false
+            self.isWorking = false
+            self.terminalTailAngleDegrees = 0
             self.isLabelHovered = false
             self.isLabelEditing = false
             self.draftText = ""
@@ -343,12 +361,47 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
 
             self.position = finalPosition
             self.isHolding = true
+            self.playTerminalTailAnimation(generation: generation)
             if var state = self.state, state.phase == .traveling || state.phase == .notchCue {
                 state.phase = .holding
                 state.updatedAt = Date()
                 self.state = state
             }
             self.travelCompleted?()
+        }
+    }
+
+    private func playTerminalTailAnimation(generation: Int) {
+        isWorking = false
+        terminalTailAngleDegrees = 0
+
+        for frame in Self.terminalTailAnimationFrames {
+            DispatchQueue.main.asyncAfter(deadline: .now() + frame.delay) { [weak self] in
+                guard let self,
+                      self.animationGeneration == generation,
+                      self.isHolding else {
+                    return
+                }
+
+                withAnimation(.easeInOut(duration: Self.terminalTailFrameDuration)) {
+                    self.terminalTailAngleDegrees = frame.angleDegrees
+                }
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.terminalTailAnimationDuration
+        ) { [weak self] in
+            guard let self,
+                  self.animationGeneration == generation,
+                  self.isHolding else {
+                return
+            }
+
+            withAnimation(.easeOut(duration: 0.12)) {
+                self.terminalTailAngleDegrees = 0
+                self.isWorking = true
+            }
         }
     }
 
@@ -376,6 +429,16 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
     }
 
     public static let travelDuration: TimeInterval = 0.82
+    public static let terminalTailAnimationDuration: TimeInterval = 0.70
+    private static let terminalTailFrameDuration: TimeInterval = 0.08
+    private static let terminalTailAnimationFrames: [(delay: TimeInterval, angleDegrees: Double)] = [
+        (0.0875, -14),
+        (0.2625, -7),
+        (0.35, 0),
+        (0.4375, 14),
+        (0.6125, 7),
+        (0.70, 0)
+    ]
     fileprivate static let cursorVisualFrameSize = CGSize(width: 84, height: 112)
     fileprivate static let labelHorizontalPadding: CGFloat = 10
     fileprivate static let collapsedLabelContentWidth: CGFloat = 240
@@ -498,7 +561,7 @@ public struct PointerPromptSpawnOverlayView: View {
         screenSize: CGSize
     ) -> some View {
         ZStack(alignment: .topLeading) {
-            if viewModel.isHolding {
+            if viewModel.isWorking {
                 Circle()
                     .stroke(accentColor(for: state.accentIndex), lineWidth: 1.5)
                     .frame(
@@ -545,7 +608,8 @@ public struct PointerPromptSpawnOverlayView: View {
             .shadow(color: Color.black.opacity(0.34), radius: 4, x: 0, y: 2)
             .frame(width: 28, height: 28)
             .rotationEffect(.degrees(cursorAngleDegrees + 50))
-            .scaleEffect(viewModel.isHolding ? holdingCursorScale : 1)
+            .rotationEffect(.degrees(viewModel.terminalTailAngleDegrees))
+            .scaleEffect(viewModel.isWorking ? holdingCursorScale : 1)
             .animation(
                 .easeInOut(duration: 1.4).repeatForever(autoreverses: true),
                 value: haloPulseActive
@@ -643,10 +707,7 @@ public struct PointerPromptSpawnOverlayView: View {
     }
 
     private var cursorAngleDegrees: Double {
-        PointerPromptSpawnGeometry.angleDegrees(
-            from: viewModel.position,
-            to: viewModel.destination
-        )
+        viewModel.cursorAngleDegrees
     }
 
     private var haloPulseScale: CGFloat {
