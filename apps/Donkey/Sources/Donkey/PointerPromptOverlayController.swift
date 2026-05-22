@@ -26,9 +26,7 @@ final class PointerPromptOverlayController {
     private var completedActivationTapCount = 0
     private var lastActivationTapCompletedAt: Date?
     private var activationHoldStartedAt: Date?
-    private var spawnVoiceHoldStartedAt: Date?
     private var isVoiceInputActive = false
-    private var activeSpawnVoiceInputID: String?
     private var isStatusExpanded = false
     private var isStatusHostExpanded = false
     // Hover can produce enter/exit samples faster than SwiftUI's spring can settle.
@@ -290,20 +288,11 @@ final class PointerPromptOverlayController {
             return
         }
 
-        if activeSpawnVoiceInputID != nil, !isActivationModifierDown {
-            finishSpawnVoiceInput()
-            resetActivationTapSequence()
-            return
-        }
-
         if isCleanActivationModifierOnly {
             if activationTapStartedAt == nil {
                 let now = Date()
                 activationTapStartedAt = now
                 activationTapIsClean = true
-                if shouldStartSpawnVoiceHoldCandidate() {
-                    spawnVoiceHoldStartedAt = now
-                }
                 if shouldStartVoiceHoldCandidate(at: now) {
                     activationHoldStartedAt = now
                 }
@@ -319,7 +308,6 @@ final class PointerPromptOverlayController {
             completedActivationTapCount = 0
             lastActivationTapCompletedAt = nil
             activationHoldStartedAt = nil
-            spawnVoiceHoldStartedAt = nil
             return
         }
 
@@ -336,7 +324,6 @@ final class PointerPromptOverlayController {
             tapDuration <= activationShortcut.maximumTapDuration
         self.activationTapStartedAt = nil
         activationTapIsClean = false
-        spawnVoiceHoldStartedAt = nil
 
         guard completedCleanTap else {
             resetActivationTapSequence()
@@ -371,11 +358,6 @@ final class PointerPromptOverlayController {
         completedActivationTapCount = 0
         lastActivationTapCompletedAt = nil
         activationHoldStartedAt = nil
-        spawnVoiceHoldStartedAt = nil
-    }
-
-    private func shouldStartSpawnVoiceHoldCandidate() -> Bool {
-        !model.promptState.isActive && !model.spawnStates.isEmpty
     }
 
     private func shouldStartVoiceHoldCandidate(at now: Date) -> Bool {
@@ -390,14 +372,10 @@ final class PointerPromptOverlayController {
     }
 
     private func activateVoiceInputIfNeeded() {
-        guard !activatePromptVoiceInputIfNeeded() else { return }
-
-        activateSpawnVoiceInputIfNeeded()
+        _ = activatePromptVoiceInputIfNeeded()
     }
 
     private func activatePromptVoiceInputIfNeeded() -> Bool {
-        guard activeSpawnVoiceInputID == nil else { return false }
-
         guard let holdToVoiceInputDuration = activationShortcut.holdToVoiceInputDuration,
               let activationHoldStartedAt,
               activationTapIsClean,
@@ -429,49 +407,6 @@ final class PointerPromptOverlayController {
         isVoiceInputActive = true
         microphoneWaveformMeter.startAudioCapture()
         model.handle(.voiceInputRequested)
-    }
-
-    private func activateSpawnVoiceInputIfNeeded() {
-        guard activeSpawnVoiceInputID == nil,
-              let spawnVoiceHoldStartedAt,
-              activationTapIsClean,
-              Date().timeIntervalSince(spawnVoiceHoldStartedAt) >= spawnVoiceHoldDuration else {
-            return
-        }
-
-        guard let spawnID = model.beginSpawnVoiceInput() else { return }
-        guard spawnOverlayController.beginVoiceInput(spawnID: spawnID) else {
-            model.cancelSpawnVoiceInput(spawnID: spawnID)
-            return
-        }
-
-        activeSpawnVoiceInputID = spawnID
-        resetActivationTapSequence()
-        microphoneWaveformMeter.startAudioCapture()
-    }
-
-    private var spawnVoiceHoldDuration: TimeInterval {
-        activationShortcut.holdToVoiceInputDuration ?? 0.35
-    }
-
-    private func finishSpawnVoiceInput() {
-        guard let spawnID = activeSpawnVoiceInputID else { return }
-
-        activeSpawnVoiceInputID = nil
-        spawnVoiceHoldStartedAt = nil
-        let audio = microphoneWaveformMeter.finishAudioCapture()
-        model.transcribeSpawnVoiceAudio(spawnID: spawnID, audio: audio) { [weak self] transcript in
-            guard let self else { return }
-
-            guard let transcript,
-                  !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                self.spawnOverlayController.cancelVoiceInput(spawnID: spawnID)
-                self.model.cancelSpawnVoiceInput(spawnID: spawnID)
-                return
-            }
-
-            self.spawnOverlayController.completeVoiceInput(spawnID: spawnID, text: transcript)
-        }
     }
 
     private func finishVoiceInput() {

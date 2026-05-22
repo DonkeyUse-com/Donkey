@@ -75,7 +75,6 @@ final class PointerPromptSpawnOverlayController {
     ) {
         let destination = destinationPoint(
             for: spawnState.targetHint,
-            viewModel: viewModelsByID[spawnState.id],
             screen: screen,
             notchMetrics: notchMetrics
         )
@@ -246,16 +245,37 @@ final class PointerPromptSpawnOverlayController {
     }
 
     private func configureCallbacks(for surface: PointerPromptSpawnSurface) {
-        surface.viewModel.inputActivityChanged = { [weak self, weak surface] isActive in
+        surface.viewModel.labelLayoutChanged = { [weak self, weak surface] in
             guard let self,
                   let surface else {
                 return
             }
 
-            self.updateInputInteractivity(
-                isActive: isActive,
-                for: surface
+            self.layoutSurface(
+                surface,
+                on: surface.screen,
+                animated: false
             )
+        }
+        surface.viewModel.labelEditingChanged = { [weak self, weak surface] isEditing in
+            guard let self,
+                  let surface else {
+                return
+            }
+
+            self.layoutSurface(
+                surface,
+                on: surface.screen,
+                animated: false
+            )
+            if isEditing {
+                NSApp.activate(ignoringOtherApps: true)
+                surface.panel.orderFrontRegardless()
+                surface.panel.makeKeyAndOrderFront(nil)
+            } else {
+                surface.panel.orderFrontRegardless()
+            }
+            self.updateMouseEventPassthrough(for: surface)
         }
         surface.viewModel.travelCompleted = { [weak self, weak surface] in
             guard let self,
@@ -371,28 +391,6 @@ final class PointerPromptSpawnOverlayController {
         surface.screen = screen
     }
 
-    private func updateInputInteractivity(
-        isActive: Bool,
-        for surface: PointerPromptSpawnSurface
-    ) {
-        surface.travelWorkItem?.cancel()
-        surface.isTraveling = false
-        layoutSurface(
-            surface,
-            on: surface.screen,
-            animated: false
-        )
-
-        if isActive {
-            NSApp.activate(ignoringOtherApps: true)
-            surface.panel.orderFrontRegardless()
-            surface.panel.makeKeyAndOrderFront(nil)
-        } else {
-            surface.panel.orderFrontRegardless()
-        }
-        updateMouseEventPassthrough(for: surface)
-    }
-
     private func updateMouseEventPassthrough(for surface: PointerPromptSpawnSurface) {
         let hitTestFrame = surface.viewModel.localHitTestFrame
         guard !hitTestFrame.isNull, !hitTestFrame.isEmpty else {
@@ -402,25 +400,6 @@ final class PointerPromptSpawnOverlayController {
 
         let mouseLocation = surface.panel.convertPoint(fromScreen: NSEvent.mouseLocation)
         surface.panel.ignoresMouseEvents = !hitTestFrame.contains(mouseLocation)
-    }
-
-    func beginVoiceInput(spawnID: String) -> Bool {
-        guard let viewModel = viewModelsByID[spawnID] else { return false }
-
-        viewModel.beginVoiceInput()
-        return true
-    }
-
-    func completeVoiceInput(spawnID: String, text: String) {
-        guard let viewModel = viewModelsByID[spawnID] else { return }
-
-        viewModel.applyTranscribedInput(text, submit: !text.isEmpty)
-    }
-
-    func cancelVoiceInput(spawnID: String) {
-        guard let viewModel = viewModelsByID[spawnID] else { return }
-
-        viewModel.collapseInput()
     }
 
     func cueState(
@@ -480,27 +459,6 @@ final class PointerPromptSpawnOverlayController {
     private func spawnOrigin(in screen: NSScreen, index: Int) -> CGPoint {
         let stagger = CGFloat((index % 5) - 2) * 18
         return CGPoint(x: screen.frame.width / 2 + stagger, y: -24)
-    }
-
-    private func destinationPoint(
-        for hint: PointerPromptSpawnTargetHint?,
-        viewModel: PointerPromptSpawnOverlayViewModel?,
-        screen: NSScreen,
-        notchMetrics: PointerPromptNotchMetrics
-    ) -> CGPoint {
-        guard viewModel?.freezesMovement != true else {
-            return viewModel?.destination ?? destinationPoint(
-                for: hint,
-                screen: screen,
-                notchMetrics: notchMetrics
-            )
-        }
-
-        return destinationPoint(
-            for: hint,
-            screen: screen,
-            notchMetrics: notchMetrics
-        )
     }
 
     private func destinationPoint(

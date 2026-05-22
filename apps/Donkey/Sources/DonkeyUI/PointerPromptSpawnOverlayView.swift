@@ -14,11 +14,13 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
     @Published public private(set) var opacity: Double = 0
     @Published public private(set) var isHolding = false
     @Published public private(set) var isSelected = false
-    @Published public var inputText = ""
-    @Published public var inputTextHeight: CGFloat = PointerPromptSpawnOverlayViewModel.inputMinimumTextHeight
-    @Published public private(set) var isInputExpanded = false
+    @Published public private(set) var isLabelHovered = false
+    @Published public private(set) var isLabelEditing = false
+    @Published public var draftText = ""
+    @Published public private(set) var draftTextHeight: CGFloat = PointerPromptSpawnOverlayViewModel.inlineEditorMinimumTextHeight
 
-    public var inputActivityChanged: ((Bool) -> Void)?
+    public var labelLayoutChanged: (() -> Void)?
+    public var labelEditingChanged: ((Bool) -> Void)?
     public var followUpSubmitted: ((String, String, String) -> Void)?
     public var selected: ((String) -> Void)?
     public var travelCompleted: (() -> Void)?
@@ -26,26 +28,6 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
     private var animationGeneration = 0
 
     public init() {}
-
-    public var isInputActive: Bool {
-        state?.inputState == .editing
-    }
-
-    public var freezesMovement: Bool {
-        PointerPromptSpawnLifecycle.freezesMovement(
-            inputState: state?.inputState ?? .collapsed,
-            draftText: inputText
-        )
-    }
-
-    public var canSubmitInput: Bool {
-        guard let state else { return false }
-
-        return PointerPromptSpawnLifecycle.followUpSubmission(
-            from: state,
-            text: inputText
-        ) != nil
-    }
 
     public var hitTestFrame: CGRect {
         guard state != nil, isHolding else { return .null }
@@ -72,20 +54,47 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
         )
     }
 
+    public var localCursorCenter: CGPoint {
+        renderPosition
+    }
+
+    public var localHaloCenter: CGPoint {
+        CGPoint(
+            x: localCursorCenter.x,
+            y: localCursorCenter.y + Self.collapsedHaloVerticalOffset
+        )
+    }
+
+    public func localLabelCenter(in screenSize: CGSize) -> CGPoint {
+        let offset = labelOffset(in: screenSize)
+        return CGPoint(
+            x: localCursorCenter.x + offset.width,
+            y: localCursorCenter.y + offset.height
+        )
+    }
+
     public var isTraveling: Bool {
         state != nil && !isHolding
+    }
+
+    public var freezesMovement: Bool {
+        isLabelEditing || !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     public var hasScreenSize: Bool {
         screenSize.width > 0 && screenSize.height > 0
     }
 
+    public var hasViewportSize: Bool {
+        viewportSize.width > 0 && viewportSize.height > 0
+    }
+
     public func cursorOnlyVisualFrame(at point: CGPoint) -> CGRect {
         CGRect(
-            x: point.x - 30,
-            y: point.y - 30,
-            width: 60,
-            height: 60
+            x: point.x - Self.cursorVisualFrameSize.width / 2,
+            y: point.y - Self.cursorVisualFrameSize.height / 2,
+            width: Self.cursorVisualFrameSize.width,
+            height: Self.cursorVisualFrameSize.height
         )
     }
 
@@ -101,14 +110,13 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
         var frame = cursorOnlyVisualFrame(at: point)
         guard includesLabel else { return frame }
 
-        let width: CGFloat = isInputActive ? 312 : 244
-        let height: CGFloat = isInputActive ? 142 : 54
+        let labelSize = labelSize()
         let offset = labelOffset(for: point, in: screenSize)
         let origin = CGPoint(
-            x: point.x + offset.width - width / 2,
-            y: point.y + offset.height - height / 2
+            x: point.x + offset.width - labelSize.width / 2,
+            y: point.y + offset.height - labelSize.height / 2
         )
-        frame = frame.union(CGRect(origin: origin, size: CGSize(width: width, height: height)))
+        frame = frame.union(CGRect(origin: origin, size: labelSize))
         return frame.insetBy(dx: -10, dy: -10)
     }
 
@@ -131,26 +139,32 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
         for cursorPosition: CGPoint,
         in screenSize: CGSize
     ) -> CGSize {
-        let labelSize = CGSize(
-            width: isInputActive ? 292 : 220,
-            height: isInputActive ? 126 : 46
-        )
+        let labelSize = labelSize()
         let margin: CGFloat = 20
-        let rightOffset = Self.preferredLabelOffset
-        let leftOffset = CGSize(width: -labelSize.width / 2 - 40, height: rightOffset.height)
-        let upOffset = CGSize(width: rightOffset.width, height: -labelSize.height - 28)
-        let upLeftOffset = CGSize(width: leftOffset.width, height: upOffset.height)
+        let preferredOffset = CGSize(width: 0, height: -(labelSize.height / 2 + Self.collapsedLabelBottomGap))
+        let rightOffset = CGSize(width: labelSize.width / 2 + 44, height: 0)
+        let leftOffset = CGSize(width: -labelSize.width / 2 - 44, height: 0)
+        let belowOffset = CGSize(width: 0, height: labelSize.height / 2 + 44)
 
-        if point(cursorPosition, offsetBy: rightOffset, labelSize: labelSize, fitsIn: screenSize, margin: margin) {
-            return rightOffset
+        if point(cursorPosition, offsetBy: preferredOffset, labelSize: labelSize, fitsIn: screenSize, margin: margin) {
+            return preferredOffset
         }
         if point(cursorPosition, offsetBy: leftOffset, labelSize: labelSize, fitsIn: screenSize, margin: margin) {
             return leftOffset
         }
-        if point(cursorPosition, offsetBy: upOffset, labelSize: labelSize, fitsIn: screenSize, margin: margin) {
-            return upOffset
+        if point(cursorPosition, offsetBy: rightOffset, labelSize: labelSize, fitsIn: screenSize, margin: margin) {
+            return rightOffset
         }
-        return upLeftOffset
+        return belowOffset
+    }
+
+    private func labelSize() -> CGSize {
+        if isLabelEditing {
+            return Self.inlineEditorLabelSize(for: state?.label ?? "")
+        }
+        guard isLabelHovered else { return Self.collapsedLabelSize }
+
+        return Self.expandedCollapsedLabelSize(for: state?.label ?? "")
     }
 
     public func show(
@@ -168,10 +182,12 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
         self.isHolding = false
         self.viewportOrigin = .zero
         self.viewportSize = .zero
-        self.inputText = ""
-        self.inputTextHeight = Self.inputMinimumTextHeight
-        self.isInputExpanded = false
-        inputActivityChanged?(false)
+        self.isLabelHovered = false
+        self.isLabelEditing = false
+        self.draftText = ""
+        self.draftTextHeight = Self.inlineEditorMinimumTextHeight
+        labelLayoutChanged?()
+        labelEditingChanged?(false)
 
         let generation = animationGeneration
         DispatchQueue.main.async { [weak self] in
@@ -194,7 +210,7 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
             return
         }
 
-        self.state = stateWithPreservedLocalInput(state)
+        self.state = state
         self.screenSize = screenSize
         guard state.phase != .fading else {
             fadeOut()
@@ -216,7 +232,6 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
 
     public func fadeOut() {
         animationGeneration += 1
-        inputActivityChanged?(false)
         withAnimation(.easeOut(duration: 0.18)) {
             opacity = 0
         }
@@ -227,81 +242,15 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
 
             self.state = nil
             self.isHolding = false
-            self.inputText = ""
-            self.inputTextHeight = Self.inputMinimumTextHeight
-            self.isInputExpanded = false
+            self.isLabelHovered = false
+            self.isLabelEditing = false
+            self.draftText = ""
+            self.draftTextHeight = Self.inlineEditorMinimumTextHeight
             self.viewportOrigin = .zero
             self.viewportSize = .zero
+            self.labelLayoutChanged?()
+            self.labelEditingChanged?(false)
         }
-    }
-
-    public func beginInput() {
-        guard var state, isHolding else { return }
-
-        selected?(state.id)
-        state.inputState = .editing
-        state.updatedAt = Date()
-        self.state = state
-        inputActivityChanged?(true)
-    }
-
-    public func beginVoiceInput() {
-        guard var state else { return }
-
-        selected?(state.id)
-        state.inputState = .editing
-        state.label = "Listening..."
-        state.updatedAt = Date()
-        self.state = state
-        inputText = ""
-        inputTextHeight = Self.inputMinimumTextHeight
-        isInputExpanded = false
-        isHolding = true
-        inputActivityChanged?(true)
-    }
-
-    public func applyTranscribedInput(_ text: String, submit: Bool) {
-        guard var state else { return }
-
-        state.inputState = .editing
-        state.label = text.isEmpty ? "I didn't catch that" : "Heard you"
-        state.updatedAt = Date()
-        self.state = state
-        inputText = text
-        inputActivityChanged?(true)
-        if submit {
-            submitInput()
-        }
-    }
-
-    public func collapseInput() {
-        guard var state else { return }
-
-        inputText = ""
-        inputTextHeight = Self.inputMinimumTextHeight
-        isInputExpanded = false
-        state.inputState = .collapsed
-        state.updatedAt = Date()
-        self.state = state
-        inputActivityChanged?(false)
-    }
-
-    public func submitInput() {
-        guard var state,
-              let submission = PointerPromptSpawnLifecycle.followUpSubmission(
-                from: state,
-                text: inputText
-              )
-        else { return }
-
-        inputText = ""
-        inputTextHeight = Self.inputMinimumTextHeight
-        isInputExpanded = false
-        state.inputState = .collapsed
-        state.updatedAt = Date()
-        self.state = state
-        inputActivityChanged?(false)
-        followUpSubmitted?(submission.spawnID, submission.taskID, submission.text)
     }
 
     public func setSelected(_ isSelected: Bool) {
@@ -310,18 +259,82 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
         self.isSelected = isSelected
     }
 
+    public func setLabelHovered(_ isHovered: Bool) {
+        guard !isLabelEditing else { return }
+
+        let shouldExpand = isHovered && Self.collapsedLabelNeedsExpansion(state?.label ?? "")
+        guard isLabelHovered != shouldExpand else { return }
+
+        isLabelHovered = shouldExpand
+        labelLayoutChanged?()
+    }
+
     public func select() {
         guard let state else { return }
 
         selected?(state.id)
     }
 
-    public func updateInputTextHeight(_ height: CGFloat) {
-        let clamped = min(max(height, Self.inputMinimumTextHeight), Self.inputMaximumTextHeight)
-        guard abs(inputTextHeight - clamped) > 0.5 else { return }
+    public func beginInlineInput() {
+        guard let state,
+              state.taskID != nil,
+              !isLabelEditing else {
+            select()
+            return
+        }
 
-        inputTextHeight = clamped
-        isInputExpanded = clamped > Self.inputMinimumTextHeight + 1 || inputText.contains("\n")
+        selected?(state.id)
+        isLabelHovered = false
+        draftText = ""
+        draftTextHeight = Self.inlineEditorMinimumTextHeight
+        isLabelEditing = true
+        labelLayoutChanged?()
+        labelEditingChanged?(true)
+    }
+
+    public func cancelInlineInput() {
+        guard isLabelEditing || !draftText.isEmpty else { return }
+
+        draftText = ""
+        draftTextHeight = Self.inlineEditorMinimumTextHeight
+        isLabelEditing = false
+        labelLayoutChanged?()
+        labelEditingChanged?(false)
+    }
+
+    public func closeInlineInputIfIdle() {
+        guard isLabelEditing,
+              draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
+
+        cancelInlineInput()
+    }
+
+    public func submitInlineInput() {
+        guard let state else { return }
+
+        let trimmedText = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty,
+              let taskID = state.taskID else {
+            cancelInlineInput()
+            return
+        }
+
+        draftText = ""
+        draftTextHeight = Self.inlineEditorMinimumTextHeight
+        isLabelEditing = false
+        labelLayoutChanged?()
+        labelEditingChanged?(false)
+        followUpSubmitted?(state.id, taskID, trimmedText)
+    }
+
+    public func updateDraftTextHeight(_ height: CGFloat) {
+        let clamped = min(max(height, Self.inlineEditorMinimumTextHeight), Self.inlineEditorMaximumTextHeight)
+        guard abs(draftTextHeight - clamped) > 0.5 else { return }
+
+        draftTextHeight = clamped
+        labelLayoutChanged?()
     }
 
     private func finishTravelAfterDelay(generation: Int, finalPosition: CGPoint) {
@@ -341,21 +354,6 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
 
     private func distance(from lhs: CGPoint, to rhs: CGPoint) -> CGFloat {
         hypot(lhs.x - rhs.x, lhs.y - rhs.y)
-    }
-
-    private func stateWithPreservedLocalInput(
-        _ incomingState: PointerPromptSpawnState
-    ) -> PointerPromptSpawnState {
-        guard let currentState = state,
-              currentState.id == incomingState.id,
-              currentState.inputState == .editing
-        else {
-            return incomingState
-        }
-
-        var mergedState = incomingState
-        mergedState.inputState = .editing
-        return mergedState
     }
 
     private func point(
@@ -378,15 +376,99 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
     }
 
     public static let travelDuration: TimeInterval = 0.82
-    public static let inputMinimumTextHeight: CGFloat = 16
-    public static let inputMaximumTextHeight: CGFloat = 76
-    private static let preferredLabelOffset = CGSize(width: 138, height: 48)
+    fileprivate static let cursorVisualFrameSize = CGSize(width: 84, height: 112)
+    fileprivate static let labelHorizontalPadding: CGFloat = 10
+    fileprivate static let collapsedLabelContentWidth: CGFloat = 240
+    fileprivate static let collapsedLabelSize = CGSize(width: 260, height: 48)
+    fileprivate static let collapsedLabelBottomGap: CGFloat = 22
+    fileprivate static let expandedCollapsedLabelWidth: CGFloat = 480
+    fileprivate static let inlineEditorContentWidth: CGFloat = expandedCollapsedLabelWidth
+    fileprivate static let inlineEditorInputHeight: CGFloat = 64
+    fileprivate static let inlineEditorHorizontalPadding: CGFloat = 16
+    fileprivate static let inlineEditorVerticalPadding: CGFloat = 14
+    fileprivate static let inlineEditorSpacing: CGFloat = 12
+    public static let inlineEditorMinimumTextHeight: CGFloat = 14
+    public static let inlineEditorMaximumTextHeight: CGFloat = 44
+    fileprivate static let collapsedHaloSize: CGFloat = 40
+    fileprivate static let collapsedHaloVerticalOffset: CGFloat = 12
     private static let travelAnimation = Animation.timingCurve(0.45, 0.05, 0.3, 1, duration: travelDuration)
+
+    private static func expandedCollapsedLabelSize(for text: String) -> CGSize {
+        let characterCount = max(Array(text).count, 1)
+        let approximateCharactersPerLine = 44
+        let lineCount = max(1, Int(ceil(Double(characterCount) / Double(approximateCharactersPerLine))))
+        let height = CGFloat(lineCount) * 14 + 12
+        return CGSize(
+            width: expandedCollapsedLabelWidth + Self.labelHorizontalPadding * 2,
+            height: max(collapsedLabelSize.height, height)
+        )
+    }
+
+    private static func inlineEditorLabelSize(for text: String) -> CGSize {
+        CGSize(
+            width: inlineEditorContentWidth + inlineEditorHorizontalPadding * 2,
+            height: inlineEditorMessageHeight(for: text) +
+                inlineEditorSpacing +
+                inlineEditorInputHeight +
+                inlineEditorVerticalPadding * 2
+        )
+    }
+
+    private static func inlineEditorMessageHeight(for text: String) -> CGFloat {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else { return 20 }
+
+        let font = NSFont.systemFont(ofSize: 13, weight: .bold)
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byWordWrapping
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .paragraphStyle: paragraphStyle
+        ]
+        let rect = (trimmedText as NSString).boundingRect(
+            with: CGSize(
+                width: inlineEditorContentWidth,
+                height: CGFloat.greatestFiniteMagnitude
+            ),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attributes
+        )
+        let lineHeight = NSLayoutManager().defaultLineHeight(for: font)
+        return min(max(ceil(rect.height), lineHeight), ceil(lineHeight * 3))
+    }
+
+    private static func collapsedLabelNeedsExpansion(_ text: String) -> Bool {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else { return false }
+
+        let font = NSFont.systemFont(ofSize: 10, weight: .medium)
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byWordWrapping
+        paragraphStyle.alignment = .center
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .paragraphStyle: paragraphStyle
+        ]
+        let singleLineWidth = ceil((trimmedText as NSString).size(withAttributes: attributes).width)
+        let boundingRect = (trimmedText as NSString).boundingRect(
+            with: CGSize(
+                width: collapsedLabelContentWidth,
+                height: CGFloat.greatestFiniteMagnitude
+            ),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attributes
+        )
+        let lineHeight = NSLayoutManager().defaultLineHeight(for: font)
+        let maximumVisibleHeight = ceil(lineHeight * 2 + 1)
+
+        return singleLineWidth > collapsedLabelContentWidth * 2 ||
+            ceil(boundingRect.height) > maximumVisibleHeight
+    }
 }
 
 public struct PointerPromptSpawnOverlayView: View {
     @ObservedObject private var viewModel: PointerPromptSpawnOverlayViewModel
-    @FocusState private var labelIsFocused: Bool
+    @State private var haloPulseActive = false
 
     public init(viewModel: PointerPromptSpawnOverlayViewModel) {
         self.viewModel = viewModel
@@ -397,7 +479,11 @@ public struct PointerPromptSpawnOverlayView: View {
             ZStack(alignment: .topLeading) {
                 if let state = viewModel.state {
                     spawnSurface(state: state, screenSize: viewModel.hasScreenSize ? viewModel.screenSize : proxy.size)
-                        .position(viewModel.renderPosition)
+                        .frame(
+                            width: viewModel.hasViewportSize ? viewModel.viewportSize.width : proxy.size.width,
+                            height: viewModel.hasViewportSize ? viewModel.viewportSize.height : proxy.size.height,
+                            alignment: .topLeading
+                        )
                         .opacity(viewModel.opacity)
                 }
             }
@@ -412,29 +498,32 @@ public struct PointerPromptSpawnOverlayView: View {
         ZStack(alignment: .topLeading) {
             if viewModel.isHolding {
                 Circle()
-                    .stroke(accentColor(for: state.accentIndex).opacity(0.68), lineWidth: 1.4)
-                    .frame(width: 36, height: 36)
-                    .scaleEffect(holdingPulseScale)
-                    .opacity(holdingPulseOpacity)
-                    .position(.zero)
-            }
-
-            if viewModel.isSelected {
-                Circle()
-                    .stroke(Color.white.opacity(0.52), lineWidth: 1.2)
-                    .frame(width: 42, height: 42)
-                    .position(.zero)
+                    .stroke(accentColor(for: state.accentIndex), lineWidth: 1.5)
+                    .frame(
+                        width: PointerPromptSpawnOverlayViewModel.collapsedHaloSize,
+                        height: PointerPromptSpawnOverlayViewModel.collapsedHaloSize
+                    )
+                    .scaleEffect(haloPulseScale)
+                    .opacity(haloPulseOpacity)
+                    .position(viewModel.localHaloCenter)
+                    .animation(
+                        .easeInOut(duration: 1.6).repeatForever(autoreverses: true),
+                        value: haloPulseActive
+                    )
+                    .onAppear {
+                        haloPulseActive = true
+                    }
+                    .onDisappear {
+                        haloPulseActive = false
+                    }
             }
 
             cursor(state: state)
-                .position(.zero)
+                .position(viewModel.localCursorCenter)
 
             if viewModel.isHolding {
                 stationaryLabel(state: state)
-                    .offset(
-                        x: viewModel.labelOffset(in: screenSize).width,
-                        y: viewModel.labelOffset(in: screenSize).height
-                    )
+                    .position(viewModel.localLabelCenter(in: screenSize))
                     .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .topLeading)))
             }
         }
@@ -455,84 +544,101 @@ public struct PointerPromptSpawnOverlayView: View {
             .frame(width: 28, height: 28)
             .rotationEffect(.degrees(cursorAngleDegrees + 50))
             .scaleEffect(viewModel.isHolding ? holdingCursorScale : 1)
+            .animation(
+                .easeInOut(duration: 1.4).repeatForever(autoreverses: true),
+                value: haloPulseActive
+            )
     }
 
     private func stationaryLabel(state: PointerPromptSpawnState) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            TypewriterText(
-                text: state.label,
-                identity: PointerPromptSpawnGeometry.labelTypingIdentity(
-                    spawnID: state.id,
-                    label: state.label
-                )
-            )
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(.white)
-            .lineLimit(2)
-            .fixedSize(horizontal: false, vertical: true)
-
-            if viewModel.isInputActive {
-                compactInput
+        Group {
+            if viewModel.isLabelEditing {
+                inlineLabelEditor(state: state)
+            } else {
+                displayLabel(state: state)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .frame(width: viewModel.isInputActive ? 292 : 220, alignment: .leading)
         .background {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.black.opacity(0.82))
+                .fill(accentColor(for: state.accentIndex))
         }
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color.white.opacity(viewModel.isInputActive ? 0.26 : 0.16), lineWidth: 1)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(Color.white.opacity(viewModel.isSelected ? 0.34 : 0), lineWidth: 1.4)
-                }
-        }
-        .shadow(color: Color.black.opacity(0.32), radius: 10, x: 0, y: 5)
+        .shadow(color: Color.black.opacity(0.3), radius: 3, x: 0, y: 1)
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onTapGesture {
-            viewModel.select()
-            viewModel.beginInput()
+            viewModel.beginInlineInput()
         }
-        .focusable(true)
-        .focused($labelIsFocused)
-        .onChange(of: labelIsFocused) {
-            if labelIsFocused {
-                viewModel.beginInput()
-            }
+        .onHover { isHovered in
+            viewModel.setLabelHovered(isHovered)
         }
     }
 
-    private var compactInput: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            SpawnLabelTextInput(
-                text: $viewModel.inputText,
-                isActive: viewModel.isInputActive,
-                textHeightChanged: viewModel.updateInputTextHeight,
-                submit: viewModel.submitInput,
-                cancel: viewModel.collapseInput
+    private func displayLabel(state: PointerPromptSpawnState) -> some View {
+        TypewriterText(
+            text: state.label,
+            identity: PointerPromptSpawnGeometry.labelTypingIdentity(
+                spawnID: state.id,
+                label: state.label
             )
-            .frame(height: viewModel.inputTextHeight)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(minHeight: 34)
-            .background(Color.white.opacity(0.09))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        )
+        .font(.system(size: 10, weight: .medium))
+        .foregroundStyle(.white)
+        .multilineTextAlignment(.center)
+        .lineLimit(viewModel.isLabelHovered ? nil : 2)
+        .truncationMode(.tail)
+        .frame(
+            maxWidth: viewModel.isLabelHovered ? PointerPromptSpawnOverlayViewModel.expandedCollapsedLabelWidth : PointerPromptSpawnOverlayViewModel.collapsedLabelContentWidth,
+            alignment: .center
+        )
+        .padding(.horizontal, PointerPromptSpawnOverlayViewModel.labelHorizontalPadding)
+        .padding(.vertical, 3)
+    }
 
-            Button(action: viewModel.submitInput) {
-                Image(systemName: "arrow.up")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.black.opacity(0.78))
-                    .frame(width: 26, height: 26)
-                    .background(Color.white.opacity(0.92))
-                    .clipShape(Circle())
+    private func inlineLabelEditor(state: PointerPromptSpawnState) -> some View {
+        VStack(alignment: .leading, spacing: PointerPromptSpawnOverlayViewModel.inlineEditorSpacing) {
+            Text(state.label)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.leading)
+                .lineLimit(3)
+                .truncationMode(.tail)
+                .frame(
+                    width: PointerPromptSpawnOverlayViewModel.inlineEditorContentWidth,
+                    alignment: .leading
+                )
+
+            SpawnLabelInlineTextInput(
+                text: $viewModel.draftText,
+                isActive: viewModel.isLabelEditing,
+                textHeightChanged: viewModel.updateDraftTextHeight,
+                submit: viewModel.submitInlineInput,
+                cancel: viewModel.cancelInlineInput,
+                focusLost: viewModel.closeInlineInputIfIdle
+            )
+            .frame(
+                width: PointerPromptSpawnOverlayViewModel.inlineEditorContentWidth - 24,
+                height: max(viewModel.draftTextHeight, PointerPromptSpawnOverlayViewModel.inlineEditorMinimumTextHeight),
+                alignment: .topLeading
+            )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(
+                width: PointerPromptSpawnOverlayViewModel.inlineEditorContentWidth,
+                height: PointerPromptSpawnOverlayViewModel.inlineEditorInputHeight,
+                alignment: .topLeading
+            )
+            .background {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(inputAccentColor(for: state.accentIndex))
             }
-            .buttonStyle(.plain)
-            .disabled(!viewModel.canSubmitInput)
         }
-        .frame(width: 272)
+        .frame(
+            width: PointerPromptSpawnOverlayViewModel.inlineEditorContentWidth,
+            alignment: .center
+        )
+        .padding(.horizontal, PointerPromptSpawnOverlayViewModel.inlineEditorHorizontalPadding)
+        .padding(.vertical, PointerPromptSpawnOverlayViewModel.inlineEditorVerticalPadding)
+        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+        .animation(.easeOut(duration: 0.12), value: viewModel.isLabelEditing)
     }
 
     private var cursorAngleDegrees: Double {
@@ -542,20 +648,24 @@ public struct PointerPromptSpawnOverlayView: View {
         )
     }
 
-    private var holdingPulseScale: CGFloat {
-        viewModel.freezesMovement ? 1.04 : 1.14
+    private var haloPulseScale: CGFloat {
+        haloPulseActive ? 1.15 : 1.0
     }
 
-    private var holdingPulseOpacity: Double {
-        viewModel.freezesMovement ? 0.32 : 0.2
+    private var haloPulseOpacity: Double {
+        haloPulseActive ? 0.2 : 0.6
     }
 
     private var holdingCursorScale: CGFloat {
-        viewModel.freezesMovement ? 1.02 : 1.08
+        haloPulseActive ? 1.08 : 1.0
     }
 
     private func accentColor(for index: Int) -> Color {
         Self.accentColors[((index % Self.accentColors.count) + Self.accentColors.count) % Self.accentColors.count]
+    }
+
+    private func inputAccentColor(for index: Int) -> Color {
+        Self.inputAccentColors[((index % Self.inputAccentColors.count) + Self.inputAccentColors.count) % Self.inputAccentColors.count]
     }
 
     private static let accentColors: [Color] = [
@@ -567,6 +677,17 @@ public struct PointerPromptSpawnOverlayView: View {
         Color(red: 0.88, green: 0.35, blue: 0.28),
         Color(red: 0.24, green: 0.69, blue: 0.71),
         Color(red: 0.66, green: 0.34, blue: 0.79)
+    ]
+
+    private static let inputAccentColors: [Color] = [
+        Color(red: 0.69, green: 0.87, blue: 0.81),
+        Color(red: 0.98, green: 0.87, blue: 0.70),
+        Color(red: 0.94, green: 0.77, blue: 0.82),
+        Color(red: 0.73, green: 0.84, blue: 0.95),
+        Color(red: 0.83, green: 0.81, blue: 0.95),
+        Color(red: 0.96, green: 0.77, blue: 0.75),
+        Color(red: 0.73, green: 0.89, blue: 0.90),
+        Color(red: 0.88, green: 0.77, blue: 0.93)
     ]
 }
 
@@ -604,12 +725,13 @@ private struct TypewriterText: View {
     }
 }
 
-private struct SpawnLabelTextInput: NSViewRepresentable {
+private struct SpawnLabelInlineTextInput: NSViewRepresentable {
     @Binding var text: String
     let isActive: Bool
     let textHeightChanged: @MainActor (CGFloat) -> Void
     let submit: @MainActor () -> Void
     let cancel: @MainActor () -> Void
+    let focusLost: @MainActor () -> Void
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
@@ -619,7 +741,7 @@ private struct SpawnLabelTextInput: NSViewRepresentable {
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
 
-        let textView = SpawnLabelTextView()
+        let textView = SpawnLabelInlineTextView()
         textView.delegate = context.coordinator
         textView.shouldFocusWhenAttached = isActive
         textView.submit = {
@@ -632,9 +754,14 @@ private struct SpawnLabelTextInput: NSViewRepresentable {
                 cancel()
             }
         }
+        textView.focusLost = {
+            Task { @MainActor in
+                focusLost()
+            }
+        }
         textView.string = text
-        textView.insertionPointColor = .white
-        SpawnLabelTextStyle.apply(to: textView)
+        textView.insertionPointColor = NSColor.black.withAlphaComponent(0.72)
+        SpawnLabelInlineTextStyle.apply(to: textView)
         textView.backgroundColor = .clear
         textView.drawsBackground = false
         textView.isRichText = false
@@ -644,7 +771,7 @@ private struct SpawnLabelTextInput: NSViewRepresentable {
         textView.isSelectable = true
         textView.isHorizontallyResizable = false
         textView.isVerticallyResizable = true
-        textView.minSize = CGSize(width: 0, height: PointerPromptSpawnOverlayViewModel.inputMinimumTextHeight)
+        textView.minSize = CGSize(width: 0, height: PointerPromptSpawnOverlayViewModel.inlineEditorMinimumTextHeight)
         textView.maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.autoresizingMask = [.width]
         textView.textContainerInset = .zero
@@ -658,7 +785,7 @@ private struct SpawnLabelTextInput: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.parent = self
-        guard let textView = scrollView.documentView as? SpawnLabelTextView else { return }
+        guard let textView = scrollView.documentView as? SpawnLabelInlineTextView else { return }
 
         textView.shouldFocusWhenAttached = isActive
         textView.submit = {
@@ -671,11 +798,16 @@ private struct SpawnLabelTextInput: NSViewRepresentable {
                 cancel()
             }
         }
-        SpawnLabelTextStyle.apply(to: textView)
+        textView.focusLost = {
+            Task { @MainActor in
+                focusLost()
+            }
+        }
+        SpawnLabelInlineTextStyle.apply(to: textView)
 
         if textView.string != text {
             textView.string = text
-            SpawnLabelTextStyle.apply(to: textView)
+            SpawnLabelInlineTextStyle.apply(to: textView)
             textView.needsDisplay = true
         }
 
@@ -695,16 +827,17 @@ private struct SpawnLabelTextInput: NSViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
-        var parent: SpawnLabelTextInput
+        var parent: SpawnLabelInlineTextInput
 
-        init(parent: SpawnLabelTextInput) {
+        init(parent: SpawnLabelInlineTextInput) {
             self.parent = parent
         }
 
         func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? SpawnLabelTextView else { return }
+            guard let textView = notification.object as? SpawnLabelInlineTextView else { return }
 
             parent.text = textView.string
+            SpawnLabelInlineTextStyle.apply(to: textView)
             textView.needsDisplay = true
             reportTextHeight(for: textView)
             textView.scrollRangeToVisible(textView.selectedRange())
@@ -717,7 +850,7 @@ private struct SpawnLabelTextInput: NSViewRepresentable {
             let width = max(1, scrollView.contentView.bounds.width)
             textView.textContainer?.containerSize = CGSize(width: width, height: .greatestFiniteMagnitude)
             let documentHeight = max(
-                PointerPromptSpawnOverlayViewModel.inputMinimumTextHeight,
+                PointerPromptSpawnOverlayViewModel.inlineEditorMinimumTextHeight,
                 measuredTextHeight(for: textView)
             )
             textView.frame = CGRect(x: 0, y: 0, width: width, height: documentHeight)
@@ -730,22 +863,23 @@ private struct SpawnLabelTextInput: NSViewRepresentable {
         private func measuredTextHeight(for textView: NSTextView) -> CGFloat {
             guard let layoutManager = textView.layoutManager,
                   let textContainer = textView.textContainer else {
-                return PointerPromptSpawnOverlayViewModel.inputMinimumTextHeight
+                return PointerPromptSpawnOverlayViewModel.inlineEditorMinimumTextHeight
             }
 
             layoutManager.ensureLayout(for: textContainer)
             let usedRect = layoutManager.usedRect(for: textContainer)
             return ceil(max(
-                PointerPromptSpawnOverlayViewModel.inputMinimumTextHeight,
+                PointerPromptSpawnOverlayViewModel.inlineEditorMinimumTextHeight,
                 usedRect.height
             ))
         }
     }
 }
 
-private final class SpawnLabelTextView: NSTextView {
+private final class SpawnLabelInlineTextView: NSTextView {
     var submit: (() -> Void)?
     var cancel: (() -> Void)?
+    var focusLost: (() -> Void)?
     var shouldFocusWhenAttached = false
 
     override var acceptsFirstResponder: Bool {
@@ -760,7 +894,19 @@ private final class SpawnLabelTextView: NSTextView {
     func focusIfNeeded() {
         guard shouldFocusWhenAttached else { return }
 
-        window?.makeFirstResponder(self)
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+
+            self.window?.makeFirstResponder(self)
+        }
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let didResign = super.resignFirstResponder()
+        if didResign {
+            focusLost?()
+        }
+        return didResign
     }
 
     override func keyDown(with event: NSEvent) {
@@ -783,15 +929,16 @@ private final class SpawnLabelTextView: NSTextView {
 }
 
 @MainActor
-private enum SpawnLabelTextStyle {
+private enum SpawnLabelInlineTextStyle {
     static var font: NSFont {
-        NSFont.systemFont(ofSize: 12, weight: .regular)
+        NSFont.systemFont(ofSize: 13, weight: .medium)
     }
 
     static func apply(to textView: NSTextView) {
-        let textAttributes = attributes(color: .white, font: font)
+        let textAttributes = attributes(color: NSColor.black.withAlphaComponent(0.68), font: font)
         textView.font = font
-        textView.textColor = .white
+        textView.textColor = NSColor.black.withAlphaComponent(0.68)
+        textView.alignment = .left
         textView.typingAttributes = textAttributes
 
         let textRange = NSRange(location: 0, length: textView.string.utf16.count)
@@ -804,10 +951,14 @@ private enum SpawnLabelTextStyle {
         color: NSColor,
         font: NSFont
     ) -> [NSAttributedString.Key: Any] {
-        [
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .left
+        paragraphStyle.lineBreakMode = .byWordWrapping
+        return [
             .foregroundColor: color,
             .font: font,
-            .ligature: 0
+            .ligature: 0,
+            .paragraphStyle: paragraphStyle
         ]
     }
 }

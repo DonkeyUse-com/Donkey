@@ -14,7 +14,7 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
     @Published var notchCommandText = ""
     @Published private(set) var notchCommandInputTextHeight = PointerPromptLayout.composerInputTextMinimumHeight
     @Published private(set) var isNotchCommandInputExpanded = true
-    @Published private(set) var notchAccentIndex = Int.random(in: 0..<8)
+    @Published private(set) var notchAccentIndex = 0
     @Published private(set) var isCurrentTaskPaused = false
     @Published private(set) var updateState: PointerPromptUpdateState
     @Published private(set) var notchTasks: [PointerPromptNotchTask]
@@ -164,52 +164,21 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         }
     }
 
-    func transcribeSpawnVoiceAudio(
-        spawnID: String,
-        audio: LocalVoiceAudioBuffer?,
-        transcriptReceived: @escaping @MainActor (String?) -> Void
-    ) {
-        guard let audio else {
-            updateSpawn(
-                id: spawnID,
-                label: "No voice captured",
-                inputState: .collapsed
-            )
-            transcriptReceived(nil)
-            return
-        }
-
-        updateSpawn(id: spawnID, label: "Transcribing...")
-        let sourceTraceID = "pointer-prompt-spawn-voice-\(UUID().uuidString)"
-        Task { [weak self, voiceTranscriber] in
-            let result = await voiceTranscriber.transcribe(
-                LocalVoiceTranscriptionRequest(
-                    audio: audio,
-                    sourceTraceID: sourceTraceID
-                )
-            )
-            await MainActor.run {
-                guard let self else { return }
-
-                let transcript = result.transcript?.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if transcript?.isEmpty == false {
-                    self.updateSpawn(id: spawnID, label: "Heard you")
-                    transcriptReceived(transcript)
-                } else {
-                    self.updateSpawn(
-                        id: spawnID,
-                        label: "I didn't catch that",
-                        inputState: .collapsed
-                    )
-                    transcriptReceived(nil)
-                }
-            }
-        }
-    }
-
     private func submitCommand(_ text: String, source: AppHarnessTurnSource = .typedPrompt) {
         let candidates = followUpCandidates()
-        let spawnID = source == .voiceTranscript ? nil : beginSpawn(for: text)
+        let promptFollowUpTarget = promptSubmissionFollowUpTarget()
+        let spawnID: String?
+        if let promptFollowUpTarget {
+            updateSpawn(
+                id: promptFollowUpTarget.spawnID,
+                commandText: text,
+                label: Self.collapsedDisplayText(for: text),
+                phase: .holding
+            )
+            spawnID = promptFollowUpTarget.spawnID
+        } else {
+            spawnID = source == .voiceTranscript ? nil : beginSpawn(for: text)
+        }
         clearSubmissionInputs()
         promptState.isActive = false
         promptState.isVoiceInputActive = false
@@ -219,7 +188,9 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         let confidenceThreshold = Self.followUpMatchConfidenceThreshold
         Task { [weak self, followUpResolver] in
             let matchedTaskID: String?
-            if candidates.isEmpty {
+            if let taskID = promptFollowUpTarget?.taskID {
+                matchedTaskID = taskID
+            } else if candidates.isEmpty {
                 matchedTaskID = nil
             } else {
                 let resolution = await followUpResolver.resolveFollowUp(
@@ -296,75 +267,25 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         selectedSpawnID = spawnID
     }
 
-    func beginSpawnVoiceInput() -> String? {
-        let selectedID = selectedSpawnID.flatMap { id in
-            spawn(withID: id).map { spawn -> String? in
-                spawn.taskID != nil && (spawn.phase == .holding || spawn.phase == .traveling) ? id : nil
-            } ?? nil
-        } ?? nil
-        guard let spawnID = selectedID ?? latestInteractableSpawnID() else { return nil }
-
-        updateSpawn(
-            id: spawnID,
-            label: "Listening...",
-            phase: .holding,
-            inputState: .editing
-        )
-        selectedSpawnID = spawnID
-        return spawnID
-    }
-
-    func completeSpawnVoiceInput(spawnID: String, transcript: String?) {
-        let trimmedText = transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    func submitSpawnFollowUp(spawnID: String, taskID: String, text: String) {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty,
-              let taskID = spawn(withID: spawnID)?.taskID else {
-            updateSpawn(
-                id: spawnID,
-                label: "I didn't catch that",
-                inputState: .collapsed
-            )
+              taskIDForInteractableSpawn(id: spawnID) == taskID else {
             return
         }
 
-        submitSpawnFollowUp(spawnID: spawnID, taskID: taskID, text: trimmedText)
-    }
-
-    func cancelSpawnVoiceInput(spawnID: String) {
+        selectedSpawnID = spawnID
         updateSpawn(
             id: spawnID,
-            label: "Paused",
-            inputState: .collapsed
-        )
-    }
-
-    func submitSpawnFollowUp(spawnID: String, taskID: String, text: String) {
-        let fallbackState = PointerPromptSpawnState(
-            id: spawnID,
-            taskID: taskID,
-            commandText: text,
-            label: "Routing follow-up",
-            accentIndex: notchAccentIndex,
+            commandText: trimmedText,
+            label: Self.collapsedDisplayText(for: trimmedText),
             phase: .holding
         )
-        let state = spawn(withID: spawnID) ?? fallbackState
-        guard let submission = PointerPromptSpawnLifecycle.followUpSubmission(
-            from: state,
-            text: text
-        ) else { return }
-
-        updateSpawn(
-            id: submission.spawnID,
-            taskID: submission.taskID,
-            commandText: submission.text,
-            label: "Routing follow-up",
-            phase: .holding,
-            inputState: .collapsed
-        )
         startCommandRun(
-            text: submission.text,
-            matchedTaskID: submission.taskID,
+            text: trimmedText,
+            matchedTaskID: taskID,
             source: .followUp,
-            spawnID: submission.spawnID
+            spawnID: spawnID
         )
     }
 
@@ -379,7 +300,6 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         updateSpawn(
             id: spawnID,
             taskID: task.id,
-            label: "Finding destination",
             accentIndex: task.accentIndex
         )
         activeTaskIDs.insert(task.id)
@@ -482,17 +402,18 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
 
     private func beginSpawn(
         for text: String,
-        label: String = "Routing task",
+        label: String? = nil,
         taskID: String? = nil,
         accentIndex: Int? = nil
     ) -> String {
         let spawnID = UUID().uuidString
         let displayText = Self.taskLabel(for: text)
+        let labelText = label ?? Self.collapsedDisplayText(for: text)
         let spawnState = PointerPromptSpawnState(
             id: spawnID,
             taskID: taskID,
             commandText: text,
-            label: label,
+            label: labelText,
             accentIndex: accentIndex ?? Self.nextAccentIndex(after: notchAccentIndex),
             phase: .notchCue
         )
@@ -510,8 +431,7 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         label: String? = nil,
         accentIndex: Int? = nil,
         targetHint: PointerPromptSpawnTargetHint? = nil,
-        phase: PointerPromptSpawnPhase? = nil,
-        inputState: PointerPromptSpawnInputState? = nil
+        phase: PointerPromptSpawnPhase? = nil
     ) {
         guard let spawnID,
               let index = spawnIndex(id: spawnID) else {
@@ -540,9 +460,6 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
                 spawnState.phase = phase
             }
         }
-        if let inputState {
-            spawnState.inputState = inputState
-        }
         spawnState.updatedAt = Date()
         spawnStates[index] = spawnState
     }
@@ -560,14 +477,10 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         spawnState.label = Self.spawnCompletionLabel(for: result)
         spawnState.updatedAt = Date()
 
-        switch result.threadStatus {
-        case .waitingForClarification, .waitingForReview, .needsAttention:
+        if PointerPromptSpawnLifecycle.keepsVisibleResult(for: result.threadStatus) {
             spawnState.phase = .holding
             spawnStates[index] = spawnState
-        case .running, .paused:
-            spawnState.phase = .holding
-            spawnStates[index] = spawnState
-        case .chatting, .completed, .failed:
+        } else {
             spawnStates[index] = spawnState
             scheduleSpawnFade(id: spawnID)
         }
@@ -608,6 +521,30 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
                 $0.taskID != nil && ($0.phase == .holding || $0.phase == .traveling)
             }?
             .id
+    }
+
+    private func promptSubmissionFollowUpTarget() -> (spawnID: String, taskID: String)? {
+        if let selectedSpawnID,
+           let taskID = taskIDForInteractableSpawn(id: selectedSpawnID) {
+            return (selectedSpawnID, taskID)
+        }
+
+        guard let spawnID = latestInteractableSpawnID(),
+              let taskID = taskIDForInteractableSpawn(id: spawnID) else {
+            return nil
+        }
+
+        return (spawnID, taskID)
+    }
+
+    private func taskIDForInteractableSpawn(id spawnID: String) -> String? {
+        guard let spawn = spawn(withID: spawnID),
+              let taskID = spawn.taskID,
+              spawn.phase == .holding || spawn.phase == .traveling else {
+            return nil
+        }
+
+        return taskID
     }
 
     private func removeSpawn(id spawnID: String) {
@@ -875,7 +812,7 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         case .paused:
             return "Paused"
         case .chatting:
-            return result.summary.isEmpty ? "Answered" : truncated(result.summary, maxLength: 42)
+            return result.summary.isEmpty ? "Answered" : result.summary
         case .completed:
             return "Done"
         case .failed:
@@ -885,18 +822,11 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
 
     private static func nextAccentIndex(after currentIndex: Int) -> Int {
         let accentCount = 8
-        var nextIndex = Int.random(in: 0..<accentCount)
-        if nextIndex == currentIndex {
-            nextIndex = (nextIndex + 1) % accentCount
-        }
-        return nextIndex
+        return (currentIndex + 1) % accentCount
     }
 
     private static func taskLabel(for text: String) -> String {
-        let collapsed = text
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .split(whereSeparator: \.isWhitespace)
-            .joined(separator: " ")
+        let collapsed = collapsedDisplayText(for: text)
         guard !collapsed.isEmpty else { return "New task" }
 
         let maxLength = 44
@@ -904,6 +834,13 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
 
         let endIndex = collapsed.index(collapsed.startIndex, offsetBy: maxLength)
         return String(collapsed[..<endIndex]).trimmingCharacters(in: .whitespacesAndNewlines) + "..."
+    }
+
+    private static func collapsedDisplayText(for text: String) -> String {
+        text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
     }
 
     private static func assetUploadEventText(_ assetNames: [String]) -> String {

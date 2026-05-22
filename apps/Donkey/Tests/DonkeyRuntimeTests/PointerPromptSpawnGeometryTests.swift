@@ -1,5 +1,6 @@
 import CoreGraphics
 import DonkeyContracts
+import DonkeyUI
 import Testing
 
 @Suite
@@ -69,5 +70,139 @@ struct PointerPromptSpawnGeometryTests {
                 label: "Routing task"
             )
         )
+    }
+
+    @Test @MainActor
+    func spawnOverlayPlacesCursorInsideViewportAndLabelAboveIt() {
+        let viewModel = PointerPromptSpawnOverlayViewModel()
+        let cursorPoint = CGPoint(x: 600, y: 282)
+        let screenSize = CGSize(width: 1200, height: 800)
+        let state = PointerPromptSpawnState(
+            id: "spawn-1",
+            commandText: "hi there",
+            label: "hi there",
+            accentIndex: 1,
+            phase: .holding
+        )
+
+        viewModel.show(
+            state: state,
+            origin: cursorPoint,
+            destination: cursorPoint,
+            screenSize: screenSize
+        )
+        let cursorFrame = viewModel.cursorOnlyVisualFrame(at: cursorPoint)
+        viewModel.updateViewport(origin: cursorFrame.origin, size: cursorFrame.size)
+
+        #expect(viewModel.localCursorCenter.x == cursorFrame.width / 2)
+        #expect(viewModel.localCursorCenter.y == cursorFrame.height / 2)
+        #expect(viewModel.localHaloCenter.x == viewModel.localCursorCenter.x)
+        #expect(viewModel.localHaloCenter.y > viewModel.localCursorCenter.y)
+        #expect(viewModel.localLabelCenter(in: screenSize).x == viewModel.localCursorCenter.x)
+        #expect(viewModel.localLabelCenter(in: screenSize).y < viewModel.localCursorCenter.y)
+        #expect(viewModel.localCursorCenter.y - viewModel.localLabelCenter(in: screenSize).y == 46)
+    }
+
+    @Test @MainActor
+    func spawnLabelOnlyExpandsOnHoverWhenCollapsedTextOverflows() {
+        let viewModel = PointerPromptSpawnOverlayViewModel()
+        let shortState = PointerPromptSpawnState(
+            id: "spawn-1",
+            commandText: "hi there",
+            label: "hi there",
+            accentIndex: 1,
+            phase: .holding
+        )
+
+        viewModel.show(
+            state: shortState,
+            origin: CGPoint(x: 600, y: 282),
+            destination: CGPoint(x: 600, y: 282),
+            screenSize: CGSize(width: 1200, height: 800)
+        )
+        viewModel.setLabelHovered(true)
+        #expect(!viewModel.isLabelHovered)
+
+        let longState = PointerPromptSpawnState(
+            id: "spawn-1",
+            commandText: "long",
+            label: Array(repeating: "details", count: 30).joined(separator: " "),
+            accentIndex: 1,
+            phase: .holding
+        )
+        viewModel.update(
+            state: longState,
+            destination: CGPoint(x: 600, y: 282),
+            screenSize: CGSize(width: 1200, height: 800)
+        )
+        viewModel.setLabelHovered(true)
+        #expect(viewModel.isLabelHovered)
+    }
+
+    @Test @MainActor
+    func inlineSpawnLabelEditorSubmitsTrimmedFollowUpForTask() {
+        let viewModel = PointerPromptSpawnOverlayViewModel()
+        let state = PointerPromptSpawnState(
+            id: "spawn-1",
+            taskID: "task-1",
+            commandText: "hi there",
+            label: "hi there",
+            accentIndex: 1,
+            phase: .holding
+        )
+        var submittedSpawnID: String?
+        var submittedTaskID: String?
+        var submittedText: String?
+        viewModel.followUpSubmitted = { spawnID, taskID, text in
+            submittedSpawnID = spawnID
+            submittedTaskID = taskID
+            submittedText = text
+        }
+
+        viewModel.show(
+            state: state,
+            origin: CGPoint(x: 600, y: 282),
+            destination: CGPoint(x: 600, y: 282),
+            screenSize: CGSize(width: 1200, height: 800)
+        )
+        viewModel.beginInlineInput()
+        #expect(viewModel.isLabelEditing)
+        #expect(viewModel.freezesMovement)
+
+        viewModel.draftText = "  do this next  "
+        viewModel.submitInlineInput()
+
+        #expect(!viewModel.isLabelEditing)
+        #expect(!viewModel.freezesMovement)
+        #expect(submittedSpawnID == "spawn-1")
+        #expect(submittedTaskID == "task-1")
+        #expect(submittedText == "do this next")
+    }
+
+    @Test @MainActor
+    func inlineSpawnLabelEditorClosesWhenIdleFocusIsLost() {
+        let viewModel = PointerPromptSpawnOverlayViewModel()
+        let state = PointerPromptSpawnState(
+            id: "spawn-1",
+            taskID: "task-1",
+            commandText: "hi there",
+            label: "hi there",
+            accentIndex: 1,
+            phase: .holding
+        )
+
+        viewModel.show(
+            state: state,
+            origin: CGPoint(x: 600, y: 282),
+            destination: CGPoint(x: 600, y: 282),
+            screenSize: CGSize(width: 1200, height: 800)
+        )
+        viewModel.beginInlineInput()
+        #expect(viewModel.isLabelEditing)
+
+        viewModel.closeInlineInputIfIdle()
+
+        #expect(!viewModel.isLabelEditing)
+        #expect(viewModel.draftText.isEmpty)
     }
 }

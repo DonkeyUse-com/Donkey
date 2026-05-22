@@ -8,11 +8,6 @@ public enum PointerPromptSpawnPhase: String, Codable, Equatable, Sendable {
     case fading
 }
 
-public enum PointerPromptSpawnInputState: String, Codable, Equatable, Sendable {
-    case collapsed
-    case editing
-}
-
 public struct PointerPromptSpawnTargetHint: Codable, Equatable, Sendable {
     public var appName: String?
     public var bundleIdentifier: String?
@@ -44,7 +39,6 @@ public struct PointerPromptSpawnState: Codable, Equatable, Identifiable, Sendabl
     public var phase: PointerPromptSpawnPhase
     public var notchCueAngleDegrees: Double
     public var targetHint: PointerPromptSpawnTargetHint?
-    public var inputState: PointerPromptSpawnInputState
     public var updatedAt: Date
 
     public init(
@@ -56,7 +50,6 @@ public struct PointerPromptSpawnState: Codable, Equatable, Identifiable, Sendabl
         phase: PointerPromptSpawnPhase = .notchCue,
         notchCueAngleDegrees: Double = PointerPromptSpawnGeometry.defaultExitAngleDegrees,
         targetHint: PointerPromptSpawnTargetHint? = nil,
-        inputState: PointerPromptSpawnInputState = .collapsed,
         updatedAt: Date = Date()
     ) {
         self.id = id
@@ -67,7 +60,6 @@ public struct PointerPromptSpawnState: Codable, Equatable, Identifiable, Sendabl
         self.phase = phase
         self.notchCueAngleDegrees = notchCueAngleDegrees
         self.targetHint = targetHint
-        self.inputState = inputState
         self.updatedAt = updatedAt
     }
 }
@@ -88,47 +80,24 @@ public struct PointerPromptSpawnProgressUpdate: Equatable, Sendable {
     }
 }
 
-public struct PointerPromptSpawnFollowUpSubmission: Equatable, Sendable {
-    public var spawnID: String
-    public var taskID: String
-    public var text: String
-
-    public init(
-        spawnID: String,
-        taskID: String,
-        text: String
-    ) {
-        self.spawnID = spawnID
-        self.taskID = taskID
-        self.text = text
-    }
-}
-
 public enum PointerPromptSpawnLifecycle {
-    public static func freezesMovement(
-        inputState: PointerPromptSpawnInputState,
-        draftText: String
+    public static func keepsVisibleResult(
+        for threadStatus: PointerPromptTaskStatus
     ) -> Bool {
-        inputState == .editing ||
-            !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    public static func followUpSubmission(
-        from state: PointerPromptSpawnState,
-        text: String
-    ) -> PointerPromptSpawnFollowUpSubmission? {
-        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedText.isEmpty,
-              let taskID = state.taskID else {
-            return nil
+        switch threadStatus {
+        case .chatting,
+             .running,
+             .paused,
+             .waitingForClarification,
+             .waitingForReview,
+             .needsAttention,
+             .failed:
+            true
+        case .completed:
+            false
         }
-
-        return PointerPromptSpawnFollowUpSubmission(
-            spawnID: state.id,
-            taskID: taskID,
-            text: trimmedText
-        )
     }
+
 }
 
 public enum PointerPromptSpawnGeometry {
