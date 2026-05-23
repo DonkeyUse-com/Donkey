@@ -55,6 +55,10 @@ let package = Package(
                 "DonkeyUI",
                 .product(name: "Sparkle", package: "Sparkle")
             ],
+            exclude: [
+                "Resources/Donkey.icns",
+                "Resources/Donkey.iconset"
+            ],
             resources: [
                 .copy("Resources/theme.json")
             ]

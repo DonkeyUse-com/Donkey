@@ -8,6 +8,9 @@ From the repo root:
 ./scripts/package-donkey-app.sh
 ```
 
+The drag-to-Applications background is rendered from SVG, so local packaging
+requires ImageMagick's `magick` command.
+
 The script builds the release executable, creates `dist/Donkey.app`, copies bundled resources and embedded frameworks, ensures the executable can load those frameworks from the app bundle, applies an ad-hoc signature when `codesign` is available, and creates `dist/Donkey.dmg`.
 
 The app bundle version defaults to `0.1.0` build `1`. Override it for local release testing:
@@ -31,7 +34,15 @@ For distribution through the site, publish the disk image:
 dist/Donkey.dmg
 ```
 
-Opening the disk image mounts a `Donkey` volume with `Donkey.app` and an `Applications` shortcut, matching the standard drag-to-Applications macOS install flow. The user installs Donkey by dragging the app onto the shortcut, which copies it into `/Applications`.
+Opening the disk image mounts a `Donkey` volume with a custom Finder installer
+window: `Donkey.app` sits on the left, the `Applications` shortcut sits on the
+right, and the background arrow points users through the drag-to-Applications
+flow. The installer artwork lives in `scripts/assets/donkey-dmg-background.svg`;
+the package script renders that SVG into the Finder background and writes the
+Finder layout into the compressed disk image so users see the install screen
+immediately after opening `Donkey.dmg`.
+The user installs Donkey by dragging the app onto the shortcut, which copies it
+into `/Applications`.
 
 To launch the packaged app:
 
