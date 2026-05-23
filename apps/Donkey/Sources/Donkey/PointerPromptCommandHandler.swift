@@ -33,6 +33,11 @@ struct DocumentFormFillReviewRequest: Equatable, Sendable {
     var traceID: String
 }
 
+private struct PointerPromptModelIntentInput: Equatable, Sendable {
+    var command: String
+    var contextSnippets: [String]
+}
+
 struct PointerPromptCommandContext: Sendable {
     var task: PointerPromptNotchTask
     var recentEvents: [PointerPromptTaskEvent]
@@ -236,19 +241,26 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
         let coordinator = await coordinatorRegistry.coordinator(for: taskID)
         var taskLiveRunner = liveRunner
         taskLiveRunner.coordinator = coordinator
-        let modelCommand = Self.modelCommand(
+        let modelInput = Self.modelInput(
             for: command,
             context: context,
             contextPacket: routing.contextPacket
         )
-        let redaction = redactor.redact(modelCommand, surface: .modelContext)
+        let commandRedaction = redactor.redact(modelInput.command, surface: .modelContext)
+        let contextRedactions = modelInput.contextSnippets.map {
+            redactor.redact($0, surface: .modelContext)
+        }
+        let redactedContextSnippets = contextRedactions.map(\.redactedText)
+        let redactionCount = commandRedaction.redactionCount
+            + contextRedactions.reduce(0) { $0 + $1.redactionCount }
         let memoryProposalDecisions = (try? ProviderDecodedMemoryProposalHandler.decisions(
             from: Data("[]".utf8),
             decidedAt: Self.now()
         )) ?? []
         let parseStartedAt = Self.uptimeMilliseconds()
         let localModelResult = await localModelResolver.resolve(
-            command: modelCommand,
+            command: commandRedaction.redactedText,
+            contextSnippets: redactedContextSnippets,
             sourceTraceID: traceID
         )
         let resolution = localModelResult.resolution
@@ -264,14 +276,14 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
             )
         }
         logModelResolution(
-            command: modelCommand,
+            command: commandRedaction.redactedText,
             traceID: traceID,
             resolution: resolution,
             trace: localModelResult.trace,
             latencyMS: parseLatencyMS
         )
         if let projectedVisualizationPlan = LocalAppTaskAgentVisualizationBuilder.projectedPlan(
-            command: modelCommand,
+            command: commandRedaction.redactedText,
             traceID: traceID,
             resolution: resolution
         ) {
@@ -281,7 +293,7 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
             )
         }
         let semanticMemoryResults = await retrieveSemanticMemory(
-            command: modelCommand,
+            command: commandRedaction.redactedText,
             resolution: resolution
         )
         let modelObservability = AIModelObservabilityReportBuilder.build(from: [localModelResult.trace])
@@ -297,7 +309,7 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
             "modelObservability.callCount": String(modelObservability.callCount),
             "modelObservability.acceptedCount": String(modelObservability.acceptedCount),
             "modelObservability.recoverySuccessCount": String(modelObservability.recoverySuccessCount),
-            "redaction.modelContext.count": String(redaction.redactionCount),
+            "redaction.modelContext.count": String(redactionCount),
             "semanticMemory.resultCount": String(semanticMemoryResults.count),
             "semanticMemory.recordIDs": semanticMemoryResults.map(\.record.id).joined(separator: ","),
             "semanticMemory.targetID": semanticMemoryTargetID(for: resolution) ?? "",
@@ -362,7 +374,7 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
         }
 
         let result = await taskLiveRunner.run(
-            command: modelCommand,
+            command: commandRedaction.redactedText,
             traceID: traceID,
             resolution: resolution,
             metadata: modelMetadata
@@ -502,11 +514,15 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
             ?? trace.metadata["modelFallback.reason"]
             ?? ""
         let modelDetail = resolution.metadata["model.detail"]
+            ?? resolution.metadata["model.error"]
             ?? resolution.metadata["model.http.bodyPreview"]
             ?? resolution.metadata["model.fallback.http.bodyPreview"]
+            ?? resolution.metadata["model.sidecar.outputPreview"]
             ?? trace.metadata["detail"]
+            ?? trace.metadata["error"]
             ?? trace.metadata["http.bodyPreview"]
             ?? trace.metadata["fallback.http.bodyPreview"]
+            ?? trace.metadata["sidecar.outputPreview"]
             ?? ""
         let fallbackStatus = trace.metadata["fallback.status"] ?? ""
         let latency = Self.formatLatency(latencyMS)
@@ -574,6 +590,13 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
         if let assistantResponse = resolution.metadata["assistantResponse"],
            !assistantResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return assistantResponse
+        }
+        if resolution.metadata["reason"] == "localModelIntentUnavailable" {
+            let modelStatus = resolution.metadata["modelCallStatus"] ?? ""
+            if modelStatus == AIModelCallStatus.providerOutage.rawValue
+                || modelStatus == AIModelCallStatus.timeout.rawValue {
+                return "The local command parser is not available right now, so I couldn't safely run that local action."
+            }
         }
         return "I couldn't find a supported local action for that yet."
     }
@@ -725,23 +748,34 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
         )
     }
 
-    private static func modelCommand(
+    private static func modelInput(
         for command: String,
         context: PointerPromptCommandContext?,
         contextPacket: AppHarnessContextPacket
-    ) -> String {
+    ) -> PointerPromptModelIntentInput {
+        let modelCommand = contextPacket.currentTurn.text
         guard let context, context.isFollowUp else {
-            return contextPacket.currentTurn.text
+            return PointerPromptModelIntentInput(
+                command: modelCommand,
+                contextSnippets: []
+            )
         }
 
-        return [
+        let taskContext = [
             "Existing task title: \(context.task.title)",
             "Existing task original request: \(context.task.commandText)",
-            "Existing task status: \(context.task.status.rawValue)",
-            contextPacket.promptText
+            "Existing task status: \(context.task.status.rawValue)"
         ]
         .compactMap(\.self)
         .joined(separator: "\n\n")
+
+        return PointerPromptModelIntentInput(
+            command: modelCommand,
+            contextSnippets: [
+                taskContext,
+                contextPacket.promptText
+            ]
+        )
     }
 
     private static func runtimeCapabilities(for catalog: LocalAppTaskCatalog) -> [String] {

@@ -164,6 +164,16 @@ public struct ProcessBackedLocalLLMTaskIntentAdapter: TaskIntentParsingAdapter {
                 )
             )
         } catch {
+            if let sidecarError = decodeSidecarError(
+                result.outputData,
+                entry: entry,
+                request: request,
+                sidecarResult: result,
+                decodeError: error
+            ) {
+                return sidecarError
+            }
+
             return self.result(
                 entry: entry,
                 request: request,
@@ -176,6 +186,34 @@ public struct ProcessBackedLocalLLMTaskIntentAdapter: TaskIntentParsingAdapter {
                 ]) { current, _ in current }
             )
         }
+    }
+
+    private func decodeSidecarError(
+        _ data: Data,
+        entry: AIModelRegistryEntry,
+        request: TaskIntentAdapterRequest,
+        sidecarResult: LocalJSONSidecarResult,
+        decodeError: Error
+    ) -> TaskIntentAdapterResult? {
+        guard let errorResponse = try? decoder.decode(LocalLLMTaskIntentSidecarErrorResponse.self, from: data),
+              errorResponse.status == "error" || errorResponse.metadata["reason"] != nil
+        else {
+            return nil
+        }
+
+        return result(
+            entry: entry,
+            request: request,
+            status: .providerOutage,
+            validationStatus: "notValidated",
+            latencyMS: sidecarResult.latencyMS,
+            metadata: sidecarResult.metadata.merging(
+                errorResponse.metadata.merging([
+                    "sidecar.status": errorResponse.status,
+                    "decode.error": String(describing: decodeError)
+                ]) { current, _ in current }
+            ) { current, _ in current }
+        )
     }
 
     private static func outputDiagnostics(for outputText: String) -> [String: String] {
@@ -263,7 +301,12 @@ private struct LocalLLMTaskIntentSidecarResponse: Codable, Equatable, Sendable {
     var metadata: [String: String]
 }
 
-public struct OllamaTaskIntentAdapter: TaskIntentParsingAdapter {
+private struct LocalLLMTaskIntentSidecarErrorResponse: Codable, Equatable, Sendable {
+    var status: String
+    var metadata: [String: String]
+}
+
+public struct LocalGenerateTaskIntentAdapter: TaskIntentParsingAdapter {
     public static let schemaID = "task_intent_v1"
 
     public var router: AIModelRouter
@@ -316,7 +359,7 @@ public struct OllamaTaskIntentAdapter: TaskIntentParsingAdapter {
 
             if response.statusCode == 404,
                fallbackFromModelID == nil,
-               let fallbackModelID = try? await fallbackOllamaModelID(
+               let fallbackModelID = try? await fallbackLocalGenerateModelID(
                 for: entry,
                 excluding: [entry.modelID]
                ),
@@ -367,7 +410,7 @@ public struct OllamaTaskIntentAdapter: TaskIntentParsingAdapter {
                     definitions: request.taskDefinitions,
                     originalCommand: request.command,
                     sourceModelCallID: "model-call-\(request.sourceTraceID)",
-                    parserName: "ollama-task-intent-v1"
+                    parserName: "local-generate-task-intent-v1"
                   )
             else {
                 return result(
@@ -413,11 +456,11 @@ public struct OllamaTaskIntentAdapter: TaskIntentParsingAdapter {
         }
     }
 
-    private func fallbackOllamaModelID(
+    private func fallbackLocalGenerateModelID(
         for entry: AIModelRegistryEntry,
         excluding excludedModelIDs: Set<String>
     ) async throws -> String? {
-        var request = URLRequest(url: Self.ollamaAPIURL(for: entry.endpoint, path: "tags"))
+        var request = URLRequest(url: Self.localGenerateAPIURL(for: entry.endpoint, path: "tags"))
         request.httpMethod = "GET"
         request.timeoutInterval = min(Double(entry.timeoutMS) / 1_000, 2)
         let (data, response) = try await httpClient.send(request)
@@ -425,14 +468,14 @@ public struct OllamaTaskIntentAdapter: TaskIntentParsingAdapter {
             return nil
         }
 
-        let tags = try JSONDecoder().decode(OllamaTagsResponse.self, from: data)
+        let tags = try JSONDecoder().decode(LocalGenerateTagsResponse.self, from: data)
         return Self.preferredInstalledModelID(
             from: tags.models,
             excluding: excludedModelIDs
         )
     }
 
-    private static func ollamaAPIURL(for endpoint: URL, path: String) -> URL {
+    private static func localGenerateAPIURL(for endpoint: URL, path: String) -> URL {
         var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
         components?.path = "/api/\(path)"
         components?.query = nil
@@ -440,7 +483,7 @@ public struct OllamaTaskIntentAdapter: TaskIntentParsingAdapter {
     }
 
     private static func preferredInstalledModelID(
-        from models: [OllamaModelTag],
+        from models: [LocalGenerateModelTag],
         excluding excludedModelIDs: Set<String>
     ) -> String? {
         let candidates = models
@@ -593,7 +636,9 @@ public struct OllamaTaskIntentAdapter: TaskIntentParsingAdapter {
             "Example malformed writing boundary: 'write a people in Notes' is not a meaningful writing form or payload, so choose conversation rather than writing a definition.",
             "entities.appName must be the human app name, such as Safari, Notes, Numbers, or Music; do not put a bundle identifier in appName.",
             "For local_app_interaction, set actionPlan.inputEntity to query when ui.setText should type the query, and set actionPlan.controlID/focusKey for the UI control strategy.",
+            "actionPlan must be one nested object containing tools, inputEntity, controlID, focusKey, and verification. Do not put inputEntity, controlID, focusKey, or verification at the top level.",
             "The examples below show output structure only. Replace every example entity value with values inferred from Command and local cache; do not copy example query text unless the user asked for that exact text.",
+            "Media playback output shape: targetAppName=Music, entities.appName=Music, entities.goal=play media, entities.query=<artist/song/album to play>, actionPlan.tools=[app.openOrFocus, app.observe, ui.focusSearch, ui.setText, ui.pressReturn, app.verifyCommand], inputEntity=query, controlID=search, focusKey=Command+F.",
             "Example website output shape: {\"taskType\":\"local_app_interaction\",\"targetAppName\":\"Safari\",\"entities\":{\"appName\":\"Safari\",\"goal\":\"open requested website\",\"query\":\"https://example.org\"},\"normalizedEntities\":{\"appName\":\"Safari\",\"goal\":\"open requested website\",\"query\":\"https://example.org\"},\"confidence\":0.9,\"needsConfirmation\":false,\"actionPlan\":{\"tools\":[\"app.openOrFocus\",\"app.observe\",\"ui.focusAddressBar\",\"ui.setText\",\"ui.pressReturn\",\"app.verifyCommand\"],\"inputEntity\":\"query\",\"controlID\":\"addressBar\",\"focusKey\":\"Command+L\",\"verification\":\"commandAttempted\"},\"metadata\":{}}",
             "Writing output shape: targetAppName=Notes, entities.appName=Notes, entities.goal=write requested text, entities.query=<the actual final text to type>, actionPlan.tools=[app.openOrFocus, app.observe, ui.newDocument, ui.setText, app.verifyCommand], inputEntity=query, controlID=editor.",
             "Table output shape: targetAppName=Numbers, entities.appName=Numbers, entities.goal=create requested table, entities.query=<tab-separated rows for the requested table>, actionPlan.tools=[app.openOrFocus, app.observe, ui.newDocument, ui.setText, app.verifyCommand], inputEntity=query, controlID=editor.",
@@ -673,12 +718,13 @@ public struct LocalModelTaskIntentResolver: Sendable {
 
     public func resolve(
         command: String,
+        contextSnippets: [String] = [],
         sourceTraceID: String
     ) async -> (resolution: LocalAppTaskCatalogResolution, trace: AIModelCallTrace) {
         let request = TaskIntentAdapterRequest(
             command: command,
             taskDefinitions: catalog.taskDefinitions,
-            contextSnippets: [],
+            contextSnippets: contextSnippets,
             sourceTraceID: sourceTraceID
         )
         let result = await adapter.parseTaskIntent(request)
@@ -692,10 +738,13 @@ public struct LocalModelTaskIntentResolver: Sendable {
             for key in [
                 "reason",
                 "detail",
+                "error",
+                "backend.provider",
                 "http.status",
                 "http.bodyPreview",
                 "modelOutput.empty",
                 "modelOutput.preview",
+                "sidecar.outputPreview",
                 "fallback.status",
                 "fallback.validation",
                 "fallback.reason",
@@ -720,15 +769,15 @@ public struct LocalModelTaskIntentResolver: Sendable {
     }
 }
 
-private struct OllamaTaskIntentResponse: Decodable {
+private struct LocalGenerateTaskIntentResponse: Decodable {
     var response: String?
 }
 
-private struct OllamaTagsResponse: Decodable {
-    var models: [OllamaModelTag]
+private struct LocalGenerateTagsResponse: Decodable {
+    var models: [LocalGenerateModelTag]
 }
 
-private struct OllamaModelTag: Decodable {
+private struct LocalGenerateModelTag: Decodable {
     var name: String
     var size: Int64?
 }
@@ -1245,8 +1294,8 @@ private struct TaskIntentWire: Decodable {
     var metadata: [String: String]
 }
 
-private extension OllamaTaskIntentAdapter {
+private extension LocalGenerateTaskIntentAdapter {
     static func outputText(from data: Data) throws -> String? {
-        try JSONDecoder().decode(OllamaTaskIntentResponse.self, from: data).response
+        try JSONDecoder().decode(LocalGenerateTaskIntentResponse.self, from: data).response
     }
 }

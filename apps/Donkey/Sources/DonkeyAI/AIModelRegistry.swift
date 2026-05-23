@@ -110,7 +110,7 @@ public struct AIModelRegistry: Codable, Equatable, Sendable {
                 modelID: "qwen2.5-0.5b-instruct-q4_k_m",
                 endpoint: URL(string: "local://qwen2.5-0.5b-instruct-q4_k_m/task-intent")!,
                 capabilities: [.textInput, .structuredOutputs],
-                timeoutMS: 20_000,
+                timeoutMS: 30_000,
                 promptVersion: "task-intent-v1",
                 evalStatus: .candidate,
                 docsURL: URL(string: "local://donkey/local-llm")!,

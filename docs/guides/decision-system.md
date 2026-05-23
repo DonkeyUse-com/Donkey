@@ -95,6 +95,6 @@ Weather, Music, and document form-fill fixtures remain useful for tests and repl
 
 - Prompt command handling starts in `apps/Donkey/Sources/Donkey/PointerPromptCommandHandler.swift`.
 - Harness routing and context packet assembly live in `apps/Donkey/Sources/DonkeyRuntime/AppHarnessTurnRouter.swift`.
-- Task-intent parsing protocol and the process-backed local runtime adapter live in `apps/Donkey/Sources/DonkeyAI/OllamaTaskIntentAdapter.swift`; the Ollama adapter in that file is an explicit adapter, not the default runtime path.
+- Task-intent parsing protocol and the process-backed local runtime adapter live in `apps/Donkey/Sources/DonkeyAI/LocalGenerateTaskIntentAdapter.swift`; the local-generate adapter in that file is an explicit adapter for Ollama-compatible providers, not the default runtime path.
 - Catalog validation and generic local-app interaction materialization live in `apps/Donkey/Sources/DonkeyRuntime/LocalAppTaskCatalog.swift`.
 - Guarded execution lives in `apps/Donkey/Sources/DonkeyRuntime/LocalAppTaskLiveRunner.swift` and the action-engine backends.

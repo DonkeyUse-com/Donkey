@@ -2,7 +2,7 @@ import DonkeyContracts
 import DonkeyRuntime
 import Foundation
 
-public struct OllamaPlannerHintAdapter: Sendable {
+public struct LocalGeneratePlannerHintAdapter: Sendable {
     public static let schemaID = "planner_hint_v1"
 
     public var router: AIModelRouter
@@ -204,12 +204,12 @@ public struct OllamaPlannerHintAdapter: Sendable {
 }
 
 public struct ProviderBackedSlowPlannerHintGenerator: SlowPlannerHintGenerating {
-    public var localAdapter: OllamaPlannerHintAdapter
+    public var localAdapter: LocalGeneratePlannerHintAdapter
     public var onlineAdapter: OpenAIPlannerHintAdapter
     public var providerOrder: [AIModelProvider]
 
     public init(
-        localAdapter: OllamaPlannerHintAdapter = OllamaPlannerHintAdapter(),
+        localAdapter: LocalGeneratePlannerHintAdapter = LocalGeneratePlannerHintAdapter(),
         onlineAdapter: OpenAIPlannerHintAdapter = OpenAIPlannerHintAdapter(),
         providerOrder: [AIModelProvider] = [.openAI]
     ) {
@@ -269,12 +269,12 @@ public struct ProviderBackedSlowPlannerHintGenerator: SlowPlannerHintGenerating 
     }
 }
 
-private struct OllamaGenerateResponse: Decodable {
+private struct LocalGenerateResponse: Decodable {
     var response: String?
 }
 
-private extension OllamaPlannerHintAdapter {
+private extension LocalGeneratePlannerHintAdapter {
     static func outputText(from data: Data) throws -> String? {
-        try JSONDecoder().decode(OllamaGenerateResponse.self, from: data).response
+        try JSONDecoder().decode(LocalGenerateResponse.self, from: data).response
     }
 }
