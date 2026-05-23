@@ -46,6 +46,22 @@ provider names are configuration/data inside private adapters only.
 - Keep provider-specific request mapping behind the inference provider registry.
   Route handlers should import the registry and neutral schemas, not individual
   adapters.
+- Computer-use provider tools are registered as neutral request tools and mapped
+  by adapters. The supported Gemini registrations are
+  `donkey_gemini_browser_interaction` and
+  `donkey_gemini_mac_desktop_interaction`. OpenRouter is not a supported
+  computer-use provider; it may only serve non-computer hosted Responses calls.
+  The Gemini adapter uses the official `@google/genai` Node/TypeScript SDK for
+  non-streaming chat, normal structured Responses calls, and Gemini
+  computer-use calls. It defaults to Vertex AI when Google Cloud project or
+  location settings are
+  present, or when no Gemini API key fallback is configured. For Google Cloud
+  credits, run Gemini through Vertex AI with `GOOGLE_GENAI_USE_VERTEXAI=true`,
+  `GOOGLE_CLOUD_PROJECT`, and `GOOGLE_CLOUD_LOCATION`; authenticate the backend
+  with Application Default Credentials or `GOOGLE_APPLICATION_CREDENTIALS`
+  rather than storing Google provider credentials in the Mac app. Direct Gemini
+  API key mode is a development fallback only; force it with
+  `GEMINI_PROVIDER_MODE=api-key` when needed.
 
 ## Pattern
 

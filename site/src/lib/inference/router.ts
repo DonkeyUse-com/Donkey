@@ -1,4 +1,6 @@
 import { createAudioAssetProvider } from "@/lib/inference/adapters/audio-studio";
+import { createGeminiComputerUseProvider } from "@/lib/inference/adapters/gemini-computer-use";
+import { createHostedResponsesProvider } from "@/lib/inference/adapters/hosted-responses";
 import { createPrimaryInferenceProvider } from "@/lib/inference/adapters/primary-router";
 import {
   InferenceProviderError,
@@ -6,6 +8,7 @@ import {
   type InferenceModality,
   type InferenceModel,
   type InferenceProvider,
+  type ResponseCreateRequest,
   type StoredGenerationForProvider,
 } from "@/lib/inference/providers";
 
@@ -42,6 +45,53 @@ export class ProviderRegistry {
       throw new InferenceProviderError("No configured text inference provider is available.", {
         statusCode: 503,
         code: "no_text_provider",
+      });
+    }
+
+    return provider;
+  }
+
+  public responsesProvider(request?: ResponseCreateRequest) {
+    if (request?.donkeyProvider) {
+      const provider = this.providers.find((candidate) => {
+        return (
+          Boolean(candidate.createResponse) &&
+          Boolean(candidate.responseProviderIDs?.includes(request.donkeyProvider ?? "")) &&
+          candidate.canCreateResponse?.(request) !== false
+        );
+      });
+
+      if (!provider) {
+        throw new InferenceProviderError("Requested Responses provider is unavailable.", {
+          statusCode: 404,
+          code: "provider_not_found",
+          details: { provider: request.donkeyProvider },
+        });
+      }
+
+      if (!provider.configured) {
+        throw new InferenceProviderError("Requested Responses provider is not configured.", {
+          statusCode: 503,
+          code: "missing_provider_credentials",
+          details: { provider: request.donkeyProvider },
+        });
+      }
+
+      return provider;
+    }
+
+    const provider = this.providers.find((candidate) => {
+      return (
+        candidate.configured &&
+        Boolean(candidate.createResponse) &&
+        (request ? candidate.canCreateResponse?.(request) !== false : true)
+      );
+    });
+
+    if (!provider) {
+      throw new InferenceProviderError("No configured Responses provider is available.", {
+        statusCode: 503,
+        code: "no_responses_provider",
       });
     }
 
@@ -126,6 +176,8 @@ export class ProviderRegistry {
 export function createProviderRegistry() {
   return new ProviderRegistry([
     createAudioAssetProvider(),
+    createGeminiComputerUseProvider(),
+    createHostedResponsesProvider(),
     createPrimaryInferenceProvider(),
   ]);
 }

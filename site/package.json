@@ -18,6 +18,7 @@
   "dependencies": {
     "@base-ui/react": "^1.4.1",
     "@elevenlabs/elevenlabs-js": "^2.49.1",
+    "@google/genai": "^2.6.0",
     "@openrouter/sdk": "^0.12.35",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
@@ -27,6 +28,7 @@
     "clsx": "^2.1.1",
     "lucide-react": "^1.16.0",
     "next": "16.2.6",
+    "openai": "^6.39.0",
     "pg": "^8.20.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",

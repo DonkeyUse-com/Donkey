@@ -1,6 +1,7 @@
 import type {
   assetGenerationRequestSchema,
   chatCompletionRequestSchema,
+  responseCreateRequestSchema,
 } from "@/lib/inference/schemas";
 import type { z } from "zod";
 
@@ -21,6 +22,7 @@ export type JsonValue =
 export type JsonObject = { [key: string]: JsonValue };
 
 export type ChatCompletionRequest = z.infer<typeof chatCompletionRequestSchema>;
+export type ResponseCreateRequest = z.infer<typeof responseCreateRequestSchema>;
 export type AssetGenerationRequest = z.infer<typeof assetGenerationRequestSchema>;
 
 export type InferenceModel = {
@@ -59,6 +61,14 @@ export type TextStreamResult = {
   response: Response;
 };
 
+export type ResponseCreateResult = {
+  provider: string;
+  model: string;
+  body: JsonValue;
+  usage?: JsonValue;
+  metadata?: JsonObject;
+};
+
 export type AssetGenerationProviderRequest = {
   generationId: string;
   request: AssetGenerationRequest;
@@ -93,11 +103,16 @@ export type InferenceProvider = {
   id: string;
   configured: boolean;
   capabilities: InferenceModality[];
+  responseProviderIDs?: string[];
   listModels: (modalities: InferenceModality[]) => Promise<InferenceModel[]>;
   completeText?: (
     request: ChatCompletionRequest,
   ) => Promise<TextCompletionResult>;
   streamCompletion?: (request: ChatCompletionRequest) => Promise<TextStreamResult>;
+  createResponse?: (
+    request: ResponseCreateRequest,
+  ) => Promise<ResponseCreateResult>;
+  canCreateResponse?: (request: ResponseCreateRequest) => boolean;
   generateAsset?: (
     request: AssetGenerationProviderRequest,
   ) => Promise<AssetGenerationProviderResult>;

@@ -40,6 +40,43 @@ export const chatCompletionRequestSchema = z
     }
   });
 
+export const responsesProviderSelectionSchema = z.enum(["openai", "openrouter", "gemini"]);
+
+export const responseCreateRequestSchema = z
+  .object({
+    donkeyProvider: responsesProviderSelectionSchema.optional(),
+    input: z.union([
+      z.string().min(1).max(200_000),
+      z.array(jsonObjectSchema).min(1),
+    ]),
+    model: z.string().min(1).max(256).optional(),
+    store: z.boolean().optional().default(false),
+    stream: z.boolean().optional().default(false),
+    tools: z.array(jsonObjectSchema).optional(),
+    metadata: metadataSchema.optional(),
+  })
+  .passthrough()
+  .superRefine((value, context) => {
+    if (value.stream) {
+      context.addIssue({
+        code: "custom",
+        message: "Streaming Responses are not supported by this proxy yet.",
+        path: ["stream"],
+      });
+    }
+  })
+  .transform((value) => {
+    const { donkeyProvider, ...body } = value;
+    return {
+      donkeyProvider,
+      body: toJsonObject({
+        ...body,
+        store: body.store ?? false,
+        stream: false,
+      }),
+    };
+  });
+
 export const assetGenerationRequestSchema = z.object({
   generationId: z.string().min(1).max(128).optional(),
   kind: assetGenerationKindSchema,
