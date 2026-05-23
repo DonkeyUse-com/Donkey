@@ -17,6 +17,8 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
+    "@elevenlabs/elevenlabs-js": "^2.49.1",
+    "@openrouter/sdk": "^0.12.35",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "@supabase/supabase-js": "^2.105.4",

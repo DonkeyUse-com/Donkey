@@ -1,0 +1,353 @@
+import Foundation
+
+public enum RemoteInferenceModality: String, Codable, Equatable, Sendable {
+    case text
+    case image
+    case video
+    case audio
+    case music
+}
+
+public enum RemoteInferenceAssetKind: String, Codable, Equatable, Sendable {
+    case image
+    case video
+    case music
+}
+
+public enum RemoteInferenceGenerationStatus: String, Codable, Equatable, Sendable {
+    case pending
+    case inProgress = "in_progress"
+    case completed
+    case failed
+    case cancelled
+}
+
+public enum RemoteInferenceJSONValue: Codable, Equatable, Sendable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case object([String: RemoteInferenceJSONValue])
+    case array([RemoteInferenceJSONValue])
+    case null
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .number(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([RemoteInferenceJSONValue].self) {
+            self = .array(value)
+        } else {
+            self = .object(try container.decode([String: RemoteInferenceJSONValue].self))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let value):
+            try container.encode(value)
+        case .number(let value):
+            try container.encode(value)
+        case .bool(let value):
+            try container.encode(value)
+        case .object(let value):
+            try container.encode(value)
+        case .array(let value):
+            try container.encode(value)
+        case .null:
+            try container.encodeNil()
+        }
+    }
+}
+
+public typealias RemoteInferenceJSONObject = [String: RemoteInferenceJSONValue]
+
+public struct RemoteInferenceChatMessage: Codable, Equatable, Sendable {
+    public var role: String
+    public var content: RemoteInferenceJSONValue
+
+    public init(role: String, content: RemoteInferenceJSONValue) {
+        self.role = role
+        self.content = content
+    }
+}
+
+public struct RemoteInferenceChatCompletionRequest: Codable, Equatable, Sendable {
+    public var model: String?
+    public var models: [String]
+    public var messages: [RemoteInferenceChatMessage]
+    public var stream: Bool
+    public var modalities: [RemoteInferenceModality]
+    public var provider: RemoteInferenceJSONObject?
+    public var metadata: [String: String]
+    public var parameters: RemoteInferenceJSONObject
+
+    public init(
+        model: String? = nil,
+        models: [String] = [],
+        messages: [RemoteInferenceChatMessage],
+        stream: Bool = false,
+        modalities: [RemoteInferenceModality] = [.text],
+        provider: RemoteInferenceJSONObject? = nil,
+        metadata: [String: String] = [:],
+        parameters: RemoteInferenceJSONObject = [:]
+    ) {
+        self.model = model
+        self.models = models
+        self.messages = messages
+        self.stream = stream
+        self.modalities = modalities
+        self.provider = provider
+        self.metadata = metadata
+        self.parameters = parameters
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: DynamicCodingKey.self)
+        try container.encodeIfPresent(model, forKey: DynamicCodingKey("model"))
+        if !models.isEmpty {
+            try container.encode(models, forKey: DynamicCodingKey("models"))
+        }
+        try container.encode(messages, forKey: DynamicCodingKey("messages"))
+        try container.encode(stream, forKey: DynamicCodingKey("stream"))
+        try container.encode(modalities.map(\.rawValue), forKey: DynamicCodingKey("modalities"))
+        try container.encodeIfPresent(provider, forKey: DynamicCodingKey("provider"))
+        if !metadata.isEmpty {
+            try container.encode(metadata, forKey: DynamicCodingKey("metadata"))
+        }
+        for (key, value) in parameters {
+            try container.encode(value, forKey: DynamicCodingKey(key))
+        }
+    }
+}
+
+public struct RemoteInferenceAssetGenerationRequest: Codable, Equatable, Sendable {
+    public var kind: RemoteInferenceAssetKind
+    public var provider: String?
+    public var model: String
+    public var prompt: String
+    public var inputs: RemoteInferenceJSONObject
+    public var parameters: RemoteInferenceJSONObject
+    public var metadata: [String: String]
+
+    public init(
+        kind: RemoteInferenceAssetKind,
+        provider: String? = nil,
+        model: String,
+        prompt: String,
+        inputs: RemoteInferenceJSONObject = [:],
+        parameters: RemoteInferenceJSONObject = [:],
+        metadata: [String: String] = [:]
+    ) {
+        self.kind = kind
+        self.provider = provider
+        self.model = model
+        self.prompt = prompt
+        self.inputs = inputs
+        self.parameters = parameters
+        self.metadata = metadata
+    }
+}
+
+public struct RemoteInferenceOutputRef: Codable, Equatable, Sendable {
+    public var id: String
+    public var kind: RemoteInferenceModality
+    public var url: String?
+    public var downloadUrl: String?
+    public var dataBase64: String?
+    public var contentType: String?
+    public var filename: String?
+    public var byteCount: Int64?
+    public var metadata: RemoteInferenceJSONObject?
+
+    public init(
+        id: String,
+        kind: RemoteInferenceModality,
+        url: String? = nil,
+        downloadUrl: String? = nil,
+        dataBase64: String? = nil,
+        contentType: String? = nil,
+        filename: String? = nil,
+        byteCount: Int64? = nil,
+        metadata: RemoteInferenceJSONObject? = nil
+    ) {
+        self.id = id
+        self.kind = kind
+        self.url = url
+        self.downloadUrl = downloadUrl
+        self.dataBase64 = dataBase64
+        self.contentType = contentType
+        self.filename = filename
+        self.byteCount = byteCount
+        self.metadata = metadata
+    }
+}
+
+public struct RemoteInferenceGenerationRecord: Codable, Equatable, Sendable {
+    public var id: String
+    public var clientId: String
+    public var kind: String
+    public var status: RemoteInferenceGenerationStatus
+    public var provider: String
+    public var model: String
+    public var providerJobId: String?
+    public var providerGenerationId: String?
+    public var providerPollingUrl: String?
+    public var promptPreview: String
+    public var requestHash: String
+    public var outputs: [RemoteInferenceOutputRef]
+    public var usage: RemoteInferenceJSONValue?
+    public var error: RemoteInferenceJSONValue?
+    public var metadata: RemoteInferenceJSONValue
+    public var createdAt: String
+    public var updatedAt: String
+    public var completedAt: String?
+
+    public init(
+        id: String,
+        clientId: String,
+        kind: String,
+        status: RemoteInferenceGenerationStatus,
+        provider: String,
+        model: String,
+        providerJobId: String? = nil,
+        providerGenerationId: String? = nil,
+        providerPollingUrl: String? = nil,
+        promptPreview: String,
+        requestHash: String,
+        outputs: [RemoteInferenceOutputRef],
+        usage: RemoteInferenceJSONValue? = nil,
+        error: RemoteInferenceJSONValue? = nil,
+        metadata: RemoteInferenceJSONValue,
+        createdAt: String,
+        updatedAt: String,
+        completedAt: String? = nil
+    ) {
+        self.id = id
+        self.clientId = clientId
+        self.kind = kind
+        self.status = status
+        self.provider = provider
+        self.model = model
+        self.providerJobId = providerJobId
+        self.providerGenerationId = providerGenerationId
+        self.providerPollingUrl = providerPollingUrl
+        self.promptPreview = promptPreview
+        self.requestHash = requestHash
+        self.outputs = outputs
+        self.usage = usage
+        self.error = error
+        self.metadata = metadata
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.completedAt = completedAt
+    }
+}
+
+public struct RemoteInferenceGenerationList: Codable, Equatable, Sendable {
+    public var data: [RemoteInferenceGenerationRecord]
+
+    public init(data: [RemoteInferenceGenerationRecord]) {
+        self.data = data
+    }
+}
+
+public struct RemoteInferenceModel: Codable, Equatable, Sendable {
+    public var id: String
+    public var name: String
+    public var provider: String
+    public var inputModalities: [RemoteInferenceModality]
+    public var outputModalities: [RemoteInferenceModality]
+    public var contextLength: Int?
+    public var pricing: RemoteInferenceJSONValue?
+    public var metadata: RemoteInferenceJSONObject
+
+    public init(
+        id: String,
+        name: String,
+        provider: String,
+        inputModalities: [RemoteInferenceModality],
+        outputModalities: [RemoteInferenceModality],
+        contextLength: Int? = nil,
+        pricing: RemoteInferenceJSONValue? = nil,
+        metadata: RemoteInferenceJSONObject = [:]
+    ) {
+        self.id = id
+        self.name = name
+        self.provider = provider
+        self.inputModalities = inputModalities
+        self.outputModalities = outputModalities
+        self.contextLength = contextLength
+        self.pricing = pricing
+        self.metadata = metadata
+    }
+}
+
+public struct RemoteInferenceModelList: Codable, Equatable, Sendable {
+    public var data: [RemoteInferenceModel]
+
+    public init(data: [RemoteInferenceModel]) {
+        self.data = data
+    }
+}
+
+public struct RemoteInferenceDownloadedAsset: Codable, Equatable, Sendable {
+    public var outputID: String
+    public var fileURL: URL
+    public var contentType: String
+    public var byteCount: Int64
+
+    public init(outputID: String, fileURL: URL, contentType: String, byteCount: Int64) {
+        self.outputID = outputID
+        self.fileURL = fileURL
+        self.contentType = contentType
+        self.byteCount = byteCount
+    }
+
+    public func pointerPromptAssetDraft(displayName: String? = nil) -> PointerPromptTaskAssetDraft {
+        PointerPromptTaskAssetDraft(
+            source: .agentReturned,
+            displayName: displayName ?? fileURL.lastPathComponent,
+            contentType: contentType,
+            urlString: fileURL.absoluteString,
+            byteCount: byteCount
+        )
+    }
+}
+
+public struct RemoteInferenceServerSentEvent: Equatable, Sendable {
+    public var event: String?
+    public var data: String
+    public var id: String?
+
+    public init(event: String? = nil, data: String, id: String? = nil) {
+        self.event = event
+        self.data = data
+        self.id = id
+    }
+}
+
+private struct DynamicCodingKey: CodingKey {
+    var stringValue: String
+    var intValue: Int?
+
+    init(_ stringValue: String) {
+        self.stringValue = stringValue
+        self.intValue = nil
+    }
+
+    init?(stringValue: String) {
+        self.init(stringValue)
+    }
+
+    init?(intValue: Int) {
+        self.stringValue = String(intValue)
+        self.intValue = intValue
+    }
+}

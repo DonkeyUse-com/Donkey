@@ -26,6 +26,24 @@ Backend APIs live in `site/src/app/api/**/route.ts`.
 - Keep Prisma access server-only through `@/lib/prisma`.
 - Do not run database migrations as part of normal API work.
 
+## Inference Gateway
+
+The inference gateway lives under `site/src/app/api/inference/**`. It is a
+Mac-app-facing backend boundary for remote model and asset generation. Routes,
+shared schemas, Prisma records, and Swift contracts must stay provider-neutral;
+provider names are configuration/data inside private adapters only.
+
+- Require `x-donkey-client-id` on inference routes and use it as the ownership
+  boundary for generation records.
+- Store generation metadata and provider output references in
+  `InferenceGeneration`; do not store generated binary files in Postgres.
+- Return or proxy downloadable outputs through authenticated Donkey API routes so
+  the Mac app can save files into the user's Downloads folder without provider
+  credentials.
+- Keep provider-specific request mapping behind the inference provider registry.
+  Route handlers should import the registry and neutral schemas, not individual
+  adapters.
+
 ## Pattern
 
 ```typescript

@@ -1,0 +1,248 @@
+import {
+  ElevenLabsClient,
+  ElevenLabsError,
+  type ElevenLabs,
+} from "@elevenlabs/elevenlabs-js";
+
+import { ensureConfigured } from "@/lib/inference/http";
+import { toJsonObject, toJsonValue } from "@/lib/inference/json";
+import {
+  InferenceProviderError,
+  type AssetGenerationRequest,
+  type AssetGenerationProviderRequest,
+  type AssetGenerationProviderResult,
+  type GenerationOutputRef,
+  type InferenceModality,
+  type InferenceModel,
+  type InferenceProvider,
+  type JsonValue,
+} from "@/lib/inference/providers";
+
+type AdapterEnvironment = Record<string, string | undefined>;
+type AudioResponsePromise = Promise<ReadableStream<Uint8Array>> & {
+  withRawResponse: () => Promise<{
+    data: ReadableStream<Uint8Array>;
+    rawResponse: { headers: Headers };
+  }>;
+};
+
+const providerID = "elevenlabs";
+
+export function createAudioAssetProvider(
+  environment: AdapterEnvironment = process.env,
+  fetcher: typeof fetch = fetch,
+): InferenceProvider {
+  const apiKey = environment.ELEVENLABS_API_KEY?.trim() ?? "";
+  const configured = apiKey.length > 0;
+  const client = new ElevenLabsClient({ apiKey, fetch: fetcher });
+
+  async function listModels(modalities: InferenceModality[]) {
+    try {
+      const remoteModels = await client.models.list();
+      return remoteModels
+        .flatMap((model) => normalizeAudioModel(model))
+        .filter((model) => {
+          return model.outputModalities.some((modality) => {
+            return modalities.includes(modality);
+          });
+        });
+    } catch (error) {
+      throw providerError("Unable to list audio inference models.", error);
+    }
+  }
+
+  async function generateAsset({
+    request,
+  }: AssetGenerationProviderRequest): Promise<AssetGenerationProviderResult> {
+    ensureConfigured(configured);
+
+    if (request.kind !== "music") {
+      throw new InferenceProviderError("Provider does not support this asset kind.", {
+        statusCode: 400,
+        code: "unsupported_asset_kind",
+      });
+    }
+
+    const mode = stringParam(request.parameters, "audioMode") ?? "music";
+    switch (mode) {
+      case "music":
+        return createMusic(client, request);
+      case "speech":
+        return createSpeech(client, request);
+      case "sound":
+      case "sound_effect":
+        return createSound(client, request);
+      default:
+        throw new InferenceProviderError("Unsupported audio generation mode.", {
+          statusCode: 400,
+          code: "unsupported_audio_mode",
+          details: { mode },
+        });
+    }
+  }
+
+  return {
+    id: providerID,
+    configured,
+    capabilities: ["audio", "music"],
+    listModels,
+    generateAsset,
+  };
+}
+
+function normalizeAudioModel(value: unknown): InferenceModel[] {
+  const json = toJsonObject(value);
+  const id = readString(json, "modelId", "model_id");
+  if (!id) {
+    return [];
+  }
+
+  return [
+    {
+      id,
+      name: readString(json, "name") ?? id,
+      provider: providerID,
+      inputModalities: ["text"],
+      outputModalities: ["audio"],
+      contextLength: null,
+      pricing: null,
+      metadata: json,
+    },
+  ];
+}
+
+function createMusic(
+  client: ElevenLabsClient,
+  request: AssetGenerationRequest,
+) {
+  const parameters = toJsonObject(request.parameters ?? {});
+
+  return createAudioResponse(request.model, "music", "music-1.mp3", () =>
+    client.music.compose({
+      ...parameters,
+      modelId: request.model === "music_v1" ? "music_v1" : undefined,
+      prompt: request.prompt,
+    } as ElevenLabs.BodyComposeMusicV1MusicPost),
+  );
+}
+
+function createSound(
+  client: ElevenLabsClient,
+  request: AssetGenerationRequest,
+) {
+  const parameters = toJsonObject(request.parameters ?? {});
+
+  return createAudioResponse(request.model, "sound", "sound-1.mp3", () =>
+    client.textToSoundEffects.convert({
+      ...parameters,
+      modelId: request.model,
+      text: request.prompt,
+    } as ElevenLabs.CreateSoundEffectRequest),
+  );
+}
+
+function createSpeech(
+  client: ElevenLabsClient,
+  request: AssetGenerationRequest,
+) {
+  const voiceID =
+    stringParam(request.inputs, "voiceId") ??
+    stringParam(request.inputs, "voice_id") ??
+    stringParam(request.parameters, "voiceId") ??
+    stringParam(request.parameters, "voice_id");
+
+  if (!voiceID) {
+    throw new InferenceProviderError("Speech generation requires a voice id.", {
+      statusCode: 400,
+      code: "missing_voice_id",
+    });
+  }
+
+  const parameters = toJsonObject(request.parameters ?? {});
+
+  return createAudioResponse(request.model, "speech", "speech-1.mp3", () =>
+    client.textToSpeech.convert(voiceID, {
+      ...parameters,
+      modelId: request.model,
+      text: request.prompt,
+    } as ElevenLabs.BodyTextToSpeechFull),
+  );
+}
+
+async function createAudioResponse(
+  model: string,
+  mode: string,
+  filename: string,
+  run: () => AudioResponsePromise,
+): Promise<AssetGenerationProviderResult> {
+  try {
+    const { data, rawResponse } = await run().withRawResponse();
+    const bytes = Buffer.from(await new Response(data).arrayBuffer());
+    const characterCost = rawResponse.headers.get("character-cost");
+    const output: GenerationOutputRef = {
+      id: "audio-1",
+      kind: "audio",
+      dataBase64: bytes.toString("base64"),
+      contentType: rawResponse.headers.get("content-type") ?? undefined,
+      filename,
+      byteCount: bytes.byteLength,
+      metadata: {
+        mode,
+        source: "provider-output",
+      },
+    };
+
+    return {
+      provider: providerID,
+      model,
+      status: "completed",
+      providerGenerationId: rawResponse.headers.get("song-id") ?? undefined,
+      outputs: [output],
+      usage: characterCost ? { characterCost } : undefined,
+      metadata: {
+        provider: providerID,
+        mode,
+        outputCount: "1",
+      },
+    };
+  } catch (error) {
+    throw providerError("Audio generation failed.", error);
+  }
+}
+
+function providerError(message: string, error: unknown) {
+  if (error instanceof ElevenLabsError) {
+    return new InferenceProviderError(message, {
+      statusCode: error.statusCode ?? 502,
+      details: error.body ? toJsonValue(error.body) : null,
+    });
+  }
+
+  return new InferenceProviderError(message, {
+    details: {
+      message: error instanceof Error ? error.message : "Unknown error",
+    },
+  });
+}
+
+function readString(value: Record<string, JsonValue>, ...keys: string[]) {
+  for (const key of keys) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return undefined;
+}
+
+function stringParam(value: Record<string, unknown> | undefined, ...keys: string[]) {
+  for (const key of keys) {
+    const candidate = value?.[key];
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return undefined;
+}
