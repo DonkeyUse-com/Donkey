@@ -1,15 +1,17 @@
-import { ArrowUp, Check, CircleAlert, Pause, Play } from 'lucide-react';
+import { ArrowUp, Check, MessageCircle, Pause, Play } from 'lucide-react';
 import type { FormEvent } from 'react';
 
+import { ActivityBars } from '@/app/prototype/_components/ActivityBars';
 import { TaskArrow } from '@/app/prototype/_components/TaskArrow';
 import { TASKS } from '@/app/prototype/_components/tasks';
-import type { NotchState, TaskId } from '@/app/prototype/_components/types';
+import type { NotchState, Spawn, TaskId } from '@/app/prototype/_components/types';
 
 type Props = {
   state: NotchState;
   activeTaskId: TaskId;
   expanded: boolean;
   setExpanded: (expanded: boolean) => void;
+  spawnCue: Spawn | null;
   onRequestSpawn: (taskText: string) => void;
 };
 
@@ -78,9 +80,21 @@ function collapsedStatusText(state: NotchState) {
   return 'Run';
 }
 
-export function Notch({ state, activeTaskId, expanded, setExpanded, onRequestSpawn }: Props) {
+function spawnCueExitTransform(angleDegrees: number) {
+  const radians = (angleDegrees * Math.PI) / 180;
+  const distance = 28;
+
+  return {
+    x: Math.cos(radians) * distance,
+    y: Math.sin(radians) * distance,
+  };
+}
+
+export function Notch({ state, activeTaskId, expanded, setExpanded, spawnCue, onRequestSpawn }: Props) {
   const rows = taskRowsForState(state, activeTaskId);
   const activeColor = rows[0]?.color ?? 'rgb(29,158,117)';
+  const isResting = state === 'idle' && rows.length === 0;
+  const spawnCueOffset = spawnCue ? spawnCueExitTransform(spawnCue.notchCueAngleDegrees) : null;
 
   const handleFollowUpSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -93,6 +107,36 @@ export function Notch({ state, activeTaskId, expanded, setExpanded, onRequestSpa
     onRequestSpawn(taskText);
     form.reset();
   };
+
+  const spawnCueArrow = spawnCue && spawnCueOffset && (
+    <>
+      <style>{`
+        @keyframes notchSpawnCue-${spawnCue.id} {
+          0%, 30% {
+            transform: translate(-50%, -50%) rotate(-45deg);
+            opacity: 1;
+          }
+          100% {
+            transform: translate(calc(-50% + ${spawnCueOffset.x}px), calc(-50% + ${spawnCueOffset.y}px)) rotate(${spawnCue.notchCueAngleDegrees}deg);
+            opacity: 0;
+          }
+        }
+      `}</style>
+      <div
+        className="absolute z-10"
+        style={{
+          left: 17,
+          top: Math.max(14, METRICS.collapsedHeight / 2),
+          width: 15,
+          height: 15,
+          animation: `notchSpawnCue-${spawnCue.id} 260ms ease-in-out both`,
+        }}
+        aria-hidden="true"
+      >
+        <TaskArrow color={spawnCue.color} size={15} />
+      </div>
+    </>
+  );
 
   return (
     <section
@@ -129,20 +173,20 @@ export function Notch({ state, activeTaskId, expanded, setExpanded, onRequestSpa
         <div
           className="absolute inset-0"
           style={{
-            opacity: expanded ? 0 : 1,
+            opacity: expanded || spawnCue ? 0 : 1,
             transition: 'opacity 150ms ease-out',
             pointerEvents: 'none',
           }}
         >
-          <TaskArrow
-            color={activeColor}
-            size={13}
-            className="absolute top-[9.5px] left-[10.5px] -rotate-45"
-          />
-          <span className="absolute right-0 top-0 grid h-8 w-[34px] place-items-center text-[9px] leading-none text-white/[0.72]">
-            {collapsedStatusText(state)}
-          </span>
+          <TaskArrow color={activeColor} size={13} className="absolute left-[10.5px] top-[9.5px] -rotate-45" />
+          {!isResting && (
+            <span className="absolute right-0 top-0 grid h-8 w-[34px] place-items-center text-[9px] leading-none text-white/[0.72]">
+              {collapsedStatusText(state)}
+            </span>
+          )}
         </div>
+
+        {spawnCueArrow}
 
         <div
           className="absolute left-0 flex flex-col gap-2"
@@ -156,48 +200,55 @@ export function Notch({ state, activeTaskId, expanded, setExpanded, onRequestSpa
             transition: expanded ? 'opacity 300ms ease-out 150ms' : 'opacity 100ms ease-out',
           }}
         >
-          <div className="min-h-0 flex-1 overflow-hidden pt-2.5">
-            <div className="flex flex-col gap-2">
-              {rows.map((task) => (
-                <article
-                  key={task.id}
-                  className="flex h-12 items-center gap-3 rounded-lg bg-white/[0.055] px-3"
-                >
-                  <TaskArrow color={task.color} size={14} className="-rotate-45" />
-                  <div className="min-w-0 flex-1">
-                    <h2 className="truncate text-[13px] font-normal leading-4 text-white/[0.9]">{task.title}</h2>
-                    <p className="mt-1 truncate text-[12px] font-normal leading-[14px] text-white/[0.42]">{task.detail}</p>
-                  </div>
-                  {task.status === 'running' ? (
-                    <div className="flex gap-1.5">
-                      <button
-                        type="button"
-                        className="grid h-6 w-6 place-items-center rounded-full bg-white/[0.055] text-white/[0.3]"
-                        aria-label="Resume"
-                        disabled
-                      >
-                        <Play size={10} fill="currentColor" />
-                      </button>
-                      <button
-                        type="button"
-                        className="grid h-6 w-6 place-items-center rounded-full bg-white/[0.12] text-white/[0.88]"
-                        aria-label="Pause"
-                      >
-                        <Pause size={10} fill="currentColor" />
-                      </button>
+          {rows.length > 0 && (
+            <div className="min-h-0 flex-1 overflow-hidden pt-2.5">
+              <div className="flex flex-col gap-2">
+                {rows.map((task) => (
+                  <article
+                    key={task.id}
+                    className="flex h-12 items-center gap-3 rounded-lg bg-white/[0.055] px-3"
+                  >
+                    <TaskArrow color={task.color} size={14} className="-rotate-45" />
+                    <div className="min-w-0 flex-1">
+                      <h2 className="truncate text-[13px] font-normal leading-4 text-white/[0.9]">{task.title}</h2>
+                      <p className="mt-1 truncate text-[12px] font-normal leading-[14px] text-white/[0.42]">
+                        {task.detail}
+                      </p>
                     </div>
-                  ) : task.status === 'completed' ? (
-                    <Check size={18} color={task.color} strokeWidth={1.35} />
-                  ) : (
-                    <CircleAlert size={18} color={task.color} strokeWidth={1.35} />
-                  )}
-                </article>
-              ))}
+                    {task.status === 'running' ? (
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          className="grid h-6 w-6 place-items-center rounded-full bg-white/[0.055] text-white/[0.3]"
+                          aria-label="Resume"
+                          disabled
+                        >
+                          <Play size={10} fill="currentColor" />
+                        </button>
+                        <button
+                          type="button"
+                          className="grid h-6 w-6 place-items-center rounded-full bg-white/[0.12] text-white/[0.88]"
+                          aria-label="Pause"
+                        >
+                          <Pause size={10} fill="currentColor" />
+                        </button>
+                      </div>
+                    ) : task.status === 'completed' ? (
+                      <Check size={18} color={task.color} strokeWidth={1.35} />
+                    ) : task.status === 'needsAttention' ? (
+                      <MessageCircle size={18} color={task.color} strokeWidth={1.35} />
+                    ) : (
+                      <ActivityBars color={task.color} />
+                    )}
+                  </article>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           <form
             className="relative h-[92px] w-[576px] rounded-[22px] bg-white/[0.085]"
+            style={{ marginTop: rows.length === 0 ? 16 : 0 }}
             onSubmit={handleFollowUpSubmit}
           >
             <label className="sr-only" htmlFor="donkey-follow-up-input">

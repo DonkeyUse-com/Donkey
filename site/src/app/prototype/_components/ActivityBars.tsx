@@ -1,23 +1,20 @@
 type Props = {
   color?: string;
+  height?: number;
 };
 
-export function ActivityBars({ color = '#fff' }: Props) {
+const BAR_SCALES = [0.44, 0.82, 0.58] as const;
+
+export function ActivityBars({ color = '#fff', height = 18 }: Props) {
   return (
-    <>
-      <style>{`
-        @keyframes ab1 { 0%,100%{height:7px;opacity:1} 50%{height:3px;opacity:0.5} }
-        @keyframes ab2 { 0%,100%{height:4px;opacity:0.6} 50%{height:9px;opacity:1} }
-        @keyframes ab3 { 0%,100%{height:9px;opacity:1} 50%{height:5px;opacity:0.7} }
-        .ab1 { animation: ab1 1.1s ease-in-out infinite; }
-        .ab2 { animation: ab2 1.1s ease-in-out infinite; }
-        .ab3 { animation: ab3 1.1s ease-in-out infinite; }
-      `}</style>
-      <div className="flex gap-[2px] items-center flex-shrink-0">
-        <div className="w-[2px] rounded-sm ab1" style={{ background: color }} />
-        <div className="w-[2px] rounded-sm ab2" style={{ background: color }} />
-        <div className="w-[2px] rounded-sm ab3" style={{ background: color }} />
-      </div>
-    </>
+    <div className="flex w-[18px] flex-shrink-0 items-center justify-center gap-[3px]" style={{ height }}>
+      {BAR_SCALES.map((scale) => (
+        <span
+          key={scale}
+          className="w-[3px] rounded-full"
+          style={{ height: height * scale, background: color }}
+        />
+      ))}
+    </div>
   );
 }

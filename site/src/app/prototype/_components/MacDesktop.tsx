@@ -1,4 +1,5 @@
-import type { FormEvent, RefObject } from 'react';
+import { ArrowUp, Mic } from 'lucide-react';
+import type { FormEvent, PointerEvent, RefObject } from 'react';
 
 import { Notch } from '@/app/prototype/_components/Notch';
 import { SpawnedCursor } from '@/app/prototype/_components/SpawnedCursor';
@@ -18,6 +19,11 @@ type Props = {
   desktopRef: RefObject<HTMLElement | null>;
   desktopSize: DesktopSize;
   spawns: Spawn[];
+  selectedSpawnId: string | null;
+  editingSpawnId: string | null;
+  setSelectedSpawnId: (id: string | null) => void;
+  setEditingSpawnId: (id: string | null) => void;
+  onSpawnFollowUp: (spawnId: string, text: string) => void;
   onRequestSpawn: (taskText: string) => void;
 };
 
@@ -30,22 +36,20 @@ const LAYOUT = {
   composerCornerRadius: 22,
   composerInputMinimumHeight: 66,
   composerInputLeadingContentPadding: 20,
-  composerInputTrailingContentPadding: 8,
+  composerInputTrailingContentPadding: 14.6,
   composerWaveformWidth: 54,
   composerWaveformHeight: 28,
-  composerWrappingTextWidth: 482,
+  composerMicrophoneIconSize: 28,
+  composerSendButtonSize: 36.8,
+  composerTrailingControlsSpacing: 16,
+  composerTrailingControlsWidth: 80.8,
+  composerWrappingTextWidth: 449,
   composerExpandedTextWidth: 528,
   composerExpandedTextTopPadding: 18,
   composerExpandedTextHorizontalPadding: 24,
   composerExpandedToolbarHeight: 54,
   composerExpandedMinimumHeight: 156,
 } as const;
-
-const WAVEFORM_LEVELS = [0.12, 0.2, 0.34, 0.5, 0.34, 0.2, 0.12] as const;
-
-function waveformHeight(level: number) {
-  return 5 + level * 24;
-}
 
 export function MacDesktop({
   state,
@@ -61,6 +65,11 @@ export function MacDesktop({
   desktopRef,
   desktopSize,
   spawns,
+  selectedSpawnId,
+  editingSpawnId,
+  setSelectedSpawnId,
+  setEditingSpawnId,
+  onSpawnFollowUp,
   onRequestSpawn,
 }: Props) {
   const composerHeight = promptExpanded
@@ -70,13 +79,25 @@ export function MacDesktop({
       )
     : LAYOUT.composerInputMinimumHeight;
   const hostHeight = LAYOUT.stageVerticalPadding * 2 + composerHeight + LAYOUT.contentExtraHeight;
-  const spawnOrigin = { x: desktopSize.w / 2, y: -36 };
+  const activeSpawnCue = [...spawns].reverse().find((spawn) => spawn.phase === 'notch-cue') ?? null;
+  const hasPromptText = promptText.trim().length > 0;
+
+  const handleDesktopPointerDown = (event: PointerEvent<HTMLElement>) => {
+    if (!editingSpawnId) return;
+
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest('[data-spawn-interactive="true"]')) return;
+
+    setEditingSpawnId(null);
+  };
 
   return (
     <main
       ref={desktopRef}
       className="relative min-h-screen overflow-hidden bg-[#121419] text-white"
       style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif' }}
+      onPointerDown={handleDesktopPointerDown}
     >
       <div
         className="absolute inset-0"
@@ -114,11 +135,26 @@ export function MacDesktop({
         activeTaskId={activeTaskId}
         expanded={notchExpanded}
         setExpanded={setNotchExpanded}
+        spawnCue={activeSpawnCue}
         onRequestSpawn={onRequestSpawn}
       />
 
-      {spawns.map((spawn) => (
-        <SpawnedCursor key={spawn.id} spawn={spawn} spawnOrigin={spawnOrigin} />
+      {spawns.map((spawn, index) => (
+        <SpawnedCursor
+          key={spawn.id}
+          spawn={spawn}
+          spawnOrigin={{ x: desktopSize.w / 2 + ((index % 5) - 2) * 18, y: -24 }}
+          desktopSize={desktopSize}
+          selected={selectedSpawnId === spawn.id}
+          editing={editingSpawnId === spawn.id}
+          onSelect={() => setSelectedSpawnId(spawn.id)}
+          onBeginEditing={() => {
+            setSelectedSpawnId(spawn.id);
+            setEditingSpawnId(spawn.id);
+          }}
+          onCancelEditing={() => setEditingSpawnId(null)}
+          onSubmitFollowUp={(text) => onSpawnFollowUp(spawn.id, text)}
+        />
       ))}
 
       <section
@@ -175,26 +211,45 @@ export function MacDesktop({
             }}
           />
           <div
-            className="absolute flex items-center justify-center gap-1"
+            className="absolute flex items-center justify-end"
             style={{
               right: promptExpanded
                 ? LAYOUT.composerExpandedTextHorizontalPadding
                 : LAYOUT.composerInputTrailingContentPadding,
               top: promptExpanded
-                ? composerHeight - LAYOUT.composerExpandedToolbarHeight + (LAYOUT.composerExpandedToolbarHeight - LAYOUT.composerWaveformHeight) / 2
-                : (LAYOUT.composerInputMinimumHeight - LAYOUT.composerWaveformHeight) / 2,
-              width: LAYOUT.composerWaveformWidth,
-              height: LAYOUT.composerWaveformHeight,
+                ? composerHeight - LAYOUT.composerExpandedToolbarHeight + (LAYOUT.composerExpandedToolbarHeight - LAYOUT.composerSendButtonSize) / 2
+                : (LAYOUT.composerInputMinimumHeight - LAYOUT.composerSendButtonSize) / 2,
+              width: LAYOUT.composerTrailingControlsWidth,
+              height: LAYOUT.composerSendButtonSize,
+              gap: LAYOUT.composerTrailingControlsSpacing,
             }}
-            aria-hidden="true"
           >
-            {WAVEFORM_LEVELS.map((level, index) => (
-              <span
-                key={`${level}-${index}`}
-                className="w-1 rounded-full bg-white"
-                style={{ height: waveformHeight(level) }}
-              />
-            ))}
+            <button
+              type="button"
+              className="grid place-items-center rounded-full transition"
+              style={{
+                width: LAYOUT.composerMicrophoneIconSize,
+                height: LAYOUT.composerMicrophoneIconSize,
+                color: hasPromptText ? 'rgba(255,255,255,0.42)' : 'rgba(255,255,255,0.78)',
+              }}
+              aria-label="Voice input"
+            >
+              <Mic size={24} strokeWidth={1.15} />
+            </button>
+            <button
+              type="submit"
+              className="grid place-items-center rounded-full transition disabled:cursor-default"
+              style={{
+                width: LAYOUT.composerSendButtonSize,
+                height: LAYOUT.composerSendButtonSize,
+                background: hasPromptText ? 'rgba(255,255,255,0.94)' : 'rgba(255,255,255,0.68)',
+                color: hasPromptText ? 'rgba(0,0,0,0.78)' : 'rgba(0,0,0,0.42)',
+              }}
+              disabled={!hasPromptText}
+              aria-label="Send"
+            >
+              <ArrowUp size={18} strokeWidth={2.25} />
+            </button>
           </div>
         </form>
       </section>

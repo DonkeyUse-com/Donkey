@@ -27,15 +27,16 @@ export type DesktopSize = {
   h: number;
 };
 
-export type SpawnPhase = 'emerge' | 'travel' | 'shake-left' | 'shake-right' | 'working';
+export type SpawnPhase = 'notch-cue' | 'traveling' | 'holding' | 'fading';
 
 export type Spawn = {
   id: string;
+  taskId: string;
   color: string;
   label: string;
   target: Point;
   phase: SpawnPhase;
-  curveSide: 1 | -1;
+  notchCueAngleDegrees: number;
   startedAt: number;
 };
 

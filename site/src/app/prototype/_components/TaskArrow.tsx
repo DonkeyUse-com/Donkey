@@ -13,7 +13,7 @@ export function TaskArrow({ color, size = 14, className }: Props) {
       aria-hidden="true"
       className={`flex-shrink-0 ${className ?? ''}`}
     >
-      <path d="M3.1 1.1 12 7l-8.9 5.9L5.2 7 3.1 1.1Z" fill={color} />
+      <path d="M2.52 0.84 12.32 7 2.52 13.16 4.76 7 2.52 0.84Z" fill={color} />
     </svg>
   );
 }

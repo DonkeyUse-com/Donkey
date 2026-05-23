@@ -9,6 +9,28 @@ import type { DesktopSize, NotchState, Spawn, SpawnPhase, TaskId } from '@/app/p
 
 const COMPOSER_TEXT_MIN_HEIGHT = 19.2;
 const COMPOSER_TEXT_MAX_HEIGHT = 134.4;
+const COLLAPSED_NOTCH_VISIBLE_HEIGHT = 32;
+const SPAWN_FALLBACK_VERTICAL_OFFSET = 250;
+const SPAWN_SCREEN_INSET = 36;
+const SPAWN_NOTCH_CUE_DURATION_MS = 260;
+const SPAWN_TRAVEL_DURATION_MS = 820;
+
+function clampedSpawnPoint(x: number, y: number, desktopSize: DesktopSize) {
+  return {
+    x: Math.min(Math.max(x, SPAWN_SCREEN_INSET), Math.max(SPAWN_SCREEN_INSET, desktopSize.w - SPAWN_SCREEN_INSET)),
+    y: Math.min(Math.max(y, SPAWN_SCREEN_INSET), Math.max(SPAWN_SCREEN_INSET, desktopSize.h - SPAWN_SCREEN_INSET)),
+  };
+}
+
+function fallbackSpawnTarget(desktopSize: DesktopSize, spawnIndex: number) {
+  const stagger = ((spawnIndex % 5) - 2) * 18;
+
+  return clampedSpawnPoint(
+    desktopSize.w / 2 + stagger,
+    COLLAPSED_NOTCH_VISIBLE_HEIGHT + SPAWN_FALLBACK_VERTICAL_OFFSET,
+    desktopSize,
+  );
+}
 
 export default function App() {
   const [state, setState] = useState<NotchState>('running-single');
@@ -17,6 +39,8 @@ export default function App() {
   const [promptText, setPromptText] = useState('');
   const [promptTextHeight, setPromptTextHeight] = useState(COMPOSER_TEXT_MIN_HEIGHT);
   const [spawns, setSpawns] = useState<Spawn[]>([]);
+  const [selectedSpawnId, setSelectedSpawnId] = useState<string | null>(null);
+  const [editingSpawnId, setEditingSpawnId] = useState<string | null>(null);
   const [desktopSize, setDesktopSize] = useState<DesktopSize>({ w: 1280, h: 720 });
   const promptInputRef = useRef<HTMLTextAreaElement | null>(null);
   const desktopRef = useRef<HTMLElement | null>(null);
@@ -72,32 +96,51 @@ export default function App() {
   }, [advanceSpawn]);
 
   const handleSpawn = useCallback((taskText: string) => {
+    const spawnIndex = spawnCounterRef.current;
     spawnCounterRef.current += 1;
     const id = `spawn-${spawnCounterRef.current}-${Date.now()}`;
-    const color = TASK_COLORS[spawnCounterRef.current % TASK_COLORS.length];
-    const label = taskText.slice(0, 40);
-    const padding = 60;
-    const targetX = padding + Math.random() * Math.max(1, desktopSize.w - padding * 2);
-    const targetY = 90 + Math.random() * Math.max(1, desktopSize.h - 160);
-    const curveSide = Math.random() > 0.5 ? 1 : -1;
+    const color = TASK_COLORS[spawnIndex % TASK_COLORS.length];
+    const target = fallbackSpawnTarget(desktopSize, spawnIndex);
 
     setSpawns((current) => [
       ...current,
       {
         id,
+        taskId: id,
         color,
-        label,
-        target: { x: targetX, y: targetY },
-        phase: 'travel',
-        curveSide,
+        label: taskText,
+        target,
+        phase: 'notch-cue',
+        notchCueAngleDegrees: 90,
         startedAt: Date.now(),
       },
     ]);
+    setSelectedSpawnId(id);
+    setEditingSpawnId(null);
 
-    scheduleSpawnPhase(id, 'shake-left', 900);
-    scheduleSpawnPhase(id, 'shake-right', 1250);
-    scheduleSpawnPhase(id, 'working', 1600);
-  }, [desktopSize.h, desktopSize.w, scheduleSpawnPhase]);
+    scheduleSpawnPhase(id, 'traveling', SPAWN_NOTCH_CUE_DURATION_MS);
+    scheduleSpawnPhase(id, 'holding', SPAWN_NOTCH_CUE_DURATION_MS + SPAWN_TRAVEL_DURATION_MS);
+  }, [desktopSize, scheduleSpawnPhase]);
+
+  const handleSpawnFollowUp = useCallback((spawnId: string, text: string) => {
+    const label = text.trim();
+    if (!label) return;
+
+    setSpawns((current) =>
+      current.map((spawn) =>
+        spawn.id === spawnId
+          ? {
+              ...spawn,
+              label,
+              phase: 'holding',
+              startedAt: Date.now(),
+            }
+          : spawn,
+      ),
+    );
+    setSelectedSpawnId(spawnId);
+    setEditingSpawnId(null);
+  }, []);
 
   const handleSubmit = useCallback((event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -128,6 +171,11 @@ export default function App() {
         desktopRef={desktopRef}
         desktopSize={desktopSize}
         spawns={spawns}
+        selectedSpawnId={selectedSpawnId}
+        editingSpawnId={editingSpawnId}
+        setSelectedSpawnId={setSelectedSpawnId}
+        setEditingSpawnId={setEditingSpawnId}
+        onSpawnFollowUp={handleSpawnFollowUp}
         onRequestSpawn={handleSpawn}
       />
       <DemoControls
@@ -136,7 +184,11 @@ export default function App() {
         activeTaskId={activeTaskId}
         setActiveTaskId={setActiveTaskId}
         spawnCount={spawns.length}
-        onClearSpawns={() => setSpawns([])}
+        onClearSpawns={() => {
+          setSpawns([]);
+          setSelectedSpawnId(null);
+          setEditingSpawnId(null);
+        }}
       />
     </div>
   );
