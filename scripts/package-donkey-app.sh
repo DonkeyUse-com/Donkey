@@ -26,6 +26,7 @@ BUILD_DIR="$ROOT_DIR/apps/Donkey"
 EXECUTABLE="$BUILD_DIR/.build/release/Donkey"
 UI_UNDERSTANDER_EXECUTABLE="$BUILD_DIR/.build/release/DonkeyUIUnderstandingSidecar"
 CACHE_DIR="$BUILD_DIR/.build/package-cache"
+APP_ICON_SOURCE="$BUILD_DIR/Sources/Donkey/Resources/Donkey.icns"
 RUNTIME_RUNNER_SOURCE="$ROOT_DIR/scripts/local-runtime-runners/donkey_runtime_runner.py"
 
 mkdir -p "$CACHE_DIR/clang" "$CACHE_DIR/swiftpm" "$CACHE_DIR/home"
@@ -248,6 +249,9 @@ if [ -n "$RESOURCE_BUNDLE" ]; then
 elif [ -d "$BUILD_DIR/.build/release/Donkey_Donkey.resources" ]; then
   cp -R "$BUILD_DIR/.build/release/Donkey_Donkey.resources/." "$RESOURCES_DIR/"
 fi
+if [ -f "$APP_ICON_SOURCE" ]; then
+  cp "$APP_ICON_SOURCE" "$RESOURCES_DIR/Donkey.icns"
+fi
 
 SPARKLE_FRAMEWORK="$(find "$BUILD_DIR/.build" -path "*/release/Sparkle.framework" -type d | head -n 1 || true)"
 if [ -z "$SPARKLE_FRAMEWORK" ]; then
@@ -335,6 +339,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <string>Donkey</string>
   <key>CFBundleDisplayName</key>
   <string>Donkey</string>
+  <key>CFBundleIconFile</key>
+  <string>Donkey.icns</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
