@@ -65,21 +65,11 @@ struct DonkeyBackendInferenceClientTests {
     }
 
     @Test
-    func configurationPrefersDedicatedBackendEnvironmentURL() throws {
+    func configurationUsesWebBaseEnvironmentURL() throws {
         let configuration = try DonkeyBackendInferenceConfiguration.fromEnvironment([
+            "DONKEY_WEB_BASE_URL": "https://web.donkey.example",
             "DONKEY_BACKEND_URL": "https://api.donkey.example",
-            "DONKEY_WEB_BASE_URL": "https://web.donkey.example",
-            "DONKEY_CLIENT_ID": "client-env"
-        ])
-
-        #expect(configuration.baseURL.absoluteString == "https://api.donkey.example")
-        #expect(configuration.clientID == "client-env")
-    }
-
-    @Test
-    func configurationFallsBackToWebBaseEnvironmentURL() throws {
-        let configuration = try DonkeyBackendInferenceConfiguration.fromEnvironment([
-            "DONKEY_WEB_BASE_URL": "https://web.donkey.example",
+            "BETTER_AUTH_URL": "https://auth.donkey.example",
             "DONKEY_CLIENT_ID": "client-env"
         ])
 
@@ -88,9 +78,55 @@ struct DonkeyBackendInferenceClientTests {
     }
 
     @Test
-    func configurationEnvironmentOverridesBundledBackendURL() throws {
+    func configurationUsesBundledWebBaseURL() throws {
+        let fixture = try temporaryBundle(info: [
+            "DonkeyWebBaseURL": "https://bundle.donkey.example"
+        ])
+        defer {
+            try? FileManager.default.removeItem(at: fixture.directory)
+        }
+
+        let configuration = try DonkeyBackendInferenceConfiguration.fromEnvironment(
+            ["DONKEY_CLIENT_ID": "client-env"],
+            bundle: fixture.bundle
+        )
+
+        #expect(configuration.baseURL.absoluteString == "https://bundle.donkey.example")
+        #expect(configuration.clientID == "client-env")
+    }
+
+    @Test
+    func configurationDoesNotUseBackendEnvironmentURLAsBaseURL() {
+        #expect(throws: DonkeyBackendInferenceClientError.missingConfiguration("DONKEY_WEB_BASE_URL")) {
+            _ = try DonkeyBackendInferenceConfiguration.fromEnvironment([
+                "DONKEY_BACKEND_URL": "https://api.donkey.example",
+                "BETTER_AUTH_URL": "https://auth.donkey.example",
+                "DONKEY_CLIENT_ID": "client-env"
+            ])
+        }
+    }
+
+    @Test
+    func configurationDoesNotUseBundledBackendURLAsBaseURL() throws {
         let fixture = try temporaryBundle(info: [
             "DonkeyBackendURL": "https://bundle-api.donkey.example"
+        ])
+        defer {
+            try? FileManager.default.removeItem(at: fixture.directory)
+        }
+
+        #expect(throws: DonkeyBackendInferenceClientError.missingConfiguration("DONKEY_WEB_BASE_URL")) {
+            _ = try DonkeyBackendInferenceConfiguration.fromEnvironment(
+                ["DONKEY_CLIENT_ID": "client-env"],
+                bundle: fixture.bundle
+            )
+        }
+    }
+
+    @Test
+    func configurationEnvironmentWebBaseURLOverridesBundledWebBaseURL() throws {
+        let fixture = try temporaryBundle(info: [
+            "DonkeyWebBaseURL": "https://bundle.donkey.example"
         ])
         defer {
             try? FileManager.default.removeItem(at: fixture.directory)
@@ -109,7 +145,7 @@ struct DonkeyBackendInferenceClientTests {
     }
 
     @Test
-    func configurationFallsBackToBundledWebBaseURL() throws {
+    func invalidEnvironmentWebBaseURLDoesNotUseBundledWebBaseURL() throws {
         let fixture = try temporaryBundle(info: [
             "DonkeyWebBaseURL": "https://bundle.donkey.example"
         ])
@@ -117,13 +153,15 @@ struct DonkeyBackendInferenceClientTests {
             try? FileManager.default.removeItem(at: fixture.directory)
         }
 
-        let configuration = try DonkeyBackendInferenceConfiguration.fromEnvironment(
-            ["DONKEY_CLIENT_ID": "client-env"],
-            bundle: fixture.bundle
-        )
-
-        #expect(configuration.baseURL.absoluteString == "https://bundle.donkey.example")
-        #expect(configuration.clientID == "client-env")
+        #expect(throws: DonkeyBackendInferenceClientError.missingConfiguration("DONKEY_WEB_BASE_URL")) {
+            _ = try DonkeyBackendInferenceConfiguration.fromEnvironment(
+                [
+                    "DONKEY_WEB_BASE_URL": "not a url",
+                    "DONKEY_CLIENT_ID": "client-env"
+                ],
+                bundle: fixture.bundle
+            )
+        }
     }
 
     @Test

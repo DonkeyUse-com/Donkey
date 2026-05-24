@@ -13,7 +13,7 @@ public enum DonkeyBackendInferenceClientError: Error, Equatable, Sendable {
 public struct DonkeyBackendInferenceConfiguration: Equatable, Sendable {
     public var baseURL: URL
     public var clientID: String
-    public static let baseURLConfigurationDescription = "DONKEY_BACKEND_URL, DONKEY_WEB_BASE_URL, or BETTER_AUTH_URL"
+    public static let baseURLConfigurationDescription = "DONKEY_WEB_BASE_URL"
 
     public init(baseURL: URL, clientID: String) {
         self.baseURL = baseURL
@@ -24,10 +24,11 @@ public struct DonkeyBackendInferenceConfiguration: Equatable, Sendable {
         _ environment: [String: String] = ProcessInfo.processInfo.environment,
         bundle: Bundle = .main
     ) throws -> DonkeyBackendInferenceConfiguration {
-        guard let baseURLString = configuredBaseURLString(
+        let baseURLString = configuredBaseURLString(
             environment: environment,
             bundle: bundle
-        ),
+        )
+        guard let baseURLString,
               let baseURL = URL(string: baseURLString) else {
             throw DonkeyBackendInferenceClientError.missingConfiguration(
                 baseURLConfigurationDescription
@@ -44,10 +45,7 @@ public struct DonkeyBackendInferenceConfiguration: Equatable, Sendable {
         environment: [String: String],
         bundle: Bundle
     ) -> String? {
-        trimmed(environment["DONKEY_BACKEND_URL"])
-            ?? trimmed(environment["DONKEY_WEB_BASE_URL"])
-            ?? trimmed(environment["BETTER_AUTH_URL"])
-            ?? configuredBundleValue("DonkeyBackendURL", bundle: bundle)
+        trimmed(environment["DONKEY_WEB_BASE_URL"])
             ?? configuredBundleValue("DonkeyWebBaseURL", bundle: bundle)
     }
 

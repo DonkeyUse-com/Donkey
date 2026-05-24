@@ -7,6 +7,8 @@ LOG_SCRIPT="$ROOT_DIR/scripts/tail-donkey-logs.sh"
 DONKEY_BIN="$APP_DIR/.build/debug/Donkey"
 LOG_PID=""
 
+export DONKEY_WEB_BASE_URL="${DONKEY_WEB_BASE_URL:-http://localhost:3000}"
+
 cleanup() {
   if [ -n "$LOG_PID" ] && kill -0 "$LOG_PID" >/dev/null 2>&1; then
     kill "$LOG_PID" >/dev/null 2>&1 || true
