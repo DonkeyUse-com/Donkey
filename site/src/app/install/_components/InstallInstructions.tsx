@@ -226,8 +226,6 @@ const stepCardStyle: CSSProperties = {
 
 const stepImageFrameStyle: CSSProperties = {
   aspectRatio: "617 / 413",
-  background: "#141413",
-  borderRadius: 26,
   flexShrink: 0,
   minWidth: 0,
   overflow: "hidden",
