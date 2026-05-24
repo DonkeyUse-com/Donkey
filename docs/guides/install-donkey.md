@@ -91,7 +91,7 @@ The packaged Mac app does not bundle, download, install, or configure local
 model weights. Model-backed behavior is routed through the authenticated Donkey
 backend, which owns provider credentials, provider selection, and concrete model
 selection. The Mac client sends typed requests to the backend and does not need
-OpenAI, OpenRouter, Gemini, or other provider API keys.
+OpenAI, Gemini, or other provider API keys.
 
 First launch setup is therefore an account and permission setup flow, not a
 local model installer. There are no supported release manifest URLs, model

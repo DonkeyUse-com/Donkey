@@ -40,7 +40,7 @@ export const chatCompletionRequestSchema = z
     }
   });
 
-export const responsesProviderSelectionSchema = z.enum(["openai", "openrouter", "gemini"]);
+export const responsesProviderSelectionSchema = z.enum(["openai", "gemini"]);
 
 export const responseCreateRequestSchema = z
   .object({

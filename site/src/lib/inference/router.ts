@@ -1,7 +1,6 @@
 import { createAudioAssetProvider } from "@/lib/inference/adapters/audio-studio";
 import { createGeminiComputerUseProvider } from "@/lib/inference/adapters/gemini-computer-use";
 import { createHostedResponsesProvider } from "@/lib/inference/adapters/hosted-responses";
-import { createPrimaryInferenceProvider } from "@/lib/inference/adapters/primary-router";
 import {
   InferenceProviderError,
   type AssetGenerationRequest,
@@ -178,7 +177,6 @@ export function createProviderRegistry() {
     createAudioAssetProvider(),
     createGeminiComputerUseProvider(),
     createHostedResponsesProvider(),
-    createPrimaryInferenceProvider(),
   ]);
 }
 

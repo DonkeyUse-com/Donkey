@@ -28,15 +28,18 @@ export const POST = withDonkeyAuth(async (request) => {
     return validationErrorResponse(parsed.error);
   }
 
-  const registry = createProviderRegistry();
-  const provider = registry.assetProvider(parsed.data);
   const generationId = generationIDForRequest(parsed.data);
   const generation = {
     id: generationId,
     kind: parsed.data.kind,
   };
+  let providerID = parsed.data.provider ?? "unavailable";
 
   try {
+    const registry = createProviderRegistry();
+    const provider = registry.assetProvider(parsed.data);
+    providerID = provider.id;
+
     const result = await provider.generateAsset?.({
       generationId,
       request: parsed.data,
@@ -55,7 +58,7 @@ export const POST = withDonkeyAuth(async (request) => {
   } catch (error) {
     const failed = failedAssetGenerationResponse({
       generation,
-      provider: provider.id,
+      provider: providerID,
       model: parsed.data.model,
       error: toJsonValue(
         error instanceof InferenceProviderError
