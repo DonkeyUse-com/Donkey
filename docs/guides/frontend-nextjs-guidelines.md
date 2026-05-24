@@ -1,68 +1,59 @@
 # Frontend and Next.js Guidelines
 
-This app is the `site` Next.js project. It is intended to run the public site and API on Vercel, with Supabase Postgres as the database and Prisma as the server-side ORM.
+This guide explains how to work in the `site` app. Keep changes aligned with the existing route structure, Tailwind styling, and server/client boundaries.
 
-## Tech Stack
+## Project Shape
 
-- Next.js `16.2.6` with the App Router in `src/app`.
-- React `19.2.4` and TypeScript.
-- Tailwind CSS `4` through `@tailwindcss/postcss`.
-- shadcn/ui with the `base-nova` style, Base UI primitives, `class-variance-authority`, `tailwind-merge`, and `tw-animate-css`.
-- `lucide-react` for icons.
-- Prisma `7` with `@prisma/adapter-pg`, `pg`, and generated client output in `src/generated/prisma`.
-- Zod for request and payload validation.
-- ESLint `9` with `eslint-config-next`.
-- Vercel for hosting the site and API.
+- Keep routes, layouts, pages, loading states, and route handlers in `src/app`.
+- Keep shared UI primitives in `src/components`.
+- Keep route-specific UI near the route, such as `src/app/_components/landing` for the home page.
+- Split large route experiences into focused component files.
+- Keep server-only helpers in `src/lib`.
+- Use absolute imports through the `@/*` alias.
+- Avoid barrel `index.ts` files unless a package-level public API truly needs one.
 
-## App Structure
-
-- Keep route segments, layouts, pages, loading states, and route handlers in `src/app`.
-- Keep shared UI primitives in `src/components`, with shadcn components under `src/components/ui`.
-- Keep route-specific experiences in a dedicated component folder near the route, such as `src/app/_components/landing` for the home landing page.
-- Split route-specific UI into focused component files rather than placing every section, primitive, hook, and data object into one large component file.
-- Keep server-only helpers in `src/lib`, such as `src/lib/prisma.ts`.
-- Keep generated Prisma files out of hand edits. Follow the backend guide for Prisma schema layout.
-- Use absolute imports through the `@/*` alias. Avoid barrel `index.ts` files unless a package-level public API truly needs one.
-
-## Server and Client Components
+## Components
 
 - Treat components as Server Components by default.
-- Add `"use client"` only when a component needs state, event handlers, effects, refs, browser APIs, or client-only hooks.
-- Keep server secrets, Prisma, and direct database access out of Client Components.
-- Pass plain serializable data from Server Components into Client Components.
-- Prefer small client boundaries around interactive controls instead of making whole pages client-rendered.
+- Add `"use client"` only for state, effects, refs, event handlers, browser APIs, or client-only hooks.
+- Keep client boundaries small and close to the interactive control.
+- Keep secrets and direct database access out of Client Components.
+- Pass plain serializable props from Server Components into Client Components.
 
-## Data and API Access
+## Styling
 
-- Route Handlers live in `src/app/api/**/route.ts`.
-- Protect Donkey APIs with `withDonkeyAuth` from `src/lib/donkey-api-auth.ts` unless an endpoint is intentionally public, such as health checks.
-- Validate request bodies, search params, and dynamic route params with Zod before using them.
-- Keep API responses explicit with `NextResponse.json(...)`.
-- Do not call `fetch(...)` directly from React components. Put browser-facing API calls in a focused API client module, then import that client into components.
-- Use Prisma only from server-side code. Import the singleton from `src/lib/prisma.ts`.
-- Use `DATABASE_URL` for pooled serverless runtime database access and `DIRECT_URL` for Prisma CLI operations. `prisma.config.ts` should point CLI operations at the direct URL when it is available.
-
-## Styling and UI
-
-- Use Tailwind utilities and shadcn/ui components as the default UI language.
-- Use `lucide-react` icons in buttons and compact actions when an icon exists.
+- Use Tailwind utilities and existing shared UI components as the default UI language.
+- Tailwind is already configured for the site; the absence of a `tailwind.config.*` file is not a reason to use inline styles.
+- Use Tailwind responsive variants such as `md:*` for breakpoints.
+- Use Tailwind arbitrary values when a design needs a precise value that is not in the theme.
+- Avoid React inline style objects for normal layout, spacing, typography, colors, borders, and responsive behavior.
+- Reserve inline styles for genuinely runtime values, such as measured dimensions, CSS custom properties derived from data, or third-party style APIs.
+- Do not add client-only media query hooks just to choose styling; use Tailwind responsive utilities instead.
+- Use the existing class-name helper when composing conditional classes.
+- Prefer existing icon components for buttons and compact actions when an icon fits the control.
+- Keep controls at stable dimensions so hover states, icons, labels, and loading states do not shift layout.
 - Keep cards for repeated items, modals, and genuinely framed content. Avoid nesting cards inside cards.
-- Use restrained, product-grade layouts for operational surfaces: dense enough to scan, clear hierarchy, and no marketing-style filler when the user needs a tool.
-- Keep text sizing tied to component context. Do not use hero-scale type inside compact panels.
-- Ensure controls have stable dimensions so hover states, icons, and labels do not shift layout.
-- Use `cn` from `src/lib/utils.ts` when composing conditional class names.
+
+## Data and APIs
+
+- Put Route Handlers in `src/app/api/**/route.ts`.
+- Protect Donkey APIs unless an endpoint is intentionally public.
+- Validate request bodies, search params, and route params before using them.
+- Keep API responses explicit and consistently shaped.
+- Do not call `fetch(...)` directly from React components. Put browser-facing API calls in a focused API client module and import that client into components.
+- Use database clients only from server-side code.
+- Do not run database migrations or schema pushes casually; choose the migration workflow deliberately for the target database.
 
 ## TypeScript
 
-- Use `type` for props and local data shapes. Prefer a short `Props` name when there is only one props type in the file.
-- Do not use `any`. If a type is unclear, define the narrowest useful type or stop and clarify.
+- Use `type` for props and local data shapes.
+- Prefer a short `Props` name when there is only one props type in the file.
+- Do not use `any`; define the narrowest useful type or stop and clarify.
 - Keep imports direct and explicit.
-- Include real dependencies in hooks. Store callbacks in refs when they should not trigger re-renders.
+- Include real dependencies in hooks.
+- Store callbacks in refs when they should not trigger re-renders.
 
-## Environment and Deployment
+## Checks
 
-- Do not commit `.env`. Keep safe placeholders in `.env.example`.
-- Set `DATABASE_URL` and `DIRECT_URL` in Vercel.
-- Use Supabase's pooled Postgres connection string for serverless deployments.
-- Do not run Prisma migrations casually. Choose the migration workflow deliberately for the target Supabase project.
-- Run `npm run lint` and `npm run build` before shipping changes.
+- Do not commit `.env` or secrets.
+- Run `npm run lint` and `npm run build` before shipping frontend changes.
