@@ -27,6 +27,9 @@ LOG_PID=""
 export DONKEY_WEB_BASE_URL="${DONKEY_WEB_BASE_URL:-http://localhost:3000}"
 
 cleanup() {
+  if [ "$LAUNCH_APP" != "0" ] && [ "${DONKEY_KEEP_APP_ON_EXIT:-0}" != "1" ]; then
+    killall Donkey >/dev/null 2>&1 || true
+  fi
   if [ -n "$LOG_PID" ] && kill -0 "$LOG_PID" >/dev/null 2>&1; then
     kill "$LOG_PID" >/dev/null 2>&1 || true
     wait "$LOG_PID" >/dev/null 2>&1 || true
