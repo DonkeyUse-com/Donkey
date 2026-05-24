@@ -1,6 +1,7 @@
 "use client";
 
-import { ArrowRight, Smile } from "lucide-react";
+import Image from "next/image";
+import { ArrowRight } from "lucide-react";
 
 import { PillButton } from "@/app/_components/landing/LandingPrimitives";
 import { useMediaQuery } from "@/app/_components/landing/useMediaQuery";
@@ -37,7 +38,7 @@ export function TopNav({
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 8,
+          gap: 0,
           color: BLACK,
           textDecoration: "none",
         }}
@@ -47,13 +48,25 @@ export function TopNav({
             width: 36,
             height: 36,
             borderRadius: 8,
-            background: BLACK,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
+            overflow: "hidden",
           }}
         >
-          <Smile color="#fff" size={20} />
+          <Image
+            src="/donkey-site-mark.webp"
+            alt=""
+            width={36}
+            height={36}
+            sizes="36px"
+            style={{
+              display: "block",
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+            }}
+          />
         </div>
         <span style={{ fontWeight: 900, fontSize: 24 }}>donkey</span>
       </a>
