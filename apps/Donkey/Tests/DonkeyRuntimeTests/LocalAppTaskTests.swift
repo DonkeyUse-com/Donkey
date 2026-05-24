@@ -349,6 +349,75 @@ struct LocalAppTaskTests {
     }
 
     @Test
+    func catalogResolvesGenericModelPlannedTextEntryCreation() throws {
+        let catalog = LocalAppTaskCatalog(
+            taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
+            availabilityProvider: StaticLocalAppAvailabilityProvider(
+                installedBundleIdentifiers: ["com.example.DraftPad"],
+                installedApplicationNames: ["DraftPad": "com.example.DraftPad"]
+            )
+        )
+        let textToEnter = "Checklist\n- First item\n- Second item\n- Third item"
+        let intent = TaskIntent(
+            intentID: "local_app_interaction-draftpad-checklist",
+            taskType: "local_app_interaction",
+            targetApp: LocalAppTarget(appName: "DraftPad", titleContains: "DraftPad"),
+            entities: [
+                "appName": "DraftPad",
+                "goal": "create text content",
+                "query": textToEnter
+            ],
+            normalizedEntities: [
+                "appName": "DraftPad",
+                "goal": "create text content",
+                "query": textToEnter
+            ],
+            confidence: 0.9,
+            parserSource: .onlineModel,
+            actionPlan: LocalAppActionPlan(
+                tools: [
+                    .openOrFocusApp,
+                    .observeApp,
+                    .newDocument,
+                    .setText,
+                    .verifyCommand
+                ],
+                inputEntity: "query",
+                controlID: "editor",
+                focusKey: "",
+                verification: .commandAttempted
+            ),
+            metadata: ["requestedItemName": "DraftPad"]
+        )
+
+        let resolution = catalog.resolve(intent: intent)
+        let resolvedIntent = try #require(resolution.intent)
+        let definition = try #require(resolution.definition)
+        let localAdapter = LocalAppTaskAdapter(definition: definition)
+        let plan = localAdapter.dryRunPlan(
+            for: resolvedIntent,
+            observation: LocalAppTaskObservation(
+                appIsRunning: true,
+                appIsFocused: true,
+                confidence: 0.72
+            )
+        )
+        let commands = localAdapter.guardedKeyboardCommandTemplates(
+            for: resolvedIntent,
+            issuedAt: timestamp(100)
+        )
+
+        #expect(resolution.status == .resolved)
+        #expect(resolvedIntent.targetApp.bundleIdentifier == "com.example.DraftPad")
+        #expect(definition.metadata["plan.tools"] == "app.openOrFocus,app.observe,ui.newDocument,ui.setText,app.verifyCommand")
+        #expect(definition.metadata["plan.setTextInputContract"] == "inputEntityValueIsExactTextToEnter")
+        #expect(plan.terminalState == .completed)
+        #expect(commands.map(\.key) == ["Command+N", textToEnter])
+        #expect(commands.first?.metadata["plan.tool"] == "ui.newDocument")
+        #expect(commands.last?.metadata["inputRole"] == "textEntry")
+    }
+
+    @Test
     func genericModelPlannedInteractionRequiresTypedActionPlanBeforeExecution() {
         let catalog = LocalAppTaskCatalog(
             taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,

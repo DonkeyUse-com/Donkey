@@ -591,6 +591,7 @@ public struct LocalGenerateTaskIntentAdapter: TaskIntentParsingAdapter {
                 ? [
                     "model_plan=true",
                     "allowed_tools=\(definition.metadata["plan.allowedTools"] ?? "")",
+                    "set_text_input_contract=\(definition.metadata["plan.setTextInputContract"] ?? "")",
                     "action_plan_required=true"
                 ].joined(separator: " | ")
                 : ""

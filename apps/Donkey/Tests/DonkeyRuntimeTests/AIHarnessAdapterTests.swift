@@ -392,6 +392,7 @@ struct AIHarnessAdapterTests {
         #expect((body["prompt"] as? String)?.contains("Do not include reasoning") == true)
         #expect((body["prompt"] as? String)?.contains("For website navigation") == true)
         #expect((body["prompt"] as? String)?.contains("ui.newDocument") == true)
+        #expect((body["prompt"] as? String)?.contains("set_text_input_contract=inputEntityValueIsExactTextToEnter") == true)
         #expect((body["prompt"] as? String)?.contains("action, destination or target app/item") == true)
         #expect((body["prompt"] as? String)?.contains("metadata.responseMode=conversation") == true)
         #expect((body["prompt"] as? String)?.contains("triggers=") == false)

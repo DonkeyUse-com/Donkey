@@ -964,7 +964,8 @@ public struct LocalAppTaskCatalog: Sendable {
             "modelPlanned": "true",
             "plan.tools": plan.tools.map(\.rawValue).joined(separator: ","),
             "plan.inputEntity": inputEntity,
-            "plan.allowedTools": LocalAppActionPlanTool.allCases.map(\.rawValue).joined(separator: ",")
+            "plan.allowedTools": LocalAppActionPlanTool.allCases.map(\.rawValue).joined(separator: ","),
+            "plan.setTextInputContract": "inputEntityValueIsExactTextToEnter"
         ]
         metadata["verificationMode"] = plan.verification == .visibleText
             ? "visibleText"
