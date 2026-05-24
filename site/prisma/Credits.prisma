@@ -1,0 +1,145 @@
+model UserCreditAccount {
+  id                     String                  @id @default(cuid())
+  userId                 String                  @unique
+  user                   User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balanceMicros          BigInt                  @default(0)
+  lifetimeGrantedMicros  BigInt                  @default(0)
+  lifetimeChargedMicros  BigInt                  @default(0)
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  grants                 UserCreditGrant[]
+  ledgerEntries          UserCreditLedgerEntry[]
+  inferenceUsageEvents   InferenceUsageEvent[]
+
+  @@map("user_credit_account")
+}
+
+model UserCreditGrant {
+  id                    String                  @id @default(cuid())
+  accountId             String
+  account               UserCreditAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  userId                String
+  user                  User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source                String
+  sourceId              String?
+  originalAmountMicros  BigInt
+  remainingAmountMicros BigInt
+  expiresAt             DateTime?
+  periodStart           DateTime?
+  periodEnd             DateTime?
+  status                String                  @default("active")
+  description           String?
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  ledgerEntries         UserCreditLedgerEntry[]
+
+  @@unique([userId, source, sourceId])
+  @@index([accountId])
+  @@index([userId, expiresAt])
+  @@index([userId, status])
+  @@map("user_credit_grant")
+}
+
+model UserCreditLedgerEntry {
+  id                 String               @id @default(cuid())
+  accountId          String
+  account            UserCreditAccount    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  userId             String
+  user               User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  grantId            String?
+  grant              UserCreditGrant?     @relation(fields: [grantId], references: [id], onDelete: SetNull)
+  usageEventId       String?
+  usageEvent         InferenceUsageEvent? @relation(fields: [usageEventId], references: [id], onDelete: SetNull)
+  type               String
+  amountMicros       BigInt
+  balanceAfterMicros BigInt
+  source             String?
+  sourceId           String?
+  description        String?
+  metadata           Json?
+  createdAt          DateTime             @default(now())
+
+  @@index([accountId, createdAt])
+  @@index([userId, createdAt])
+  @@index([grantId])
+  @@index([usageEventId])
+  @@map("user_credit_ledger_entry")
+}
+
+model InferenceUsageEvent {
+  id                    String                  @id @default(cuid())
+  accountId             String
+  account               UserCreditAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  userId                String
+  user                  User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clientId              String?
+  route                 String
+  requestKind           String
+  provider              String
+  model                 String
+  status                String
+  billingStatus         String
+  providerUsage         Json?
+  normalizedUsage       Json?
+  creditCostMicros      BigInt                  @default(0)
+  rateId                String?
+  rateVersion           Int?
+  errorCode             String?
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  ledgerEntries         UserCreditLedgerEntry[]
+
+  @@index([accountId, createdAt])
+  @@index([userId, createdAt])
+  @@index([route, createdAt])
+  @@index([provider, model, createdAt])
+  @@map("inference_usage_event")
+}
+
+model InferenceCreditRate {
+  id                    String   @id @default(cuid())
+  route                 String?
+  provider              String?
+  model                 String?
+  version               Int      @default(1)
+  active                Boolean  @default(true)
+  baseCostMicros        BigInt   @default(0)
+  inputTokenCostMicros  BigInt   @default(0)
+  outputTokenCostMicros BigInt   @default(0)
+  totalTokenCostMicros  BigInt   @default(0)
+  characterCostMicros   BigInt   @default(0)
+  fallbackCostMicros    BigInt   @default(1000000)
+  validFrom             DateTime @default(now())
+  validUntil            DateTime?
+  description           String?
+  metadata              Json?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([active, route, provider, model])
+  @@index([validFrom, validUntil])
+  @@map("inference_credit_rate")
+}
+
+model UserCreditLimit {
+  id                         String   @id @default(cuid())
+  userId                     String
+  user                       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scope                      String   @default("global")
+  route                      String?
+  provider                   String?
+  model                      String?
+  maxCreditsPerPeriodMicros  BigInt?
+  periodStart                DateTime?
+  periodEnd                  DateTime?
+  active                     Boolean  @default(true)
+  description                String?
+  metadata                   Json?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+
+  @@index([userId, active])
+  @@index([route, provider, model])
+  @@map("user_credit_limit")
+}

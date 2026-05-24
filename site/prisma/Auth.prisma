@@ -8,6 +8,11 @@ model User {
   updatedAt     DateTime  @updatedAt
   sessions      Session[]
   accounts      Account[]
+  creditAccount UserCreditAccount?
+  creditGrants  UserCreditGrant[]
+  creditLedgerEntries UserCreditLedgerEntry[]
+  inferenceUsageEvents InferenceUsageEvent[]
+  creditLimits UserCreditLimit[]
 
   @@map("user")
 }
