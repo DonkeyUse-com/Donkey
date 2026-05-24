@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import Image from "next/image";
-import { ArrowRight, X } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 
 import {
   Headline,
@@ -89,17 +89,6 @@ export function InstallInstructions() {
         </div>
 
         <div style={instructionPanelStyle}>
-          <X
-            aria-hidden="true"
-            color="rgba(255,255,255,0.56)"
-            size={27}
-            strokeWidth={1.35}
-            style={{
-              position: "absolute",
-              right: 26,
-              top: 26,
-            }}
-          />
           <h3
             style={{
               color: "#fff",
@@ -158,12 +147,14 @@ function InstallStepCard({ step }: InstallStepCardProps) {
         <Image
           alt={step.imageAlt}
           height={413}
+          loading="eager"
           src={step.imageSrc}
           style={{
             display: "block",
             height: "auto",
             width: "100%",
           }}
+          unoptimized
           width={617}
         />
       </div>

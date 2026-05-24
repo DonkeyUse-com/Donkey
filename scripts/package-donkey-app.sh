@@ -21,6 +21,7 @@ BUILD_DIR="$ROOT_DIR/apps/Donkey"
 EXECUTABLE="$BUILD_DIR/.build/release/Donkey"
 CACHE_DIR="$BUILD_DIR/.build/package-cache"
 APP_ICON_SOURCE="$BUILD_DIR/Sources/Donkey/Resources/Donkey.icns"
+APP_ICONSET_SOURCE="$BUILD_DIR/Sources/Donkey/Resources/Donkey.iconset"
 DMG_BACKGROUND_SOURCE="$ROOT_DIR/scripts/assets/donkey-dmg-background.svg"
 DMG_BACKGROUND_RENDERED="$ROOT_DIR/dist/donkey-dmg-background.png"
 DMG_WINDOW_WIDTH=760
@@ -50,13 +51,35 @@ render_dmg_background() {
 
 set_dmg_volume_icon() {
   local volume_dir="$1"
+  local volume_icon_source="$RESOURCES_DIR/Donkey.icns"
 
-  if [ -f "$APP_ICON_SOURCE" ]; then
-    cp "$APP_ICON_SOURCE" "$volume_dir/.VolumeIcon.icns"
+  if [ -f "$volume_icon_source" ]; then
+    cp "$volume_icon_source" "$volume_dir/.VolumeIcon.icns"
     SetFile -t icns -c icnC "$volume_dir/.VolumeIcon.icns"
     SetFile -a V "$volume_dir/.VolumeIcon.icns"
     SetFile -a C "$volume_dir"
   fi
+}
+
+prepare_app_icon() {
+  local destination="$RESOURCES_DIR/Donkey.icns"
+
+  if [ -d "$APP_ICONSET_SOURCE" ]; then
+    if ! command -v iconutil >/dev/null 2>&1; then
+      echo "iconutil is required to package Donkey.app from $APP_ICONSET_SOURCE." >&2
+      exit 1
+    fi
+    iconutil --convert icns --output "$destination" "$APP_ICONSET_SOURCE"
+    return
+  fi
+
+  if [ -f "$APP_ICON_SOURCE" ]; then
+    cp "$APP_ICON_SOURCE" "$destination"
+    return
+  fi
+
+  echo "Missing app icon sources: $APP_ICONSET_SOURCE or $APP_ICON_SOURCE" >&2
+  exit 1
 }
 
 configure_dmg_window() {
@@ -172,9 +195,7 @@ if [ -n "$RESOURCE_BUNDLE" ]; then
 elif [ -d "$BUILD_DIR/.build/release/Donkey_Donkey.resources" ]; then
   cp -R "$BUILD_DIR/.build/release/Donkey_Donkey.resources/." "$RESOURCES_DIR/"
 fi
-if [ -f "$APP_ICON_SOURCE" ]; then
-  cp "$APP_ICON_SOURCE" "$RESOURCES_DIR/Donkey.icns"
-fi
+prepare_app_icon
 
 SPARKLE_FRAMEWORK="$(find "$BUILD_DIR/.build" -path "*/release/Sparkle.framework" -type d | head -n 1 || true)"
 if [ -z "$SPARKLE_FRAMEWORK" ]; then
