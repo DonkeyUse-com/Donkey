@@ -92,7 +92,7 @@ export function Footer() {
             }}
           >
             <a
-              href="/privacy/"
+              href="/privacy"
               style={{
                 color: BLACK,
                 fontWeight: 800,
@@ -102,7 +102,7 @@ export function Footer() {
               Privacy Policy
             </a>
             <a
-              href="/terms/"
+              href="/terms"
               style={{
                 color: BLACK,
                 fontWeight: 800,

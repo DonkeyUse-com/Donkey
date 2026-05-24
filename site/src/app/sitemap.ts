@@ -16,25 +16,25 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: "monthly",
       lastModified,
       priority: 0.8,
-      url: `${SITE_URL}/install/`,
+      url: `${SITE_URL}/install`,
     },
     {
       changeFrequency: "monthly",
       lastModified,
       priority: 0.8,
-      url: `${SITE_URL}/pricing/`,
+      url: `${SITE_URL}/pricing`,
     },
     {
       changeFrequency: "yearly",
       lastModified,
       priority: 0.5,
-      url: `${SITE_URL}/privacy/`,
+      url: `${SITE_URL}/privacy`,
     },
     {
       changeFrequency: "yearly",
       lastModified,
       priority: 0.5,
-      url: `${SITE_URL}/terms/`,
+      url: `${SITE_URL}/terms`,
     },
   ];
 }

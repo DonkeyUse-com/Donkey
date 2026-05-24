@@ -5,10 +5,11 @@
 Donkey supports a floating macOS overlay for conversational task threads and
 quick local-app actions:
 
-- On first launch, Donkey shows a Google-only Mac sign-in window before starting
-  the overlay. Until the browser returns through the `donkey://auth/callback`
-  handoff and the app exchanges the returned code for a Better Auth cookie, the
-  notch surface is not shown and double-Command activation is not registered.
+- On first launch, Donkey shows a native welcome screen, then a Google-only Mac
+  sign-in screen before starting the overlay. Until the browser returns through
+  the `donkey://auth/callback` handoff and the app exchanges the returned code
+  for a Better Auth cookie, the notch surface is not shown and double-Command
+  activation is not registered.
 - Double-tap Command and release to open a centered prompt with keyboard focus.
 - Double-tap Command and hold the second press to open the prompt in voice mode.
 - Show a top-center notch status surface for task progress, recent tasks, follow-up input, file drops, updates, and per-task pause/resume.

@@ -198,14 +198,14 @@ export function AuthScreen({ mode }: Props) {
               >
                 By continuing, you agree to the{" "}
                 <a
-                  href="/terms/"
+                  href="/terms"
                   style={{ color: BLACK, fontWeight: 800 }}
                 >
                   Terms of Use
                 </a>{" "}
                 and{" "}
                 <a
-                  href="/privacy/"
+                  href="/privacy"
                   style={{ color: BLACK, fontWeight: 800 }}
                 >
                   Privacy Policy

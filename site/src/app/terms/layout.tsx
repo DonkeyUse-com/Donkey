@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 export const metadata: Metadata = {
   alternates: {
-    canonical: "https://donkeyuse.com/terms/",
+    canonical: "https://donkeyuse.com/terms",
   },
   description: "Read the Donkey terms of use.",
   title: "Terms of Use | Donkey",
