@@ -12,6 +12,8 @@ xcuserdata/
 ## Build artifacts
 /dist/
 /apps/Donkey/ultralytics/
+__pycache__/
+*.pyc
 
 ## Eval artifacts
 /evals/task-intent/model-cache/

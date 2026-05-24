@@ -7,7 +7,7 @@ import {
   PillButton,
   SectionLabel,
 } from "@/app/_components/landing/LandingPrimitives";
-import { GITHUB_REPO_URL } from "@/app/_components/landing/data";
+import { DONKEY_DOWNLOAD_URL } from "@/app/_components/landing/data";
 import { BG, BLACK } from "@/app/_components/landing/theme";
 
 type InstallStep = {
@@ -82,7 +82,7 @@ export function InstallInstructions() {
               drag the app into Applications, then launch it like any other Mac
               app.
             </p>
-            <PillButton href={GITHUB_REPO_URL} variant="primary" size="lg">
+            <PillButton href={DONKEY_DOWNLOAD_URL} variant="primary" size="lg">
               Download for Mac <ArrowRight size={18} />
             </PillButton>
           </div>
@@ -110,9 +110,9 @@ export function InstallInstructions() {
               maxWidth: 980,
             }}
           >
-            The desktop app should have downloaded automatically. If not, you can{" "}
+            The desktop app is distributed through GitHub Releases. You can{" "}
             <a
-              href={GITHUB_REPO_URL}
+              href={DONKEY_DOWNLOAD_URL}
               style={{
                 color: "#cfcac2",
                 textDecoration: "underline",
@@ -120,7 +120,7 @@ export function InstallInstructions() {
                 textUnderlineOffset: 5,
               }}
             >
-              download manually
+              download the latest version
             </a>
             .
           </p>

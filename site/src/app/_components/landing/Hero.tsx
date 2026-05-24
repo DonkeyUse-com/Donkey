@@ -3,6 +3,7 @@
 import { ArrowRight } from "lucide-react";
 
 import { PillButton, SectionLabel } from "@/app/_components/landing/LandingPrimitives";
+import { DONKEY_DOWNLOAD_URL } from "@/app/_components/landing/data";
 import { useMediaQuery } from "@/app/_components/landing/useMediaQuery";
 
 export function Hero() {
@@ -45,7 +46,7 @@ export function Hero() {
         you.
       </p>
       <div style={{ marginTop: 36, display: "flex", flexWrap: "wrap", gap: 12 }}>
-        <PillButton href="/install" variant="primary" size="lg">
+        <PillButton href={DONKEY_DOWNLOAD_URL} variant="primary" size="lg">
           Download for Mac <ArrowRight size={18} />
         </PillButton>
       </div>

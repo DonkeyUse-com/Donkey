@@ -32,7 +32,7 @@ Override the single base URL for local or staging testing:
 DONKEY_WEB_BASE_URL="http://localhost:3000" ./scripts/package-donkey-app.sh
 ```
 
-For distribution through the site, publish the disk image:
+For local distribution testing, publish the disk image:
 
 ```text
 dist/Donkey.dmg
@@ -64,12 +64,20 @@ open dist/Donkey.dmg
 
 Donkey uses Sparkle for app updates. Do not add a Donkey-specific update installer or custom replacement flow; Sparkle owns appcast parsing, update validation, download, install, relaunch, and user-facing update UI.
 
+Production releases are distributed from GitHub Releases. See
+`docs/guides/releasing-donkey.md` for the release runbook. Do not use the
+Supabase Storage `/release` bucket for release binaries or appcast hosting.
+
+The public Sparkle feed lives in `site/public/appcast.xml`, which the site
+serves as `https://donkeyuse.com/appcast.xml`. Appcast enclosure URLs point to
+the numeric GitHub Release asset URL, not a moving `latest` or `-latest` URL.
+
 Configure Sparkle when packaging:
 
 ```bash
 DONKEY_APP_VERSION="0.1.1" \
 DONKEY_APP_BUILD="2" \
-DONKEY_SPARKLE_FEED_URL="https://example.com/donkey/appcast.xml" \
+DONKEY_SPARKLE_FEED_URL="https://donkeyuse.com/appcast.xml" \
 DONKEY_SPARKLE_PUBLIC_ED_KEY="..." \
 ./scripts/package-donkey-app.sh
 ```

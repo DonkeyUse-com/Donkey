@@ -1,0 +1,173 @@
+name: Release Donkey
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Numeric version to build and release, for example 0.1.0.
+        required: true
+        type: string
+      build:
+        description: Optional CFBundleVersion build number. Defaults to the GitHub Actions run number.
+        required: false
+        default: ""
+        type: string
+      promote_major:
+        description: Move the vMAJOR alias tag to this version.
+        required: true
+        default: true
+        type: boolean
+      promote_minor:
+        description: Move the vMAJOR.MINOR alias tag to this version.
+        required: true
+        default: true
+        type: boolean
+      promote_latest:
+        description: Move the latest alias tag to this version.
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-donkey
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and release
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "${{ github.event.repository.default_branch }}" "origin/${{ github.event.repository.default_branch }}"
+          git branch --set-upstream-to="origin/${{ github.event.repository.default_branch }}" "${{ github.event.repository.default_branch }}"
+
+      - name: Fetch tags
+        run: git fetch --tags --force origin
+
+      - name: Prepare release values
+        id: release
+        run: |
+          version="${{ inputs.version }}"
+          version="${version#v}"
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Version must be numeric SemVer, for example 0.1.0 or v0.1.0." >&2
+            exit 1
+          fi
+
+          build="${{ inputs.build }}"
+          if [[ -z "$build" ]]; then
+            build="${GITHUB_RUN_NUMBER}"
+          fi
+          if [[ ! "$build" =~ ^[0-9]+$ ]]; then
+            echo "Build must be numeric for CFBundleVersion." >&2
+            exit 1
+          fi
+
+          {
+            echo "version=$version"
+            echo "tag=v$version"
+            echo "build=$build"
+            echo "target_sha=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check Sparkle secrets
+        env:
+          DONKEY_SPARKLE_PUBLIC_ED_KEY: ${{ secrets.DONKEY_SPARKLE_PUBLIC_ED_KEY }}
+          DONKEY_SPARKLE_PRIVATE_ED_KEY: ${{ secrets.DONKEY_SPARKLE_PRIVATE_ED_KEY }}
+        run: |
+          if [[ -z "$DONKEY_SPARKLE_PUBLIC_ED_KEY" ]]; then
+            echo "Missing DONKEY_SPARKLE_PUBLIC_ED_KEY repository secret." >&2
+            exit 1
+          fi
+          if [[ -z "$DONKEY_SPARKLE_PRIVATE_ED_KEY" ]]; then
+            echo "Missing DONKEY_SPARKLE_PRIVATE_ED_KEY repository secret." >&2
+            exit 1
+          fi
+
+      - name: Install packaging dependencies
+        run: |
+          if ! command -v magick >/dev/null 2>&1; then
+            brew install imagemagick
+          fi
+
+      - name: Package Donkey
+        env:
+          DONKEY_APP_VERSION: ${{ steps.release.outputs.version }}
+          DONKEY_APP_BUILD: ${{ steps.release.outputs.build }}
+          DONKEY_SPARKLE_FEED_URL: https://donkeyuse.com/appcast.xml
+          DONKEY_SPARKLE_PUBLIC_ED_KEY: ${{ secrets.DONKEY_SPARKLE_PUBLIC_ED_KEY }}
+        run: ./scripts/package-donkey-app.sh
+
+      - name: Generate checksum
+        run: shasum -a 256 dist/Donkey.dmg > dist/Donkey.dmg.sha256
+
+      - name: Sign update archive
+        id: sparkle
+        env:
+          DONKEY_SPARKLE_PRIVATE_ED_KEY: ${{ secrets.DONKEY_SPARKLE_PRIVATE_ED_KEY }}
+        run: |
+          sign_update="$(find apps/Donkey/.build/artifacts/sparkle/Sparkle/bin -name sign_update -type f | head -n 1)"
+          if [[ -z "$sign_update" ]]; then
+            echo "Sparkle sign_update tool was not found after packaging." >&2
+            exit 1
+          fi
+
+          signature="$(printf '%s' "$DONKEY_SPARKLE_PRIVATE_ED_KEY" | "$sign_update" --ed-key-file - -p dist/Donkey.dmg)"
+          if [[ -z "$signature" ]]; then
+            echo "Sparkle signature was empty." >&2
+            exit 1
+          fi
+          echo "signature=$signature" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/Donkey.dmg dist/Donkey.dmg.sha256 --clobber
+            gh release edit "$TAG" --title "Donkey $TAG"
+          else
+            gh release create "$TAG" dist/Donkey.dmg dist/Donkey.dmg.sha256 \
+              --target "${{ steps.release.outputs.target_sha }}" \
+              --title "Donkey $TAG" \
+              --generate-notes
+          fi
+
+      - name: Promote website, appcast, and aliases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          args=(
+            --repo "${{ github.repository }}"
+            --version "${{ steps.release.outputs.version }}"
+            --build "${{ steps.release.outputs.build }}"
+            --sparkle-ed-signature "${{ steps.sparkle.outputs.signature }}"
+            --asset-name "Donkey.dmg"
+            --commit
+          )
+
+          if [[ "${{ inputs.promote_major }}" != "true" ]]; then
+            args+=(--no-promote-major)
+          fi
+          if [[ "${{ inputs.promote_minor }}" != "true" ]]; then
+            args+=(--no-promote-minor)
+          fi
+          if [[ "${{ inputs.promote_latest }}" != "true" ]]; then
+            args+=(--no-promote-latest)
+          fi
+
+          python3 scripts/promote-github-release.py "${args[@]}"

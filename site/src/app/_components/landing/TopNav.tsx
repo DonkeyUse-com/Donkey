@@ -4,6 +4,7 @@ import Image from "next/image";
 import { ArrowRight } from "lucide-react";
 
 import { PillButton } from "@/app/_components/landing/LandingPrimitives";
+import { DONKEY_DOWNLOAD_URL } from "@/app/_components/landing/data";
 import { useMediaQuery } from "@/app/_components/landing/useMediaQuery";
 import { BLACK } from "@/app/_components/landing/theme";
 
@@ -14,7 +15,7 @@ type Props = {
 };
 
 export function TopNav({
-  ctaHref = "/install",
+  ctaHref = DONKEY_DOWNLOAD_URL,
   ctaLabel = "Download",
   homeHref = "/",
 }: Props) {
