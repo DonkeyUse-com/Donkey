@@ -117,12 +117,19 @@ function createMusic(
 ) {
   const parameters = toJsonObject(request.parameters ?? {});
 
-  return createAudioResponse(request.model, "music", "music-1.mp3", () =>
-    client.music.compose({
-      ...parameters,
-      modelId: request.model === "music_v1" ? "music_v1" : undefined,
-      prompt: request.prompt,
-    } as ElevenLabs.BodyComposeMusicV1MusicPost),
+  return createAudioResponse(
+    request.model,
+    "music",
+    "music-1.mp3",
+    {
+      durationMillis: numberParam(parameters, "music_length_ms", "musicLengthMs"),
+    },
+    () =>
+      client.music.compose({
+        ...parameters,
+        modelId: request.model === "music_v1" ? "music_v1" : undefined,
+        prompt: request.prompt,
+      } as ElevenLabs.BodyComposeMusicV1MusicPost),
   );
 }
 
@@ -131,13 +138,27 @@ function createSound(
   request: AssetGenerationRequest,
 ) {
   const parameters = toJsonObject(request.parameters ?? {});
+  const durationSeconds = numberParam(
+    parameters,
+    "duration_seconds",
+    "durationSeconds",
+  );
 
-  return createAudioResponse(request.model, "sound", "sound-1.mp3", () =>
-    client.textToSoundEffects.convert({
-      ...parameters,
-      modelId: request.model,
-      text: request.prompt,
-    } as ElevenLabs.CreateSoundEffectRequest),
+  return createAudioResponse(
+    request.model,
+    "sound",
+    "sound-1.mp3",
+    {
+      durationMillis: durationSeconds === undefined
+        ? undefined
+        : Math.ceil(durationSeconds * 1000),
+    },
+    () =>
+      client.textToSoundEffects.convert({
+        ...parameters,
+        modelId: request.model,
+        text: request.prompt,
+      } as ElevenLabs.CreateSoundEffectRequest),
   );
 }
 
@@ -160,12 +181,19 @@ function createSpeech(
 
   const parameters = toJsonObject(request.parameters ?? {});
 
-  return createAudioResponse(request.model, "speech", "speech-1.mp3", () =>
-    client.textToSpeech.convert(voiceID, {
-      ...parameters,
-      modelId: request.model,
-      text: request.prompt,
-    } as ElevenLabs.BodyTextToSpeechFull),
+  return createAudioResponse(
+    request.model,
+    "speech",
+    "speech-1.mp3",
+    {
+      fallbackCharacterCost: request.prompt.length,
+    },
+    () =>
+      client.textToSpeech.convert(voiceID, {
+        ...parameters,
+        modelId: request.model,
+        text: request.prompt,
+      } as ElevenLabs.BodyTextToSpeechFull),
   );
 }
 
@@ -173,6 +201,10 @@ async function createAudioResponse(
   model: string,
   mode: string,
   filename: string,
+  usageInput: {
+    durationMillis?: number;
+    fallbackCharacterCost?: number;
+  },
   run: () => AudioResponsePromise,
 ): Promise<AssetGenerationProviderResult> {
   try {
@@ -198,7 +230,10 @@ async function createAudioResponse(
       status: "completed",
       providerGenerationId: rawResponse.headers.get("song-id") ?? undefined,
       outputs: [output],
-      usage: characterCost ? { characterCost } : undefined,
+      usage: audioUsage({
+        characterCost,
+        ...usageInput,
+      }),
       metadata: {
         provider: providerID,
         mode,
@@ -225,11 +260,59 @@ function providerError(message: string, error: unknown) {
   });
 }
 
+function audioUsage(input: {
+  characterCost: string | null;
+  durationMillis?: number;
+  fallbackCharacterCost?: number;
+}): JsonValue | undefined {
+  const usage: Record<string, JsonValue> = {};
+  let hasCharacterUsage = false;
+  if (input.characterCost?.trim()) {
+    usage.characterCost = input.characterCost.trim();
+    hasCharacterUsage = true;
+  } else if (
+    input.fallbackCharacterCost !== undefined &&
+    Number.isSafeInteger(input.fallbackCharacterCost) &&
+    input.fallbackCharacterCost > 0
+  ) {
+    usage.characterCost = input.fallbackCharacterCost;
+    hasCharacterUsage = true;
+  }
+
+  if (
+    !hasCharacterUsage &&
+    input.durationMillis !== undefined &&
+    Number.isSafeInteger(input.durationMillis) &&
+    input.durationMillis > 0
+  ) {
+    usage.durationMillis = input.durationMillis;
+  }
+
+  return Object.keys(usage).length > 0 ? usage : undefined;
+}
+
 function readString(value: Record<string, JsonValue>, ...keys: string[]) {
   for (const key of keys) {
     const candidate = value[key];
     if (typeof candidate === "string" && candidate.trim()) {
       return candidate.trim();
+    }
+  }
+
+  return undefined;
+}
+
+function numberParam(value: Record<string, unknown> | undefined, ...keys: string[]) {
+  for (const key of keys) {
+    const candidate = value?.[key];
+    if (typeof candidate === "number" && Number.isFinite(candidate)) {
+      return candidate;
+    }
+    if (typeof candidate === "string" && candidate.trim()) {
+      const parsed = Number(candidate);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
     }
   }
 

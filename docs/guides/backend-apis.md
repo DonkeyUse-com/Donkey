@@ -85,8 +85,17 @@ checks, provider/model rates, debits, and audit rows.
   The caller must be authenticated and have `user.superUser = true`; the target
   user is addressed by internal `user.id`. The route treats `$1` as `1` hosted
   inference credit (`1,000,000` micros), then writes the grant and ledger entry.
-- Keep rates and user limits configurable through backend-owned data, not the
-  Mac app.
+- Known OpenAI, Gemini, and ElevenLabs models use backend-owned provider price
+  fallbacks unless an active exact or provider/model database rate overrides
+  them. These fallbacks mirror current public provider API prices, apply the
+  supported 30% margin, and round up to the nearest credit micro. Token models
+  are charged per million-token provider rates; hidden reasoning/output tokens
+  are billed as output when the provider reports `totalTokens` greater than
+  visible input plus output tokens. ElevenLabs speech and sound effects use
+  provider-returned billing units when available, while music uses request
+  duration when the request fixes `music_length_ms`.
+- Keep exact/provider-model rate overrides and user limits configurable through
+  backend-owned data, not the Mac app.
 - Usage records may store sanitized provider usage metadata and normalized
   billable units. They must not store prompts, request bodies, screenshots,
   generated assets, provider output payloads, provider output references, or

@@ -7,6 +7,10 @@ import {
   creditStringToMicros,
   zeroCreditMicros,
 } from "@/lib/credits/amounts";
+import {
+  providerCreditPricing,
+  type ProviderCreditPricing,
+} from "@/lib/credits/provider-pricing";
 import { isJsonObject, toJsonValue } from "@/lib/inference/json";
 import type { JsonObject, JsonValue } from "@/lib/inference/providers";
 
@@ -28,11 +32,18 @@ type CreditRateSnapshot = {
   totalTokenCostMicros: bigint;
   characterCostMicros: bigint;
   fallbackCostMicros: bigint;
+  providerPricing?: ProviderCreditPricing;
 };
 
 type NormalizedUsage = {
+  billableOutputTokens: bigint;
+  cachedInputTokens: bigint;
+  durationMillis: bigint;
+  generationCount: bigint;
   inputTokens: bigint;
+  inputAudioTokens: bigint;
   outputTokens: bigint;
+  outputAudioTokens: bigint;
   totalTokens: bigint;
   characterCost: bigint;
 };
@@ -786,10 +797,18 @@ async function resolveCreditRate(
   const globalRate = rates.find((rate) => {
     return rate.route === null && rate.provider === null && rate.model === null;
   });
+  const providerDefaultRate = defaultCreditRate(route, provider, model);
+
+  if (exactRate || providerModelRate || providerDefaultRate.providerPricing) {
+    return rateSnapshot(
+      exactRate ?? providerModelRate,
+      providerDefaultRate,
+    );
+  }
 
   return rateSnapshot(
-    exactRate ?? providerModelRate ?? globalRate,
-    defaultCreditRate(route),
+    globalRate,
+    providerDefaultRate,
   );
 }
 
@@ -822,20 +841,26 @@ function rateSnapshot(
   };
 }
 
-function defaultCreditRate(route: string): CreditRateSnapshot {
+function defaultCreditRate(
+  route: string,
+  provider: string,
+  model: string,
+): CreditRateSnapshot {
   const defaultRequestMicros = route === inferenceUsageRoutes.assetsRefresh
     ? zeroCreditMicros
     : creditStringToMicros("1");
+  const providerPricing = providerCreditPricing(provider, model);
 
   return {
     id: null,
     version: null,
-    baseCostMicros: defaultRequestMicros,
+    baseCostMicros: providerPricing ? zeroCreditMicros : defaultRequestMicros,
     inputTokenCostMicros: zeroCreditMicros,
     outputTokenCostMicros: zeroCreditMicros,
     totalTokenCostMicros: zeroCreditMicros,
     characterCostMicros: zeroCreditMicros,
     fallbackCostMicros: defaultRequestMicros,
+    providerPricing,
   };
 }
 
@@ -852,12 +877,20 @@ function zeroCreditRate(): CreditRateSnapshot {
   };
 }
 
+const unitScalePerMillion = BigInt("1000000");
+
 function costForUsage(rate: CreditRateSnapshot, usage: NormalizedUsage) {
+  if (rate.providerPricing) {
+    return costForProviderPricing(rate, usage);
+  }
+
   const hasBillableUsage =
     usage.inputTokens > zeroCreditMicros ||
     usage.outputTokens > zeroCreditMicros ||
     usage.totalTokens > zeroCreditMicros ||
-    usage.characterCost > zeroCreditMicros;
+    usage.characterCost > zeroCreditMicros ||
+    usage.durationMillis > zeroCreditMicros ||
+    usage.generationCount > zeroCreditMicros;
   if (!hasBillableUsage) {
     return rate.fallbackCostMicros;
   }
@@ -871,41 +904,206 @@ function costForUsage(rate: CreditRateSnapshot, usage: NormalizedUsage) {
   );
 }
 
+function costForProviderPricing(
+  rate: CreditRateSnapshot,
+  usage: NormalizedUsage,
+) {
+  const pricing = providerPricingForUsage(rate.providerPricing, usage);
+  if (!pricing) {
+    return rate.fallbackCostMicros;
+  }
+
+  const inputAudioTokens = minBigint(usage.inputAudioTokens, usage.inputTokens);
+  const outputAudioTokens = minBigint(usage.outputAudioTokens, usage.outputTokens);
+  const cachedInputTokens = minBigint(
+    usage.cachedInputTokens,
+    usage.inputTokens - inputAudioTokens,
+  );
+  const uncachedInputTokens = maxBigint(
+    zeroCreditMicros,
+    usage.inputTokens - inputAudioTokens - cachedInputTokens,
+  );
+  const textOutputTokens = maxBigint(
+    zeroCreditMicros,
+    usage.billableOutputTokens - outputAudioTokens,
+  );
+  const inputTokenRate = pricing.inputTokenCostMicrosPerMillion ?? zeroCreditMicros;
+  const cachedInputTokenRate =
+    pricing.cachedInputTokenCostMicrosPerMillion ?? inputTokenRate;
+  const outputTokenRate = pricing.outputTokenCostMicrosPerMillion ?? zeroCreditMicros;
+  const inputAudioTokenRate =
+    pricing.inputAudioTokenCostMicrosPerMillion ?? inputTokenRate;
+  const outputAudioTokenRate =
+    pricing.outputAudioTokenCostMicrosPerMillion ?? outputTokenRate;
+
+  const tokenAndUnitCostMicros =
+    perMillionCost(uncachedInputTokens, inputTokenRate) +
+    perMillionCost(cachedInputTokens, cachedInputTokenRate) +
+    perMillionCost(inputAudioTokens, inputAudioTokenRate) +
+    perMillionCost(textOutputTokens, outputTokenRate) +
+    perMillionCost(outputAudioTokens, outputAudioTokenRate) +
+    usage.characterCost * (pricing.characterCostMicros ?? zeroCreditMicros) +
+    usage.generationCount * (pricing.generationCostMicros ?? zeroCreditMicros);
+  const durationCostMicros = ceilDivide(
+    usage.durationMillis * (pricing.durationSecondCostMicros ?? zeroCreditMicros),
+    BigInt(1000),
+  );
+  const costMicros =
+    tokenAndUnitCostMicros +
+    (pricing.durationCostOnlyWhenNoTokenUsage && tokenAndUnitCostMicros > zeroCreditMicros
+      ? zeroCreditMicros
+      : durationCostMicros);
+
+  return costMicros > zeroCreditMicros ? costMicros : rate.fallbackCostMicros;
+}
+
+function providerPricingForUsage(
+  pricing: ProviderCreditPricing | undefined,
+  usage: NormalizedUsage,
+) {
+  if (!pricing) {
+    return undefined;
+  }
+
+  const contextTokens = usage.totalTokens > zeroCreditMicros
+    ? usage.totalTokens
+    : usage.inputTokens + usage.outputTokens;
+  if (
+    pricing.longContext &&
+    pricing.longContextThresholdTokens &&
+    contextTokens > pricing.longContextThresholdTokens
+  ) {
+    return {
+      ...pricing,
+      ...pricing.longContext,
+      longContext: undefined,
+    };
+  }
+
+  return pricing;
+}
+
+function perMillionCost(units: bigint, microsPerMillion: bigint) {
+  if (units <= zeroCreditMicros || microsPerMillion <= zeroCreditMicros) {
+    return zeroCreditMicros;
+  }
+
+  return ceilDivide(units * microsPerMillion, unitScalePerMillion);
+}
+
+function ceilDivide(numerator: bigint, denominator: bigint) {
+  if (denominator <= zeroCreditMicros) {
+    throw new Error("Cannot divide by zero.");
+  }
+  if (numerator <= zeroCreditMicros) {
+    return zeroCreditMicros;
+  }
+
+  return (numerator + denominator - BigInt(1)) / denominator;
+}
+
+function minBigint(left: bigint, right: bigint) {
+  return left < right ? left : right;
+}
+
+function maxBigint(left: bigint, right: bigint) {
+  return left > right ? left : right;
+}
+
 function normalizeProviderUsage(usage: JsonValue | undefined): NormalizedUsage {
   if (!usage || !isJsonObject(usage)) {
     return emptyNormalizedUsage();
   }
 
+  const inputTokens = bigintFromJson(
+    usage.input_tokens,
+    usage.inputTokens,
+    usage.promptTokenCount,
+    usage.prompt_tokens,
+  );
+  const outputTokens = bigintFromJson(
+    usage.output_tokens,
+    usage.outputTokens,
+    usage.candidatesTokenCount,
+    usage.completion_tokens,
+  );
+  const totalTokens = bigintFromJson(
+    usage.total_tokens,
+    usage.totalTokens,
+    usage.totalTokenCount,
+  );
+  const promptTokenDetails =
+    usage.promptTokensDetails ?? usage.prompt_tokens_details;
+  const candidateTokenDetails =
+    usage.candidatesTokensDetails ?? usage.candidates_tokens_details;
+  const inputAudioTokens = bigintFromJson(
+    nestedJsonValue(usage, "input_tokens_details", "audio_tokens"),
+    nestedJsonValue(usage, "inputTokensDetails", "audioTokens"),
+    nestedJsonValue(usage, "prompt_tokens_details", "audio_tokens"),
+    nestedJsonValue(usage, "promptTokensDetails", "audioTokens"),
+    usage.input_audio_tokens,
+    usage.inputAudioTokens,
+    modalityTokenCount(promptTokenDetails, "audio"),
+  );
+  const outputAudioTokens = bigintFromJson(
+    nestedJsonValue(usage, "output_tokens_details", "audio_tokens"),
+    nestedJsonValue(usage, "outputTokensDetails", "audioTokens"),
+    nestedJsonValue(usage, "completion_tokens_details", "audio_tokens"),
+    nestedJsonValue(usage, "completionTokensDetails", "audioTokens"),
+    usage.output_audio_tokens,
+    usage.outputAudioTokens,
+    modalityTokenCount(candidateTokenDetails, "audio"),
+  );
+  const billableOutputTokens = maxBigint(
+    outputTokens,
+    totalTokens - inputTokens,
+  );
+
   return {
-    inputTokens: bigintFromJson(
-      usage.input_tokens,
-      usage.inputTokens,
-      usage.promptTokenCount,
-      usage.prompt_tokens,
-    ),
-    outputTokens: bigintFromJson(
-      usage.output_tokens,
-      usage.outputTokens,
-      usage.candidatesTokenCount,
-      usage.completion_tokens,
-    ),
-    totalTokens: bigintFromJson(
-      usage.total_tokens,
-      usage.totalTokens,
-      usage.totalTokenCount,
+    billableOutputTokens,
+    cachedInputTokens: bigintFromJson(
+      nestedJsonValue(usage, "input_tokens_details", "cached_tokens"),
+      nestedJsonValue(usage, "inputTokensDetails", "cachedTokens"),
+      usage.cached_input_tokens,
+      usage.cachedInputTokens,
+      usage.cachedContentTokenCount,
     ),
     characterCost: bigintFromJson(
       usage.characterCost,
       usage.character_cost,
       usage.characters,
     ),
+    durationMillis: bigintFromJson(
+      usage.durationMillis,
+      usage.duration_millis,
+      usage.durationMS,
+      usage.duration_ms,
+      usage.audioDurationMillis,
+      usage.audio_duration_millis,
+    ),
+    generationCount: bigintFromJson(
+      usage.generationCount,
+      usage.generation_count,
+      usage.generations,
+    ),
+    inputAudioTokens,
+    inputTokens,
+    outputAudioTokens,
+    outputTokens,
+    totalTokens,
   };
 }
 
 function emptyNormalizedUsage(): NormalizedUsage {
   return {
+    billableOutputTokens: zeroCreditMicros,
+    cachedInputTokens: zeroCreditMicros,
     characterCost: zeroCreditMicros,
+    durationMillis: zeroCreditMicros,
+    generationCount: zeroCreditMicros,
+    inputAudioTokens: zeroCreditMicros,
     inputTokens: zeroCreditMicros,
+    outputAudioTokens: zeroCreditMicros,
     outputTokens: zeroCreditMicros,
     totalTokens: zeroCreditMicros,
   };
@@ -913,15 +1111,58 @@ function emptyNormalizedUsage(): NormalizedUsage {
 
 function normalizedUsageJson(usage: NormalizedUsage): JsonObject {
   return {
+    billableOutputTokens: usage.billableOutputTokens.toString(),
+    cachedInputTokens: usage.cachedInputTokens.toString(),
     characterCost: usage.characterCost.toString(),
+    durationMillis: usage.durationMillis.toString(),
+    generationCount: usage.generationCount.toString(),
+    inputAudioTokens: usage.inputAudioTokens.toString(),
     inputTokens: usage.inputTokens.toString(),
+    outputAudioTokens: usage.outputAudioTokens.toString(),
     outputTokens: usage.outputTokens.toString(),
     totalTokens: usage.totalTokens.toString(),
   };
 }
 
-function bigintFromJson(...values: (JsonValue | undefined)[]) {
+function nestedJsonValue(
+  value: JsonObject,
+  objectKey: string,
+  nestedKey: string,
+): JsonValue | undefined {
+  const nested = value[objectKey];
+  if (!isJsonObject(nested)) {
+    return undefined;
+  }
+
+  return nested[nestedKey];
+}
+
+function modalityTokenCount(value: JsonValue | undefined, modality: string) {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  let tokens = zeroCreditMicros;
+  for (const item of value) {
+    if (!isJsonObject(item)) {
+      continue;
+    }
+    const itemModality = stringFromJson(item.modality ?? item.type);
+    if (itemModality?.toLowerCase() !== modality) {
+      continue;
+    }
+    tokens += bigintFromJson(item.tokenCount, item.token_count, item.tokens);
+  }
+
+  return tokens;
+}
+
+function bigintFromJson(...values: (JsonValue | bigint | undefined)[]) {
   for (const value of values) {
+    if (typeof value === "bigint" && value >= zeroCreditMicros) {
+      return value;
+    }
+
     if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
       return BigInt(value);
     }
@@ -932,6 +1173,10 @@ function bigintFromJson(...values: (JsonValue | undefined)[]) {
   }
 
   return zeroCreditMicros;
+}
+
+function stringFromJson(value: JsonValue | undefined) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function billingStatusFor(status: InferenceUsageStatus, creditCostMicros: bigint) {
