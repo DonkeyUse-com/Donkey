@@ -188,12 +188,12 @@ private struct DonkeyGoogleSignInScreen<StatusText: View>: View {
                 Button {
                     authCoordinator.beginGoogleSignIn()
                 } label: {
-                    GoogleSignUpAsset()
+                    GoogleContinueAsset()
                         .opacity(buttonIsDisabled ? 0.58 : 1)
                 }
                 .buttonStyle(.plain)
                 .disabled(buttonIsDisabled)
-                .accessibilityLabel("Sign up with Google")
+                .accessibilityLabel("Continue with Google")
 
                 statusText()
                     .font(.system(size: 14, weight: .medium))
@@ -201,10 +201,6 @@ private struct DonkeyGoogleSignInScreen<StatusText: View>: View {
                     .frame(height: 20)
             }
             .frame(width: 360, height: 184)
-            .background(
-                RoundedRectangle(cornerRadius: 44, style: .continuous)
-                    .fill(Color(red: 0.06, green: 0.06, blue: 0.055))
-            )
 
             Spacer(minLength: 170)
         }
@@ -232,7 +228,7 @@ private struct DonkeyAppIconMark: View {
     }()
 }
 
-private struct GoogleSignUpAsset: View {
+private struct GoogleContinueAsset: View {
     var body: some View {
         Group {
             if let image = Self.image {
@@ -241,15 +237,15 @@ private struct GoogleSignUpAsset: View {
                     .interpolation(.high)
                     .scaledToFit()
             } else {
-                GoogleSignUpFallback()
+                GoogleContinueFallback()
             }
         }
-        .frame(width: 179, height: 40)
+        .frame(width: 189, height: 40)
     }
 
     private static let image: NSImage? = {
         guard let url = Bundle.module.url(
-            forResource: "google-sign-up-dark-rounded",
+            forResource: "google-continue-dark-rounded",
             withExtension: "png"
         ) else {
             return nil
@@ -259,7 +255,7 @@ private struct GoogleSignUpAsset: View {
     }()
 }
 
-private struct GoogleSignUpFallback: View {
+private struct GoogleContinueFallback: View {
     var body: some View {
         HStack(spacing: 12) {
             Text("G")
@@ -277,7 +273,7 @@ private struct GoogleSignUpFallback: View {
                     )
                 )
 
-            Text("Sign up with Google")
+            Text("Continue with Google")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.white)
         }

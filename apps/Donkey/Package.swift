@@ -61,7 +61,7 @@ let package = Package(
             ],
             resources: [
                 .copy("Resources/donkey-app-icon.png"),
-                .copy("Resources/google-sign-up-dark-rounded.png"),
+                .copy("Resources/google-continue-dark-rounded.png"),
                 .copy("Resources/theme.json")
             ]
         ),
