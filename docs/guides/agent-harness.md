@@ -201,8 +201,9 @@ what can be acted on, and what policies apply.
 
 A useful context packet includes the current turn, a bounded summary of recent
 thread events, relevant assets, active action state, selected app/window facts
-when available, task definitions and supported capabilities, permission policy,
-safety state, and trace ids. The packet should be shaped for the consumer:
+when available, task definitions, app-finder catalog entries, supported
+capabilities, permission policy, safety state, and trace ids. The packet should
+be shaped for the consumer:
 conversation response, intent classification, planner hint, review-plan
 creation, memory retrieval, observation, and recovery do not need the same
 fields. Query-matched memory for natural-language prompt text should not be

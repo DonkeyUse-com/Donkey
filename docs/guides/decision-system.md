@@ -23,11 +23,13 @@ For local app work, the model receives:
 
 - the current command
 - supported runtime task definitions
+- an app-finder catalog of installed apps with descriptions, support status,
+  declared capabilities, and control profiles when available
 - safety and execution expectations encoded in task metadata
 
-The model returns strict JSON, not free-form instructions. The result is decoded into a `TaskIntent`. If the intent names an existing task definition, the catalog validates that definition. If it names the generic local-app interaction capability, the catalog resolves the requested app from local memory and app lookup, then materializes a transient task definition from the typed `actionPlan`.
+The model returns strict JSON, not free-form instructions. The result is decoded into a `TaskIntent`. If the intent names an existing task definition, the catalog validates that definition. If it names the generic local-app interaction capability, the model must ground the selected app in the app-finder catalog when one was supplied. The catalog then resolves the requested app from local memory and app lookup, and materializes a transient task definition from the typed `actionPlan`.
 
-For dynamic local-item and local-app interaction capabilities, the app or item name comes from the typed model output. Catalog and memory matching happen after that typed output exists, so lookup is scoped to structured fields such as `targetAppName`, `entities.appName`, or a resolved target id. That inference is not execution authority; the catalog still resolves and verifies the target before any action runs.
+For dynamic local-item capabilities, the app or item name comes from the typed model output. For dynamic local-app interactions, the app name is accepted only when it can be matched to a supplied app-finder catalog entry with `supportStatus=supported` and a selected declared capability. Catalog and memory matching happen after typed output exists, so lookup is scoped to structured fields such as `targetAppName`, `entities.appName`, `metadata.appFinder.selectedAppID`, or a resolved target id. That inference is not execution authority; the catalog still resolves and verifies the target before any action runs.
 
 The `TaskIntent` wire format always includes an `actionPlan` object. Non-planned task types must return an empty `actionPlan.tools` array; non-empty action plans are accepted only for task definitions that explicitly opt into model-planned local-app interaction.
 
@@ -44,6 +46,17 @@ For this capability the model must provide:
 - `actionPlan.tools`, a typed sequence of allowed local tools
 - `actionPlan.inputEntity`, usually `query` when `ui.setText` is present
 - `actionPlan.controlID`, `actionPlan.focusKey`, and `actionPlan.verification` for the guarded UI strategy
+
+When an app-finder catalog is present, the model must also provide:
+
+- `metadata.appFinder.selectedAppID`
+- `metadata.appFinder.selectedCapabilityID`
+- `metadata.appFinder.controlProfile`
+
+The selected app id must exist in the catalog, the catalog entry must be
+`supported`, and the selected capability/control profile must be declared on
+that entry. Catalog entries marked `candidate`, `unsupported`, or `denied` are
+not executable targets.
 
 The supported plan tools are intentionally small:
 
@@ -67,6 +80,7 @@ The model may choose tools, entities, target app, and confidence. Website naviga
 The catalog resolves dynamic targets through the agent memory store, Spotlight/app lookup, and bounded filesystem lookup. A planned action only proceeds when:
 
 - model confidence is high enough
+- app-finder metadata matches a supported app/capability when a catalog was supplied
 - the target app or item is available
 - required entities are present
 - every planned tool is in the allowlist
@@ -95,6 +109,6 @@ Weather, Music, and document form-fill fixtures remain useful for tests and repl
 
 - Prompt command handling starts in `apps/Donkey/Sources/Donkey/PointerPromptCommandHandler.swift`.
 - Harness routing and context packet assembly live in `apps/Donkey/Sources/DonkeyRuntime/AppHarnessTurnRouter.swift`.
-- Task-intent parsing protocol and the hosted Responses adapter live in `apps/Donkey/Sources/DonkeyAI/LocalGenerateTaskIntentAdapter.swift`.
+- Task-intent parsing, app-finder prompt context, and the hosted Responses adapter live in `apps/Donkey/Sources/DonkeyAI/LocalGenerateTaskIntentAdapter.swift`.
 - Catalog validation and generic local-app interaction materialization live in `apps/Donkey/Sources/DonkeyRuntime/LocalAppTaskCatalog.swift`.
 - Guarded execution lives in `apps/Donkey/Sources/DonkeyRuntime/LocalAppTaskLiveRunner.swift` and the action-engine backends.

@@ -25,6 +25,63 @@ public struct LocalAppTarget: Codable, Equatable, Sendable {
     }
 }
 
+public enum LocalAppFinderSupportStatus: String, Codable, CaseIterable, Equatable, Sendable {
+    case supported
+    case candidate
+    case unsupported
+    case denied
+}
+
+public struct LocalAppFinderCapability: Codable, Equatable, Sendable {
+    public var id: String
+    public var summary: String
+    public var controlProfiles: [String]
+    public var requiredEntities: [String]
+
+    public init(
+        id: String,
+        summary: String,
+        controlProfiles: [String] = [],
+        requiredEntities: [String] = []
+    ) {
+        self.id = id
+        self.summary = summary
+        self.controlProfiles = controlProfiles
+        self.requiredEntities = requiredEntities
+    }
+}
+
+public struct LocalAppFinderCatalogEntry: Codable, Equatable, Sendable {
+    public var appID: String
+    public var appName: String
+    public var bundleIdentifier: String?
+    public var description: String
+    public var supportStatus: LocalAppFinderSupportStatus
+    public var capabilities: [LocalAppFinderCapability]
+    public var denyReason: String?
+    public var metadata: [String: String]
+
+    public init(
+        appID: String,
+        appName: String,
+        bundleIdentifier: String? = nil,
+        description: String,
+        supportStatus: LocalAppFinderSupportStatus,
+        capabilities: [LocalAppFinderCapability] = [],
+        denyReason: String? = nil,
+        metadata: [String: String] = [:]
+    ) {
+        self.appID = appID
+        self.appName = appName
+        self.bundleIdentifier = bundleIdentifier
+        self.description = description
+        self.supportStatus = supportStatus
+        self.capabilities = capabilities
+        self.denyReason = denyReason
+        self.metadata = metadata
+    }
+}
+
 public enum LocalAppActionPlanTool: String, Codable, CaseIterable, Equatable, Sendable {
     case openOrFocusApp = "app.openOrFocus"
     case observeApp = "app.observe"

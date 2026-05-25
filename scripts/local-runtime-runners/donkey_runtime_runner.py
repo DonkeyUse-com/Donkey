@@ -617,7 +617,12 @@ def local_llm_prompt_and_limit(request: dict[str, Any]) -> tuple[str, int]:
         ), 320
     task_definitions = request.get("taskDefinitions", [])
     return json_prompt(
-        task_intent_prompt(command, task_definitions, request.get("contextSnippets", [])),
+        task_intent_prompt(
+            command,
+            task_definitions,
+            request.get("contextSnippets", []),
+            request.get("appFinderCatalog", []),
+        ),
         task_intent_schema(task_definitions),
     ), 640
 
@@ -656,7 +661,11 @@ def repair_invalid_task_intent_with_compact_model(
 
     command = str(request.get("command") or "")
     task_definitions = request.get("taskDefinitions", [])
-    compact_prompt_text = compact_task_intent_prompt(command, task_definitions)
+    compact_prompt_text = compact_task_intent_prompt(
+        command,
+        task_definitions,
+        request.get("appFinderCatalog", []),
+    )
     try:
         response = llm(
             compact_prompt_text,
@@ -692,7 +701,11 @@ def repair_invalid_task_intent_with_compact_model(
 def compact_task_intent_output(llm: Any, request: dict[str, Any]) -> tuple[str, dict[str, str]]:
     command = str(request.get("command") or "")
     task_definitions = request.get("taskDefinitions", [])
-    compact_prompt_text = compact_task_intent_prompt(command, task_definitions)
+    compact_prompt_text = compact_task_intent_prompt(
+        command,
+        task_definitions,
+        request.get("appFinderCatalog", []),
+    )
     try:
         response = llm(
             compact_prompt_text,
@@ -751,14 +764,24 @@ def task_intent_payload_looks_valid(intent: Any) -> bool:
     return all(key in action_plan for key in action_required) and isinstance(action_plan.get("tools"), list)
 
 
-def compact_task_intent_prompt(command: str, task_definitions: list[dict[str, Any]]) -> str:
+def compact_task_intent_prompt(
+    command: str,
+    task_definitions: list[dict[str, Any]],
+    app_finder_catalog: list[dict[str, Any]] | None = None,
+) -> str:
     known_apps = ["Music", "Safari", "Notes", "Numbers"]
+    catalog_apps = [
+        str(entry.get("appName") or "").strip()
+        for entry in (app_finder_catalog or [])
+        if str(entry.get("supportStatus") or "") == "supported"
+        and str(entry.get("appName") or "").strip()
+    ]
     discovered_apps = [
         str((definition.get("targetApp") or {}).get("appName") or "").strip()
         for definition in task_definitions
         if str((definition.get("targetApp") or {}).get("appName") or "").strip()
     ]
-    app_names = ordered_unique(known_apps + discovered_apps + ["Local App"])
+    app_names = ordered_unique(catalog_apps + known_apps + discovered_apps + ["Local App"])
     return "\n".join(
         [
             "<|im_start|>system",
@@ -790,6 +813,39 @@ def ordered_unique(values: list[str]) -> list[str]:
         seen.add(normalized)
         result.append(value)
     return result
+
+
+def compact_app_finder_catalog(entries: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    compact: list[dict[str, Any]] = []
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        item: dict[str, Any] = {
+            "appID": str(entry.get("appID") or ""),
+            "appName": str(entry.get("appName") or ""),
+            "description": str(entry.get("description") or ""),
+            "supportStatus": str(entry.get("supportStatus") or ""),
+        }
+        bundle_identifier = str(entry.get("bundleIdentifier") or "")
+        if bundle_identifier:
+            item["bundleIdentifier"] = bundle_identifier
+        capabilities = entry.get("capabilities")
+        if isinstance(capabilities, list) and capabilities:
+            item["capabilities"] = [
+                {
+                    "id": str(capability.get("id") or ""),
+                    "summary": str(capability.get("summary") or ""),
+                    "controlProfiles": capability.get("controlProfiles") or [],
+                    "requiredEntities": capability.get("requiredEntities") or [],
+                }
+                for capability in capabilities
+                if isinstance(capability, dict)
+            ]
+        deny_reason = str(entry.get("denyReason") or "")
+        if deny_reason:
+            item["denyReason"] = deny_reason
+        compact.append(item)
+    return compact
 
 
 def materialize_compact_task_intent(
@@ -1283,6 +1339,7 @@ def task_intent_prompt(
     command: str,
     task_definitions: list[dict[str, Any]],
     context_snippets: list[Any] | None = None,
+    app_finder_catalog: list[dict[str, Any]] | None = None,
 ) -> str:
     task_lines: list[str] = []
     for definition in task_definitions:
@@ -1319,6 +1376,10 @@ def task_intent_prompt(
         ]
         task_lines.append(" | ".join(item for item in parts if item))
     context = "\n".join(str(item) for item in (context_snippets or [])[:8] if str(item).strip())
+    app_finder_catalog_json = json.dumps(
+        compact_app_finder_catalog(app_finder_catalog),
+        separators=(",", ":"),
+    )
 
     return "\n".join(
         [
@@ -1353,9 +1414,15 @@ def task_intent_prompt(
             "Table output shape: targetAppName=Numbers, entities.appName=Numbers, entities.goal=create requested table, entities.query=<tab-separated rows for the requested table>, actionPlan.tools=[app.openOrFocus, app.observe, ui.newDocument, ui.setText, app.verifyCommand], inputEntity=query, controlID=editor.",
             'Example malformed request output shape: {"taskType":"local_app_interaction","targetAppName":"Notes","entities":{"appName":"Notes","goal":"unclear local writing request"},"normalizedEntities":{"appName":"Notes","goal":"unclear local writing request"},"confidence":0.2,"needsConfirmation":false,"actionPlan":{"tools":[],"inputEntity":"query","controlID":"","focusKey":"","verification":"commandAttempted"},"metadata":{"responseMode":"conversation","assistantResponse":"I can help, but I need a clearer thing to write before opening an app."}}',
             "For every other task type, actionPlan.tools must be empty.",
+            "App finder catalog entries are installed local apps with descriptions, support status, capabilities, and control profiles.",
+            "When App finder catalog JSON is non-empty and you use local_app_interaction, choose the target app only from a catalog entry with supportStatus=supported and a matching capability.",
+            "For local_app_interaction with an app finder choice, set targetAppName and entities.appName to the catalog appName, set metadata.appFinder.selectedAppID to the exact catalog appID, metadata.appFinder.selectedCapabilityID to the chosen capability id, and metadata.appFinder.controlProfile to one control profile from that capability.",
+            "Never select catalog entries with supportStatus=candidate, unsupported, or denied for execution; if no supported app capability fits, choose conversation.",
             f"Command: {command}",
             "Relevant local cache:",
             context,
+            "App finder catalog JSON:",
+            app_finder_catalog_json,
             "Supported task capabilities:",
             "\n".join(task_lines),
         ]

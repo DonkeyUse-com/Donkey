@@ -611,6 +611,117 @@ struct AIHarnessAdapterTests {
     }
 
     @Test
+    func taskIntentDecoderGroundsGenericInteractionInAppFinderCatalog() async throws {
+        let appFinderCatalog = StaticLocalAppAvailabilityProvider(
+            installedBundleIdentifiers: ["com.apple.Music"]
+        ).appFinderCatalogEntries()
+        let adapter = ProcessBackedLocalLLMTaskIntentAdapter(
+            router: AIModelRouter(registry: .defaultHybridPlanner),
+            sidecarRunner: FakeSidecarRunner(
+                result: LocalJSONSidecarResult(
+                    status: .completed,
+                    outputData: try localLLMSidecarOutputData(
+                        outputText: """
+                        {"taskType":"local_app_interaction","targetAppName":"Music","entities":{"appName":"Music","goal":"play media","query":"justin bieber"},"normalizedEntities":{"appName":"Music","goal":"play media","query":"Justin Bieber"},"confidence":0.91,"needsConfirmation":false,"actionPlan":{"tools":["app.openOrFocus","app.observe","ui.focusSearch","ui.setText","ui.pressReturn","app.verifyCommand"],"inputEntity":"query","controlID":"search","focusKey":"Command+F","verification":"commandAttempted"},"metadata":{"appFinder.selectedAppID":"com.apple.Music","appFinder.selectedCapabilityID":"play_media","appFinder.controlProfile":"search_then_enter"}}
+                        """,
+                        metadata: ["local.provider": "donkey-local-llm-sidecar"]
+                    ),
+                    latencyMS: 14,
+                    metadata: ["sidecar.role": "taskIntent"]
+                )
+            )
+        )
+
+        let result = await adapter.parseTaskIntent(
+            TaskIntentAdapterRequest(
+                command: "play some justin bieber",
+                taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
+                appFinderCatalog: appFinderCatalog,
+                sourceTraceID: "trace-app-finder-grounded"
+            )
+        )
+
+        #expect(result.intent?.taskType == "local_app_interaction")
+        #expect(result.intent?.targetApp.appName == "Music")
+        #expect(result.intent?.targetApp.bundleIdentifier == "com.apple.Music")
+        #expect(result.intent?.metadata["appFinder.validated"] == "true")
+        #expect(result.intent?.metadata["appFinder.selectedCapabilityID"] == "play_media")
+        #expect(result.trace.status == .completed)
+    }
+
+    @Test
+    func taskIntentDecoderRejectsGenericInteractionOutsideAppFinderCatalog() async throws {
+        let appFinderCatalog = StaticLocalAppAvailabilityProvider(
+            installedBundleIdentifiers: ["com.apple.Music"]
+        ).appFinderCatalogEntries()
+        let adapter = ProcessBackedLocalLLMTaskIntentAdapter(
+            router: AIModelRouter(registry: .defaultHybridPlanner),
+            sidecarRunner: FakeSidecarRunner(
+                result: LocalJSONSidecarResult(
+                    status: .completed,
+                    outputData: try localLLMSidecarOutputData(
+                        outputText: """
+                        {"taskType":"local_app_interaction","targetAppName":"GarageBand","entities":{"appName":"GarageBand","goal":"play media","query":"justin bieber"},"normalizedEntities":{"appName":"GarageBand","goal":"play media","query":"Justin Bieber"},"confidence":0.91,"needsConfirmation":false,"actionPlan":{"tools":["app.openOrFocus","app.observe","ui.focusSearch","ui.setText","ui.pressReturn","app.verifyCommand"],"inputEntity":"query","controlID":"search","focusKey":"Command+F","verification":"commandAttempted"},"metadata":{"appFinder.selectedAppID":"com.apple.garageband10","appFinder.selectedCapabilityID":"play_media","appFinder.controlProfile":"search_then_enter"}}
+                        """,
+                        metadata: ["local.provider": "donkey-local-llm-sidecar"]
+                    ),
+                    latencyMS: 14,
+                    metadata: ["sidecar.role": "taskIntent"]
+                )
+            )
+        )
+
+        let result = await adapter.parseTaskIntent(
+            TaskIntentAdapterRequest(
+                command: "play some justin bieber",
+                taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
+                appFinderCatalog: appFinderCatalog,
+                sourceTraceID: "trace-app-finder-reject-outside-catalog"
+            )
+        )
+
+        #expect(result.intent == nil)
+        #expect(result.trace.status == .invalidOutput)
+        #expect(result.trace.validationStatus == "invalid")
+    }
+
+    @Test
+    func taskIntentDecoderRejectsDeniedAppFinderSelection() async throws {
+        let appFinderCatalog = StaticLocalAppAvailabilityProvider(
+            installedBundleIdentifiers: ["com.apple.Terminal"]
+        ).appFinderCatalogEntries()
+        let adapter = ProcessBackedLocalLLMTaskIntentAdapter(
+            router: AIModelRouter(registry: .defaultHybridPlanner),
+            sidecarRunner: FakeSidecarRunner(
+                result: LocalJSONSidecarResult(
+                    status: .completed,
+                    outputData: try localLLMSidecarOutputData(
+                        outputText: """
+                        {"taskType":"local_app_interaction","targetAppName":"Terminal","entities":{"appName":"Terminal","goal":"run command","query":"ls"},"normalizedEntities":{"appName":"Terminal","goal":"run command","query":"ls"},"confidence":0.91,"needsConfirmation":false,"actionPlan":{"tools":["app.openOrFocus","app.observe","ui.focusTextEntry","ui.setText","ui.pressReturn","app.verifyCommand"],"inputEntity":"query","controlID":"editor","focusKey":"","verification":"commandAttempted"},"metadata":{"appFinder.selectedAppID":"com.apple.Terminal","appFinder.selectedCapabilityID":"run_command","appFinder.controlProfile":"text_entry_submit"}}
+                        """,
+                        metadata: ["local.provider": "donkey-local-llm-sidecar"]
+                    ),
+                    latencyMS: 14,
+                    metadata: ["sidecar.role": "taskIntent"]
+                )
+            )
+        )
+
+        let result = await adapter.parseTaskIntent(
+            TaskIntentAdapterRequest(
+                command: "run ls in terminal",
+                taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
+                appFinderCatalog: appFinderCatalog,
+                sourceTraceID: "trace-app-finder-reject-denied"
+            )
+        )
+
+        #expect(result.intent == nil)
+        #expect(result.trace.status == .invalidOutput)
+        #expect(result.trace.validationStatus == "invalid")
+    }
+
+    @Test
     func processBackedLocalLLMTaskIntentAdapterTreatsSidecarErrorPayloadAsProviderOutage() async {
         let adapter = ProcessBackedLocalLLMTaskIntentAdapter(
             router: AIModelRouter(registry: .defaultHybridPlanner),
@@ -646,7 +757,9 @@ struct AIHarnessAdapterTests {
     func localModelTaskIntentResolverPassesContextSnippetsSeparatelyFromCommand() async {
         let recorder = TaskIntentRequestRecorder()
         let resolver = LocalModelTaskIntentResolver(
-            catalog: LocalAppTaskCatalog.defaultLocal(),
+            catalog: LocalAppTaskCatalog.defaultLocal(
+                availabilityProvider: StaticLocalAppAvailabilityProvider(installedBundleIdentifiers: ["com.apple.Music"])
+            ),
             adapter: RecordingTaskIntentAdapter(recorder: recorder)
         )
 
@@ -665,6 +778,7 @@ struct AIHarnessAdapterTests {
             "Existing task title: play some justin bieber",
             "Recent thread: assistant could not find a supported action"
         ])
+        #expect(request?.appFinderCatalog.first?.appID == "com.apple.Music")
     }
 
     @Test

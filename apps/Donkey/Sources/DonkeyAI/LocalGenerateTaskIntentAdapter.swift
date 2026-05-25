@@ -6,6 +6,7 @@ public struct TaskIntentAdapterRequest: Equatable, Sendable {
     public var command: String
     public var taskDefinitions: [LocalAppTaskDefinition]
     public var contextSnippets: [String]
+    public var appFinderCatalog: [LocalAppFinderCatalogEntry]
     public var sourceTraceID: String
     public var routeRequest: AIModelRouteRequest
 
@@ -13,6 +14,7 @@ public struct TaskIntentAdapterRequest: Equatable, Sendable {
         command: String,
         taskDefinitions: [LocalAppTaskDefinition],
         contextSnippets: [String] = [],
+        appFinderCatalog: [LocalAppFinderCatalogEntry] = [],
         sourceTraceID: String,
         routeRequest: AIModelRouteRequest = AIModelRouteRequest(
             jobType: .taskIntent,
@@ -23,6 +25,7 @@ public struct TaskIntentAdapterRequest: Equatable, Sendable {
         self.command = command
         self.taskDefinitions = taskDefinitions
         self.contextSnippets = contextSnippets
+        self.appFinderCatalog = appFinderCatalog
         self.sourceTraceID = sourceTraceID
         self.routeRequest = routeRequest
     }
@@ -83,6 +86,7 @@ public struct ProcessBackedLocalLLMTaskIntentAdapter: TaskIntentParsingAdapter {
             command: request.command,
             taskDefinitions: request.taskDefinitions,
             contextSnippets: request.contextSnippets,
+            appFinderCatalog: request.appFinderCatalog,
             sourceTraceID: request.sourceTraceID,
             modelID: entry.modelID,
             cacheDirectory: LocalModelRuntimeExecutableResolver().modelCacheDirectoryPath(
@@ -139,6 +143,7 @@ public struct ProcessBackedLocalLLMTaskIntentAdapter: TaskIntentParsingAdapter {
                 response.outputText,
                 definitions: request.taskDefinitions,
                 originalCommand: request.command,
+                appFinderCatalog: request.appFinderCatalog,
                 sourceModelCallID: "model-call-\(request.sourceTraceID)",
                 parserName: "local-llm-sidecar-v1"
             ) else {
@@ -290,6 +295,7 @@ private struct LocalLLMTaskIntentSidecarRequest: Codable, Equatable, Sendable {
     var command: String
     var taskDefinitions: [LocalAppTaskDefinition]
     var contextSnippets: [String]
+    var appFinderCatalog: [LocalAppFinderCatalogEntry]
     var sourceTraceID: String
     var modelID: String
     var cacheDirectory: String?
@@ -409,6 +415,7 @@ public struct LocalGenerateTaskIntentAdapter: TaskIntentParsingAdapter {
                     outputText,
                     definitions: request.taskDefinitions,
                     originalCommand: request.command,
+                    appFinderCatalog: request.appFinderCatalog,
                     sourceModelCallID: "model-call-\(request.sourceTraceID)",
                     parserName: "local-generate-task-intent-v1"
                   )
@@ -613,6 +620,7 @@ public struct LocalGenerateTaskIntentAdapter: TaskIntentParsingAdapter {
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .prefix(8)
             .joined(separator: "\n")
+        let appFinderCatalog = taskIntentAppFinderCatalogJSON(request.appFinderCatalog)
 
         return [
             "You are Donkey's local task-intent boundary. Return strict JSON only; do not include reasoning.",
@@ -646,9 +654,15 @@ public struct LocalGenerateTaskIntentAdapter: TaskIntentParsingAdapter {
             "Example malformed request output shape: {\"taskType\":\"local_app_interaction\",\"targetAppName\":\"Notes\",\"entities\":{\"appName\":\"Notes\",\"goal\":\"unclear local writing request\"},\"normalizedEntities\":{\"appName\":\"Notes\",\"goal\":\"unclear local writing request\"},\"confidence\":0.2,\"needsConfirmation\":false,\"actionPlan\":{\"tools\":[],\"inputEntity\":\"query\",\"controlID\":\"\",\"focusKey\":\"\",\"verification\":\"commandAttempted\"},\"metadata\":{\"responseMode\":\"conversation\",\"assistantResponse\":\"I can help, but I need a clearer thing to write before opening an app.\"}}",
             "For every other task type, actionPlan.tools must be empty.",
             "For AppleScript-backed capabilities, include compact appleScript.source or appleScript.template metadata only when the provided action is insufficient; prefer task metadata and normalized entities for speed.",
+            "App finder catalog entries are installed local apps with descriptions, support status, capabilities, and control profiles.",
+            "When App finder catalog JSON is non-empty and you use local_app_interaction, choose the target app only from a catalog entry with supportStatus=supported and a matching capability.",
+            "For local_app_interaction with an app finder choice, set targetAppName and entities.appName to the catalog appName, set metadata.appFinder.selectedAppID to the exact catalog appID, metadata.appFinder.selectedCapabilityID to the chosen capability id, and metadata.appFinder.controlProfile to one control profile from that capability.",
+            "Never select catalog entries with supportStatus=candidate, unsupported, or denied for execution; if no supported app capability fits, choose conversation.",
             "Command: \(request.command)",
             "Relevant local cache:",
             context,
+            "App finder catalog JSON:",
+            appFinderCatalog,
             "Supported task capabilities:",
             tasks
         ]
@@ -781,6 +795,7 @@ public struct HostedTaskIntentParsingAdapter: TaskIntentParsingAdapter {
                 outputText,
                 definitions: request.taskDefinitions,
                 originalCommand: request.command,
+                appFinderCatalog: request.appFinderCatalog,
                 sourceModelCallID: "model-call-\(request.sourceTraceID)",
                 parserName: "hosted-responses-v1",
                 parserSource: .onlineModel
@@ -869,10 +884,13 @@ public struct HostedTaskIntentParsingAdapter: TaskIntentParsingAdapter {
     private func promptText(for request: TaskIntentAdapterRequest) -> String {
         let definitions = (try? JSONEncoder().encode(request.taskDefinitions))
             .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        let appFinderCatalog = taskIntentAppFinderCatalogJSON(request.appFinderCatalog)
         return [
             "Command: \(request.command)",
             "Relevant local cache:",
             request.contextSnippets.joined(separator: "\n"),
+            "App finder catalog JSON:",
+            appFinderCatalog,
             "Supported task definitions JSON:",
             definitions
         ].joined(separator: "\n")
@@ -886,6 +904,7 @@ public struct HostedTaskIntentParsingAdapter: TaskIntentParsingAdapter {
         "If Command is conversation, a question, malformed, or lacks a real executable payload, return taskType \"none\", targetAppName \"none\", empty entities, confidence 0, needsConfirmation false, an empty actionPlan, and metadata.responseMode \"conversation\".",
         "For supported actions, choose only a provided taskType and target app. Fill entities and normalizedEntities with the concrete values needed by required entity rules.",
         "Use the generic local_app_interaction task type for executable local app requests that need a model-planned app workflow and do not have a more specific provided task type.",
+        "When App finder catalog JSON is non-empty and you use local_app_interaction, choose the target app only from a catalog entry with supportStatus supported and a matching capability. Set metadata.appFinder.selectedAppID to the exact appID, metadata.appFinder.selectedCapabilityID to the capability id, and metadata.appFinder.controlProfile to one declared control profile. Never select candidate, unsupported, or denied entries for execution.",
         "For local_app_interaction, select the most likely local app, set targetAppName and entities.appName to the human app name, set entities.goal, and when text must be entered set entities.query plus normalizedEntities.query.",
         "For local_app_interaction, fill actionPlan.tools with allowed tools only: app.openOrFocus, app.observe, ui.newDocument, ui.focusSearch, ui.focusAddressBar, ui.focusTextEntry, ui.setText, ui.pressReturn, app.verifyCommand, app.verifyVisibleText.",
         "When ui.setText is present, entities.query and normalizedEntities.query must be non-empty, actionPlan.inputEntity should usually be query, and actionPlan.controlID/focusKey should describe the guarded UI strategy.",
@@ -1045,6 +1064,7 @@ public struct LocalModelTaskIntentResolver: Sendable {
             command: command,
             taskDefinitions: catalog.taskDefinitions,
             contextSnippets: contextSnippets,
+            appFinderCatalog: catalog.appFinderCatalogEntries(),
             sourceTraceID: sourceTraceID
         )
         let result = await adapter.parseTaskIntent(request)
@@ -1115,6 +1135,41 @@ private struct LocalGenerateTagsResponse: Decodable {
 private struct LocalGenerateModelTag: Decodable {
     var name: String
     var size: Int64?
+}
+
+private func taskIntentAppFinderCatalogJSON(_ entries: [LocalAppFinderCatalogEntry]) -> String {
+    let compactEntries = entries.map { entry -> [String: Any] in
+        var value: [String: Any] = [
+            "appID": entry.appID,
+            "appName": entry.appName,
+            "description": entry.description,
+            "supportStatus": entry.supportStatus.rawValue
+        ]
+        if let bundleIdentifier = entry.bundleIdentifier, !bundleIdentifier.isEmpty {
+            value["bundleIdentifier"] = bundleIdentifier
+        }
+        if entry.capabilities.isEmpty == false {
+            value["capabilities"] = entry.capabilities.map { capability -> [String: Any] in
+                [
+                    "id": capability.id,
+                    "summary": capability.summary,
+                    "controlProfiles": capability.controlProfiles,
+                    "requiredEntities": capability.requiredEntities
+                ]
+            }
+        }
+        if let denyReason = entry.denyReason, !denyReason.isEmpty {
+            value["denyReason"] = denyReason
+        }
+        return value
+    }
+    guard compactEntries.isEmpty == false,
+          let data = try? JSONSerialization.data(withJSONObject: compactEntries),
+          let text = String(data: data, encoding: .utf8)
+    else {
+        return "[]"
+    }
+    return text
 }
 
 private enum TaskIntentWireCodec {
@@ -1193,6 +1248,7 @@ private enum TaskIntentWireCodec {
         _ outputText: String,
         definitions: [LocalAppTaskDefinition],
         originalCommand: String,
+        appFinderCatalog: [LocalAppFinderCatalogEntry] = [],
         sourceModelCallID: String,
         parserName: String,
         parserSource: TaskIntentParserSource = .localModel
@@ -1222,11 +1278,32 @@ private enum TaskIntentWireCodec {
             entities["appName"] = appName
             normalizedEntities["appName"] = appName
         }
+        var metadata = wire.metadata.merging(definition.metadata) { current, _ in current }
+        metadata["parser"] = parserName
+
+        let appFinderSelection = validatedAppFinderSelection(
+            wire: wire,
+            definition: definition,
+            appFinderCatalog: appFinderCatalog
+        )
+        if definition.metadata["modelPlanned"] == "true",
+           appFinderCatalog.isEmpty == false,
+           appFinderSelection == nil {
+            return nil
+        }
+        if let appFinderSelection {
+            entities["appName"] = appFinderSelection.entry.appName
+            normalizedEntities["appName"] = appFinderSelection.entry.appName
+            metadata["appFinder.selectedAppID"] = appFinderSelection.entry.appID
+            metadata["appFinder.selectedCapabilityID"] = appFinderSelection.capability.id
+            metadata["appFinder.controlProfile"] = appFinderSelection.controlProfile
+            metadata["appFinder.supportStatus"] = appFinderSelection.entry.supportStatus.rawValue
+            metadata["appFinder.validated"] = "true"
+        }
+
         let missingRequiredEntity = definition.entityRules.first { rule in
             rule.required && normalizedEntities[rule.name] == nil
         }
-        var metadata = wire.metadata.merging(definition.metadata) { current, _ in current }
-        metadata["parser"] = parserName
         if definition.metadata["dynamicTarget"] == "true" {
             metadata["requestedItemName"] = normalizedEntities["appName"] ?? entities["appName"] ?? ""
         }
@@ -1282,7 +1359,7 @@ private enum TaskIntentWireCodec {
                 ? "\(definition.taskType)-needs-\(missingRequiredEntity?.name ?? "confirmation")"
                 : "\(definition.taskType)-\(slug(primaryEntity))",
             taskType: definition.taskType,
-            targetApp: targetApp(from: wire, definition: definition),
+            targetApp: targetApp(from: wire, definition: definition, appFinderEntry: appFinderSelection?.entry),
             entities: entities,
             normalizedEntities: normalizedEntities,
             confidence: confidence,
@@ -1600,8 +1677,17 @@ private enum TaskIntentWireCodec {
 
     private static func targetApp(
         from wire: TaskIntentWire,
-        definition: LocalAppTaskDefinition
+        definition: LocalAppTaskDefinition,
+        appFinderEntry: LocalAppFinderCatalogEntry? = nil
     ) -> LocalAppTarget {
+        if let appFinderEntry {
+            return LocalAppTarget(
+                appName: appFinderEntry.appName,
+                bundleIdentifier: appFinderEntry.bundleIdentifier,
+                titleContains: appFinderEntry.appName,
+                metadata: definition.targetApp.metadata
+            )
+        }
         guard definition.metadata["dynamicTarget"] == "true",
               wire.targetAppName != definition.targetApp.appName else {
             return definition.targetApp
@@ -1613,6 +1699,105 @@ private enum TaskIntentWireCodec {
             titleContains: wire.targetAppName,
             metadata: definition.targetApp.metadata
         )
+    }
+
+    private struct AppFinderSelection {
+        var entry: LocalAppFinderCatalogEntry
+        var capability: LocalAppFinderCapability
+        var controlProfile: String
+    }
+
+    private static func validatedAppFinderSelection(
+        wire: TaskIntentWire,
+        definition: LocalAppTaskDefinition,
+        appFinderCatalog: [LocalAppFinderCatalogEntry]
+    ) -> AppFinderSelection? {
+        guard definition.metadata["modelPlanned"] == "true",
+              appFinderCatalog.isEmpty == false
+        else {
+            return nil
+        }
+
+        guard let entry = appFinderEntry(from: wire, in: appFinderCatalog),
+              entry.supportStatus == .supported,
+              entry.capabilities.isEmpty == false
+        else {
+            return nil
+        }
+
+        let requestedCapabilityID = appFinderMetadataValue(
+            "appFinder.selectedCapabilityID",
+            fallback: "selectedCapabilityID",
+            in: wire
+        )
+        let capability = requestedCapabilityID.flatMap { capabilityID in
+            entry.capabilities.first { $0.id == capabilityID }
+        } ?? (entry.capabilities.count == 1 ? entry.capabilities[0] : nil)
+        guard let capability else {
+            return nil
+        }
+
+        let requestedControlProfile = appFinderMetadataValue(
+            "appFinder.controlProfile",
+            fallback: "controlProfile",
+            in: wire
+        )
+        let controlProfile = requestedControlProfile.flatMap { profile in
+            capability.controlProfiles.contains(profile) ? profile : nil
+        } ?? capability.controlProfiles.first
+        guard let controlProfile else {
+            return nil
+        }
+
+        return AppFinderSelection(
+            entry: entry,
+            capability: capability,
+            controlProfile: controlProfile
+        )
+    }
+
+    private static func appFinderEntry(
+        from wire: TaskIntentWire,
+        in appFinderCatalog: [LocalAppFinderCatalogEntry]
+    ) -> LocalAppFinderCatalogEntry? {
+        let selectedAppID = appFinderMetadataValue(
+            "appFinder.selectedAppID",
+            fallback: "selectedAppID",
+            in: wire
+        )
+        let appNameCandidates = [
+            wire.targetAppName,
+            wire.normalizedEntities["appName"],
+            wire.entities["appName"]
+        ]
+        .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+
+        if let selectedAppID,
+           let entry = appFinderCatalog.first(where: {
+            $0.appID == selectedAppID || $0.bundleIdentifier == selectedAppID
+           }) {
+            return entry
+        }
+
+        return appFinderCatalog.first { entry in
+            appNameCandidates.contains { candidate in
+                LocalAppTaskIntentParser.normalizedPhrase(candidate)
+                    == LocalAppTaskIntentParser.normalizedPhrase(entry.appName)
+                    || candidate == entry.appID
+                    || candidate == entry.bundleIdentifier
+            }
+        }
+    }
+
+    private static func appFinderMetadataValue(
+        _ key: String,
+        fallback: String,
+        in wire: TaskIntentWire
+    ) -> String? {
+        let value = wire.metadata[key] ?? wire.metadata[fallback]
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private static func slug(_ value: String) -> String {

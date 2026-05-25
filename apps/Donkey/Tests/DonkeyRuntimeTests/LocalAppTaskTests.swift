@@ -349,6 +349,31 @@ struct LocalAppTaskTests {
     }
 
     @Test
+    func staticProviderBuildsAppFinderCatalogWithSupportAndDenyMetadata() throws {
+        let provider = StaticLocalAppAvailabilityProvider(
+            installedBundleIdentifiers: [
+                "com.apple.Music",
+                "com.apple.Terminal",
+                "com.example.DraftPad"
+            ],
+            installedApplicationNames: ["DraftPad": "com.example.DraftPad"]
+        )
+        let entries = provider.appFinderCatalogEntries()
+        let music = try #require(entries.first { $0.appID == "com.apple.Music" })
+        let terminal = try #require(entries.first { $0.appID == "com.apple.Terminal" })
+        let draftPad = try #require(entries.first { $0.appID == "com.example.DraftPad" })
+
+        #expect(music.supportStatus == .supported)
+        #expect(music.capabilities.map(\.id) == ["play_media"])
+        #expect(music.capabilities.first?.controlProfiles == ["search_then_enter"])
+        #expect(terminal.supportStatus == .denied)
+        #expect(terminal.capabilities.isEmpty)
+        #expect(terminal.denyReason?.contains("shell") == true)
+        #expect(draftPad.supportStatus == .candidate)
+        #expect(draftPad.capabilities.isEmpty)
+    }
+
+    @Test
     func catalogResolvesGenericModelPlannedTextEntryCreation() throws {
         let catalog = LocalAppTaskCatalog(
             taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
