@@ -44,6 +44,7 @@ const vertexLocation = "global";
 const vertexAIScope = "https://www.googleapis.com/auth/cloud-platform";
 
 export const geminiBrowserInteractionToolType = "donkey_gemini_browser_interaction";
+export const debugUIInspectionToolType = "donkey_debug_ui_inspection";
 
 const fastDecisionSchemaNames = new Set([
   "task_intent_v1",
@@ -57,6 +58,27 @@ const fastDecisionPromptVersions = new Set([
 
 const browserOnlyFunctionExclusions = [
   "drag_and_drop",
+];
+
+const debugUIInspectionFunctionExclusions = [
+  "click",
+  "click_at",
+  "double_click",
+  "drag",
+  "drag_and_drop",
+  "go_back",
+  "go_forward",
+  "hover",
+  "hover_at",
+  "key_combination",
+  "navigate",
+  "open_web_browser",
+  "scroll",
+  "scroll_document",
+  "search",
+  "type",
+  "type_text",
+  "type_text_at",
 ];
 
 export function createGeminiComputerUseProvider(
@@ -92,6 +114,7 @@ export function createGeminiComputerUseProvider(
         details: {
           supportedTools: [
             geminiBrowserInteractionToolType,
+            debugUIInspectionToolType,
           ],
         },
       });
@@ -213,14 +236,17 @@ function geminiGenerateContentParameters(
 function geminiTools(registeredTools: string[], rawTools: JsonValue | undefined): Tool[] {
   const tools: Tool[] = [];
   const hasBrowser = registeredTools.includes(geminiBrowserInteractionToolType);
+  const hasDebugInspection = registeredTools.includes(debugUIInspectionToolType);
 
-  if (hasBrowser) {
+  if (hasBrowser || hasDebugInspection) {
     tools.push({
       computerUse: {
         environment: Environment.ENVIRONMENT_BROWSER,
         excludedPredefinedFunctions: excludedPredefinedFunctions(
           rawTools,
-          browserOnlyFunctionExclusions,
+          hasDebugInspection
+            ? debugUIInspectionFunctionExclusions
+            : browserOnlyFunctionExclusions,
         ),
       },
     });
@@ -557,6 +583,8 @@ function registeredToolTypes(tools: JsonValue | undefined): string[] {
     }
     if (tool.type === geminiBrowserInteractionToolType) {
       registered.add(geminiBrowserInteractionToolType);
+    } else if (tool.type === debugUIInspectionToolType) {
+      registered.add(debugUIInspectionToolType);
     }
   }
   return [...registered];
@@ -751,7 +779,8 @@ function hasExplicitUnsupportedTools(
     if (!isJsonObject(tool)) {
       return true;
     }
-    return tool.type !== geminiBrowserInteractionToolType;
+    return tool.type !== geminiBrowserInteractionToolType &&
+      tool.type !== debugUIInspectionToolType;
   });
 }
 
@@ -772,6 +801,7 @@ function staticModel(model: string, computerUse: boolean): InferenceModel {
             computerUse,
             registeredTools: [
               geminiBrowserInteractionToolType,
+              debugUIInspectionToolType,
             ],
           }
         : { structuredOutputs: true }),

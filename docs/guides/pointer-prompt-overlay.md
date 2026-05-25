@@ -27,6 +27,24 @@ quick local-app actions:
 - Maintain a background agent memory store in Application Support. The store records resolved and missing local-item lookups, prewarms apps, stores runtime task definitions, keeps metadata such as kind/path/bundle ID/source/task/action, indexes records with SQLite FTS5 plus local vectors, and passes a bounded set of matching hints into the agent harness memory section for classifier and model consideration. Protected file folders such as Desktop, Documents, and Downloads stay lazy and are searched only when a user-requested local-item lookup needs them. See `docs/guides/decision-system.md` for how those hints feed typed model decisions and guarded local-app plans.
 - Persist task threads as searchable Core Data conversations with event history, task assets, and per-run runtime coordination for any action work attached to the thread.
 - Keep the overlay non-invasive. Permission setup requests Accessibility, screenshot, and microphone access with user-visible reasons, but the overlay itself does not capture the screen or synthesize input directly. Bounded screenshots and Accessibility reads are used only by guarded local-app workflows.
+- A developer-only UI inspection overlay can be enabled by editing the
+  repo-tracked `apps/Donkey/dev-overlay.json` during debug runs, or by creating
+  `~/Library/Application Support/Donkey/dev-overlay.json`. Production builds do
+  not bundle the repo config and only honor the Application Support path. When
+  no config exists, the config is invalid, or `"enabled": false`, the debug
+  overlay is fully disabled. When enabled, it captures screenshots, asks the
+  hosted read-only inspection route for strict JSON element metadata, and draws
+  click-through boxes beneath Donkey's own prompt/status/spawn UI.
+
+```json
+{
+  "enabled": true,
+  "provider": "openai",
+  "cadenceSeconds": 1.0,
+  "screenScope": "main",
+  "minConfidence": 0.25
+}
+```
 
 ## Technical Guidelines
 
@@ -48,6 +66,12 @@ quick local-app actions:
 - Local item prewarming must run off the main actor and must not eagerly scan protected user folders. Agent memory is stored in SQLite under Application Support and uses FTS5 plus deterministic local embeddings for retrieval; JSONL is only an explicit export/debug format. Cached local-item hits must still point to an existing path or bundle before they are used as an execution target. Runtime task definitions are loaded from agent memory; Weather, Music, and Preview definitions are benchmark fixtures unless a generated/user-reviewed definition for them is present in memory.
 - For scriptable apps, prefer app-native AppleScript task commands before falling back to Accessibility or keyboard input. Submit steps with an explicit structured `controlID` may execute as an Accessibility `AXPress` against button-like controls, with the control bounds carried into action traces. Bounded screenshots may supplement observation/verification according to task metadata, but screenshots remain context evidence and do not directly drive input.
 - Agent visualization overlays are non-interactive, non-activating panels. They may point, explain, and replay what the agent is doing or would do, but they do not synthesize mouse movement. Live keyboard or Accessibility actions remain separate guarded runtime actions. When a local-app action plan is based on an observation, preserve target-window geometry and control bounds on the evidence-backed steps so cursor replay can use pixel-grounded element positions instead of invented coordinates.
+- The developer UI inspection overlay is separate from agent visualization. It
+  is a transparent, non-activating, click-through, keyboard-pass-through AppKit
+  panel at a lower window level than Donkey's interactive UI. It renders
+  CALayer rectangles and labels from model-returned JSON only; provider action
+  calls such as click, type, scroll, drag, navigation, `computer_call`, or
+  `function_call` are rejected instead of executed.
 - Task actions in the notch, including follow-up submission and pause/resume, must cross the model/controller command boundary with the selected task ID.
 - Pointer prompt command handling should emit actionable `com.donkey.app` route/result logs for submitted commands, routing decisions, intent resolution, local action traces, unsupported requests, unavailable apps, and final task status. Action trace logs should state the backend, input mode, whether an element click happened, the control or bounds target, and that the overlay pointer is visual-only.
 
@@ -67,6 +91,11 @@ Manually verify:
 - Normal local-app tasks can produce final visualization steps for observed, navigated, acted, and verified runtime work. Planning stays in the background. Cursor playback should target observed control centers from Accessibility, screenshot understanding, or action traces when those bounds exist, omit ungrounded steps, and must not claim completion unless the runtime verification state supports it.
 - The prompt supports wrapping, Shift-Return newline insertion, Return submission, Escape dismissal, outside-click dismissal, and dragging from non-input areas.
 - File drops on the notch attach to the active or most recent task.
+- With `dev-overlay.json` enabled, interact with underlying applications while
+  the debug boxes are visible; clicks, typing, scrolling, dragging, and Donkey
+  prompt activation should continue to target the underlying app or Donkey UI.
+  Removing the config file or setting `"enabled": false` should hide the debug
+  overlay without relaunching.
 
 ## Source Entry Points
 

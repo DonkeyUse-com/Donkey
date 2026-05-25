@@ -216,6 +216,8 @@ write_info_plist() {
   <string>$escaped_web_base_url</string>
   <key>DonkeyAuthCallbackScheme</key>
   <string>$escaped_callback_scheme</string>
+  <key>DonkeyDevOverlayConfigPath</key>
+  <string>$APP_DIR/dev-overlay.json</string>
   <key>CFBundleURLTypes</key>
   <array>
     <dict>

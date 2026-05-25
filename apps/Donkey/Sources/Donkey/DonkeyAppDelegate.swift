@@ -9,6 +9,7 @@ final class DonkeyAppDelegate: NSObject, NSApplicationDelegate {
     private var loginWindowController: DonkeyLoginWindowController?
     private var permissionSetupController: MacPermissionSetupWindowController?
     private var overlayController: PointerPromptOverlayController?
+    private var debugInspectionCoordinator: DebugUIInspectionCoordinator?
     private var runtimeOnboardingController: LocalRuntimeOnboardingWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -67,6 +68,7 @@ final class DonkeyAppDelegate: NSObject, NSApplicationDelegate {
             andEventID: AEEventID(kAEGetURL)
         )
         overlayController?.stop()
+        debugInspectionCoordinator?.stop()
     }
 
     private func showLoginWindow() {
@@ -111,6 +113,10 @@ final class DonkeyAppDelegate: NSObject, NSApplicationDelegate {
         let controller = PointerPromptOverlayController(model: model)
         overlayController = controller
         controller.show()
+
+        let debugInspectionCoordinator = DebugUIInspectionCoordinator()
+        self.debugInspectionCoordinator = debugInspectionCoordinator
+        debugInspectionCoordinator.start()
 
         let runtimeOnboardingController = LocalRuntimeOnboardingWindowController()
         self.runtimeOnboardingController = runtimeOnboardingController

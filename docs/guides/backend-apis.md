@@ -55,7 +55,10 @@ provider names are configuration/data inside private adapters only.
   adapters. Browser interaction uses Gemini through
   `donkey_gemini_browser_interaction`; guarded macOS desktop interaction uses
   OpenAI through `donkey_openai_mac_desktop_interaction`, which the hosted
-  Responses adapter maps to OpenAI's `computer` tool.
+  Responses adapter maps to OpenAI's `computer` tool. Developer-only read-only
+  UI inspection uses `donkey_debug_ui_inspection`; adapters route it through
+  hosted vision/computer-use-capable models but must not forward or execute UI
+  action calls.
 - The Gemini adapter uses the official `@google/genai` Node/TypeScript SDK for
   general non-streaming chat, structured Responses calls, and browser
   computer-use calls. It uses Vertex AI's global endpoint only when
@@ -69,8 +72,9 @@ provider names are configuration/data inside private adapters only.
   `GOOGLE_APPLICATION_CREDENTIALS_JSON` as a hosted-deploy sensitive env var
   rather than storing Google provider credentials in the Mac app.
 - The OpenAI hosted Responses adapter uses `OPENAI_API_KEY` only for macOS
-  desktop computer-use. Keep that credential in the hosted deployment
-  environment; the Mac app must not carry OpenAI provider credentials.
+  desktop computer-use and developer UI inspection. Keep that credential in the
+  hosted deployment environment; the Mac app must not carry OpenAI provider
+  credentials.
 
 ## Hosted Model Credits
 

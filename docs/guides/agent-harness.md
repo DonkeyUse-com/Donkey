@@ -325,6 +325,15 @@ models may propose UI actions, but the Mac client still owns execution,
 confirmation gates, focus checks, permission policy, screenshots, and
 tool-output feedback.
 
+The developer UI inspection overlay is not an action workflow. It is enabled by
+the repo-tracked `apps/Donkey/dev-overlay.json` during debug runs or by a local
+`dev-overlay.json` file under Donkey's Application Support directory. Production
+builds do not bundle the repo config. The overlay sends screenshots to the
+hosted read-only inspection route only while a config explicitly enables it, and
+accepts strict JSON element metadata only. If a provider returns a
+computer/function action for this route, the client rejects the frame and
+performs no interaction.
+
 ## State And Observability
 
 Task-thread state and action-run state are related but distinct. A thread can be

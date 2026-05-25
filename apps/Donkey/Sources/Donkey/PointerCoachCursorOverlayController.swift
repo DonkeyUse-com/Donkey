@@ -46,7 +46,7 @@ final class PointerCoachCursorOverlayController {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.ignoresMouseEvents = true
-        panel.level = .statusBar
+        panel.level = DonkeyOverlayWindowLevel.pointerPrompt
         panel.collectionBehavior = [
             .canJoinAllSpaces,
             .fullScreenAuxiliary,

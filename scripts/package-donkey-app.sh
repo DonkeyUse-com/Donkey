@@ -195,6 +195,7 @@ if [ -n "$RESOURCE_BUNDLE" ]; then
 elif [ -d "$BUILD_DIR/.build/release/Donkey_Donkey.resources" ]; then
   cp -R "$BUILD_DIR/.build/release/Donkey_Donkey.resources/." "$RESOURCES_DIR/"
 fi
+find "$APP_DIR" -name dev-overlay.json -type f -delete
 prepare_app_icon
 
 SPARKLE_FRAMEWORK="$(find "$BUILD_DIR/.build" -path "*/release/Sparkle.framework" -type d | head -n 1 || true)"

@@ -23,6 +23,7 @@ const providerID = "hosted-responses";
 const openAIProviderID = "openai";
 const openAIBaseURL = "https://api.openai.com/v1";
 const openAIMacDesktopInteractionToolType = "donkey_openai_mac_desktop_interaction";
+const debugUIInspectionToolType = "donkey_debug_ui_inspection";
 const defaultOpenAIComputerUseModel = "gpt-5.5";
 
 export function createHostedResponsesProvider(
@@ -49,9 +50,9 @@ export function createHostedResponsesProvider(
     request: ResponseCreateRequest,
   ): Promise<ResponseCreateResult> {
     ensureConfigured(configured);
-    if (!isOpenAIComputerToolRequest(request.body)) {
+    if (!isOpenAIResponsesToolRequest(request.body)) {
       throw new InferenceProviderError(
-        "OpenAI Responses is only configured for Mac desktop computer use.",
+        "OpenAI Responses is only configured for Mac desktop computer use and read-only debug UI inspection.",
         {
           statusCode: 400,
           code: "openai_computer_tool_required",
@@ -60,6 +61,7 @@ export function createHostedResponsesProvider(
               "computer",
               "computer_use_preview",
               openAIMacDesktopInteractionToolType,
+              debugUIInspectionToolType,
             ],
           },
         },
@@ -99,7 +101,7 @@ export function createHostedResponsesProvider(
     configured,
     capabilities: ["text", "image"],
     responseProviderIDs: [openAIProviderID],
-    canCreateResponse: (request) => isOpenAIComputerToolRequest(request.body),
+    canCreateResponse: (request) => isOpenAIResponsesToolRequest(request.body),
     listModels,
     createResponse,
   };
@@ -116,22 +118,34 @@ function requestBody(body: JsonObject, model: string): JsonObject {
 }
 
 function normalizeOpenAIComputerUseBody(body: JsonObject): JsonObject {
-  if (!hasOpenAIMacDesktopTool(body)) {
+  const hasMacDesktopTool = hasOpenAIMacDesktopTool(body);
+  const hasDebugInspectionTool = hasDebugUIInspectionTool(body);
+  if (!hasMacDesktopTool && !hasDebugInspectionTool) {
     return body;
   }
 
   const tools = body.tools;
   const toolChoice = openAIComputerToolChoice(body.tool_choice);
-  return {
+  const normalized: JsonObject = {
     ...body,
-    instructions: openAIMacDesktopInstructions(body.instructions),
+    instructions: openAIInstructions(
+      body.instructions,
+      hasMacDesktopTool,
+      hasDebugInspectionTool,
+    ),
     ...(toolChoice === undefined ? {} : { tool_choice: toolChoice }),
-    ...(Array.isArray(tools)
-      ? {
-          tools: tools.map(openAIComputerToolReference),
-        }
-      : {}),
   };
+  if (Array.isArray(tools)) {
+    const normalizedTools = tools
+      .map(openAIComputerToolReference)
+      .filter((tool): tool is JsonObject => isJsonObject(tool));
+    if (normalizedTools.length > 0) {
+      normalized.tools = normalizedTools;
+    } else {
+      delete normalized.tools;
+    }
+  }
+  return normalized;
 }
 
 function openAIComputerToolChoice(value: JsonValue | undefined): JsonValue | undefined {
@@ -154,9 +168,13 @@ function openAIComputerToolChoice(value: JsonValue | undefined): JsonValue | und
   };
 }
 
-function openAIComputerToolReference(value: JsonValue): JsonValue {
+function openAIComputerToolReference(value: JsonValue): JsonValue | null {
   if (!isJsonObject(value)) {
     return value;
+  }
+
+  if (value.type === debugUIInspectionToolType) {
+    return null;
   }
 
   if (value.type === openAIMacDesktopInteractionToolType) {
@@ -173,13 +191,32 @@ function openAIComputerToolReference(value: JsonValue): JsonValue {
   return value;
 }
 
-function openAIMacDesktopInstructions(value: JsonValue | undefined) {
+function openAIInstructions(
+  value: JsonValue | undefined,
+  hasMacDesktopTool: boolean,
+  hasDebugInspectionTool: boolean,
+) {
+  const instructions: string[] = [];
+  if (hasMacDesktopTool) {
+    instructions.push(
+      [
+        "Use the OpenAI computer tool for non-browser Mac desktop UI work.",
+        "The Mac client executes returned computer_call actions with focus, safety, permission, and screenshot feedback.",
+      ].join(" "),
+    );
+  }
+  if (hasDebugInspectionTool) {
+    instructions.push(
+      [
+        "Perform read-only macOS UI inspection from the provided screenshot.",
+        "Return strict JSON only and do not return computer_call, function_call, click, type, scroll, drag, or navigation actions.",
+      ].join(" "),
+    );
+  }
+
   return [
     stringValue(value),
-    [
-      "Use the OpenAI computer tool for non-browser Mac desktop UI work.",
-      "The Mac client executes returned computer_call actions with focus, safety, permission, and screenshot feedback.",
-    ].join(" "),
+    ...instructions,
   ].filter(Boolean).join("\n\n");
 }
 
@@ -197,12 +234,15 @@ function staticModel(model: string): InferenceModel {
       baseURL: openAIBaseURL,
       api: "responses",
       computerUse: true,
-      registeredTools: [openAIMacDesktopInteractionToolType],
+      registeredTools: [
+        openAIMacDesktopInteractionToolType,
+        debugUIInspectionToolType,
+      ],
     },
   };
 }
 
-function isOpenAIComputerToolRequest(body: JsonObject) {
+function isOpenAIResponsesToolRequest(body: JsonObject) {
   const tools = body.tools;
   if (!Array.isArray(tools)) {
     return false;
@@ -213,7 +253,8 @@ function isOpenAIComputerToolRequest(body: JsonObject) {
       isJsonObject(tool) &&
       (tool.type === "computer" ||
         tool.type === "computer_use_preview" ||
-        tool.type === openAIMacDesktopInteractionToolType)
+        tool.type === openAIMacDesktopInteractionToolType ||
+        tool.type === debugUIInspectionToolType)
     );
   });
 }
@@ -226,6 +267,17 @@ function hasOpenAIMacDesktopTool(body: JsonObject) {
 
   return tools.some((tool) => {
     return isJsonObject(tool) && tool.type === openAIMacDesktopInteractionToolType;
+  });
+}
+
+function hasDebugUIInspectionTool(body: JsonObject) {
+  const tools = body.tools;
+  if (!Array.isArray(tools)) {
+    return false;
+  }
+
+  return tools.some((tool) => {
+    return isJsonObject(tool) && tool.type === debugUIInspectionToolType;
   });
 }
 

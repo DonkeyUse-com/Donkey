@@ -74,7 +74,7 @@ public struct DonkeyBackendInferenceConfiguration: Equatable, Sendable {
     }
 }
 
-public struct DonkeyBackendInferenceClient {
+public struct DonkeyBackendInferenceClient: @unchecked Sendable {
     public var configuration: DonkeyBackendInferenceConfiguration
     public var httpClient: any AIHTTPClient
     public var fileManager: FileManager

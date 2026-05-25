@@ -280,7 +280,7 @@ final class PointerPromptSpawnOverlayController {
         panel.isReleasedWhenClosed = false
         panel.becomesKeyOnlyIfNeeded = false
         panel.ignoresMouseEvents = true
-        panel.level = .statusBar
+        panel.level = DonkeyOverlayWindowLevel.pointerPrompt
         panel.collectionBehavior = [
             .canJoinAllSpaces,
             .fullScreenAuxiliary,

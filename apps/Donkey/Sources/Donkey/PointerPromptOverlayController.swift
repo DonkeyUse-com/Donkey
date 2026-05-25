@@ -119,7 +119,7 @@ final class PointerPromptOverlayController {
         panel.escapeKeyHandler = { [weak self] in
             self?.dismissActivePromptFromKeyboard()
         }
-        panel.level = .statusBar
+        panel.level = DonkeyOverlayWindowLevel.pointerPrompt
         panel.collectionBehavior = [
             .canJoinAllSpaces,
             .fullScreenAuxiliary,
@@ -162,7 +162,7 @@ final class PointerPromptOverlayController {
         panel.mouseDownHandler = { [weak self] in
             self?.focusStatusComposerTextInputIfAvailable()
         }
-        panel.level = .statusBar
+        panel.level = DonkeyOverlayWindowLevel.pointerPrompt
         panel.collectionBehavior = [
             .canJoinAllSpaces,
             .fullScreenAuxiliary,
