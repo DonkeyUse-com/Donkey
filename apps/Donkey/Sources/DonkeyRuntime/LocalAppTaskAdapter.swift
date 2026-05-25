@@ -24,16 +24,16 @@ public struct LocalAppTaskAdapter: Sendable {
         )
     }
 
-    public func dryRunPlan(
+    public func evidenceBackedActionPlan(
         for intent: TaskIntent,
         observation: LocalAppTaskObservation? = nil
-    ) -> LocalAppTaskDryRunPlan {
+    ) -> LocalAppEvidenceBackedActionPlan {
         guard supports(intent), intent.needsConfirmation == false else {
-            return LocalAppTaskDryRunPlan(
+            return LocalAppEvidenceBackedActionPlan(
                 intent: intent,
                 targetApp: definition.targetApp,
                 steps: [
-                    LocalAppTaskDryRunStep(
+                    LocalAppEvidenceBackedActionStep(
                         id: "parse-intent",
                         role: .parseIntent,
                         status: .blocked,
@@ -42,26 +42,28 @@ public struct LocalAppTaskAdapter: Sendable {
                     )
                 ],
                 terminalState: .failedSafe,
-                canAttemptGuardedLive: false,
+                canExecuteGuardedActions: false,
                 verificationConfidence: 0,
                 metadata: planMetadata
             )
         }
 
         let verification = verificationStatus(for: intent, observation: observation)
-        let steps = resolvedWorkflowSteps(
+        let steps = evidenceBackedWorkflowSteps(
             intent: intent,
             observation: observation,
             verification: verification
         )
+        let canExecuteGuardedActions = definition.metadata["guardedLiveDefault"] != "reviewOnly"
+            && verification.terminalState != .failedSafe
+            && steps.allSatisfy(Self.hasRequiredPreActionEvidence)
 
-        return LocalAppTaskDryRunPlan(
+        return LocalAppEvidenceBackedActionPlan(
             intent: intent,
             targetApp: definition.targetApp,
             steps: steps,
             terminalState: verification.terminalState,
-            canAttemptGuardedLive: definition.metadata["guardedLiveDefault"] != "reviewOnly"
-                && verification.terminalState != .failedSafe,
+            canExecuteGuardedActions: canExecuteGuardedActions,
             verificationConfidence: verification.confidence,
             metadata: planMetadata
         )
@@ -200,6 +202,7 @@ public struct LocalAppTaskAdapter: Sendable {
             "appName": definition.targetApp.appName,
             "bundleIdentifier": definition.targetApp.bundleIdentifier ?? "",
             "guardedLiveRequiresInputPolicy": "true",
+            "evidenceContract": "pre-action-controls-require-accessibility-or-local-ui-understanding-bounds",
             "defaultOSInputBackendAvailable": "true",
             "defaultOSInputBackend": definition.metadata["automationBackend"] == "appleScript"
                 ? "mac-apple-script"
@@ -207,14 +210,14 @@ public struct LocalAppTaskAdapter: Sendable {
         ].merging(definition.metadata) { current, _ in current }
     }
 
-    private func resolvedWorkflowSteps(
+    private func evidenceBackedWorkflowSteps(
         intent: TaskIntent,
         observation: LocalAppTaskObservation?,
         verification: LocalAppTaskVerificationResult
-    ) -> [LocalAppTaskDryRunStep] {
+    ) -> [LocalAppEvidenceBackedActionStep] {
         if definition.workflowSteps.isEmpty {
             return [
-                LocalAppTaskDryRunStep(
+                LocalAppEvidenceBackedActionStep(
                     id: "parse-intent",
                     role: .parseIntent,
                     status: .verified,
@@ -230,7 +233,7 @@ public struct LocalAppTaskAdapter: Sendable {
             if let stepControlID = step.metadata["controlID"] {
                 activeControlID = stepControlID
             }
-            return LocalAppTaskDryRunStep(
+            return LocalAppEvidenceBackedActionStep(
                 id: step.id,
                 role: step.role,
                 status: status(for: step, observation: observation, verificationStatus: verification.status),
@@ -255,17 +258,21 @@ public struct LocalAppTaskAdapter: Sendable {
         case .parseIntent:
             return .verified
         case .launchOrFocusApp:
-            return observation?.appIsFocused == true ? .verified : .projected
+            return observation?.appIsFocused == true ? .verified : .needsEvidence
         case .observeApp:
-            return observation == nil ? .projected : .verified
+            return observation == nil ? .needsEvidence : .verified
         case .focusControl:
             if let controlID = step.metadata["controlID"],
-               observation?.availableControls[controlID] == true {
+               let observation,
+               LocalAppObservationGeometry.hasNormalizedControlBounds(
+                controlID: controlID,
+                metadata: observation.metadata
+               ) {
                 return .verified
             }
-            return .projected
+            return .needsEvidence
         case .enterText, .submit, .custom:
-            return .projected
+            return .needsEvidence
         case .verifyResult:
             return verificationStatus
         }
@@ -320,6 +327,15 @@ public struct LocalAppTaskAdapter: Sendable {
         }
 
         return metadata
+    }
+
+    private static func hasRequiredPreActionEvidence(_ step: LocalAppEvidenceBackedActionStep) -> Bool {
+        switch step.role {
+        case .parseIntent, .launchOrFocusApp, .observeApp, .focusControl:
+            return step.status == .verified
+        case .enterText, .submit, .verifyResult, .custom:
+            return true
+        }
     }
 
     private func verificationStatus(

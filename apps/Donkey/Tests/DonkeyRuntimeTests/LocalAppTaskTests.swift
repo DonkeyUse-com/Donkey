@@ -111,8 +111,8 @@ struct LocalAppTaskTests {
         #expect(intent.metadata["requiresDocumentContext"] == "true")
 
         let plan = LocalAppTaskAdapter(definition: BuiltInLocalAppTaskDefinitions.documentFormFill)
-            .dryRunPlan(for: intent)
-        #expect(plan.canAttemptGuardedLive == false)
+            .evidenceBackedActionPlan(for: intent)
+        #expect(plan.canExecuteGuardedActions == false)
         #expect(plan.metadata["guardedLiveDefault"] == "reviewOnly")
         #expect(plan.steps.map(\.role).contains(.custom))
     }
@@ -152,13 +152,13 @@ struct LocalAppTaskTests {
     }
 
     @Test
-    func genericAdapterProjectsDryRunStepsAndGuardedKeyboardTemplates() throws {
+    func genericAdapterBuildsEvidenceBackedActionPlanAndGuardedKeyboardTemplates() throws {
         let intent = weatherIntent(rawCity: "SF", city: "San Francisco")
         let localAdapter = adapter()
 
-        let plan = localAdapter.dryRunPlan(for: intent)
+        let plan = localAdapter.evidenceBackedActionPlan(for: intent)
         #expect(plan.terminalState == .needsUserReview)
-        #expect(plan.canAttemptGuardedLive == true)
+        #expect(plan.canExecuteGuardedActions == false)
         #expect(plan.verificationConfidence == 0)
         #expect(plan.steps.map(\.role) == [
             .parseIntent,
@@ -191,14 +191,15 @@ struct LocalAppTaskTests {
     func genericAdapterVerifiesObservedVisibleText() throws {
         let intent = weatherIntent(rawCity: "SF", city: "San Francisco")
         let localAdapter = adapter()
-        let plan = localAdapter.dryRunPlan(
+        let plan = localAdapter.evidenceBackedActionPlan(
             for: intent,
             observation: LocalAppTaskObservation(
                 appIsRunning: true,
                 appIsFocused: true,
                 availableControls: ["search": true],
                 visibleText: ["city": "San Francisco, CA"],
-                confidence: 0.91
+                confidence: 0.91,
+                metadata: groundedControlMetadata()
             )
         )
 
@@ -227,7 +228,7 @@ struct LocalAppTaskTests {
         let intent = try #require(resolution.intent)
         let definition = try #require(resolution.definition)
         let localAdapter = LocalAppTaskAdapter(definition: definition)
-        let plan = localAdapter.dryRunPlan(
+        let plan = localAdapter.evidenceBackedActionPlan(
             for: intent,
             observation: LocalAppTaskObservation(
                 appIsRunning: true,
@@ -245,14 +246,15 @@ struct LocalAppTaskTests {
     func mediaPlaybackAdapterPlaysFirstSearchResultAndDoesNotRequireVisibleText() throws {
         let intent = mediaPlaybackIntent(rawQuery: "justin bieber", query: "justin bieber")
         let localAdapter = LocalAppTaskAdapter(definition: BuiltInLocalAppTaskDefinitions.mediaPlayback)
-        let plan = localAdapter.dryRunPlan(
+        let plan = localAdapter.evidenceBackedActionPlan(
             for: intent,
             observation: LocalAppTaskObservation(
                 appIsRunning: true,
                 appIsFocused: true,
                 availableControls: ["search": true],
                 visibleText: [:],
-                confidence: 0.68
+                confidence: 0.68,
+                metadata: groundedControlMetadata()
             )
         )
 
@@ -312,13 +314,14 @@ struct LocalAppTaskTests {
         let intent = try #require(resolution.intent)
         let definition = try #require(resolution.definition)
         let localAdapter = LocalAppTaskAdapter(definition: definition)
-        let plan = localAdapter.dryRunPlan(
+        let plan = localAdapter.evidenceBackedActionPlan(
             for: intent,
             observation: LocalAppTaskObservation(
                 appIsRunning: true,
                 appIsFocused: true,
                 availableControls: ["search": true],
-                confidence: 0.7
+                confidence: 0.7,
+                metadata: groundedControlMetadata()
             )
         )
 
@@ -419,7 +422,7 @@ struct LocalAppTaskTests {
         let resolvedIntent = try #require(resolution.intent)
         let definition = try #require(resolution.definition)
         let localAdapter = LocalAppTaskAdapter(definition: definition)
-        let plan = localAdapter.dryRunPlan(
+        let plan = localAdapter.evidenceBackedActionPlan(
             for: resolvedIntent,
             observation: LocalAppTaskObservation(
                 appIsRunning: true,
@@ -482,7 +485,7 @@ struct LocalAppTaskTests {
 
         let definition = try #require(resolution.definition)
         let intent = try #require(resolution.intent)
-        let plan = catalog.adapter(for: definition).dryRunPlan(for: intent)
+        let plan = catalog.adapter(for: definition).evidenceBackedActionPlan(for: intent)
         #expect(plan.steps.map(\.role).contains(.verifyResult))
 
         let mediaResolution = catalog.resolve(intent: mediaPlaybackIntent(rawQuery: "Coldplay", query: "Coldplay"))
@@ -819,14 +822,16 @@ struct LocalAppTaskTests {
                 appIsRunning: true,
                 appIsFocused: true,
                 availableControls: ["search": true],
-                confidence: 0.5
+                confidence: 0.5,
+                metadata: groundedControlMetadata()
             ),
             finalObservation: LocalAppTaskObservation(
                 appIsRunning: true,
                 appIsFocused: true,
                 availableControls: ["search": true],
                 visibleText: ["city": "San Francisco, CA"],
-                confidence: 0.92
+                confidence: 0.92,
+                metadata: groundedControlMetadata()
             )
         )
         let catalog = LocalAppTaskCatalog(
@@ -854,7 +859,7 @@ struct LocalAppTaskTests {
         )
 
         #expect(result.status == .completed)
-        #expect(result.finalPlan?.terminalState == .completed)
+        #expect(result.finalActionPlan?.terminalState == .completed)
         #expect(result.actionTraces.count == 4)
         #expect(result.actionTraces.allSatisfy { $0.executed })
         #expect(await backend.executedKeys() == ["Command+F", "San Francisco", "Return", "Return"])
@@ -862,7 +867,7 @@ struct LocalAppTaskTests {
         #expect(controller.observeCount == 1)
         #expect(result.workflowProgress.state(for: .parseIntent)?.status == .completed)
         #expect(result.workflowProgress.state(for: .resolveApp)?.status == .completed)
-        #expect(result.workflowProgress.state(for: .dryRun)?.status == .completed)
+        #expect(result.workflowProgress.state(for: .evidencePlan)?.status == .completed)
         #expect(result.workflowProgress.state(for: .approval)?.status == .skipped)
         #expect(result.workflowProgress.state(for: .execute)?.status == .completed)
         #expect(result.workflowProgress.state(for: .verify)?.status == .completed)
@@ -877,14 +882,16 @@ struct LocalAppTaskTests {
                 appIsRunning: true,
                 appIsFocused: true,
                 availableControls: ["search": true],
-                confidence: 0.5
+                confidence: 0.5,
+                metadata: groundedControlMetadata()
             ),
             finalObservation: LocalAppTaskObservation(
                 appIsRunning: true,
                 appIsFocused: true,
                 availableControls: ["search": true],
                 visibleText: [:],
-                confidence: 0.72
+                confidence: 0.72,
+                metadata: groundedControlMetadata()
             )
         )
         let catalog = LocalAppTaskCatalog(
@@ -931,14 +938,16 @@ struct LocalAppTaskTests {
                 appIsRunning: true,
                 appIsFocused: true,
                 availableControls: ["search": true],
-                confidence: 0.5
+                confidence: 0.5,
+                metadata: groundedControlMetadata()
             ),
             finalObservation: LocalAppTaskObservation(
                 appIsRunning: true,
                 appIsFocused: true,
                 availableControls: ["search": true],
                 visibleText: ["city": "San Francisco, CA"],
-                confidence: 0.92
+                confidence: 0.92,
+                metadata: groundedControlMetadata()
             )
         )
         let coordinator = RunCoordinator()
@@ -1274,6 +1283,23 @@ struct LocalAppTaskTests {
             wallClock: Date(timeIntervalSince1970: Double(milliseconds) / 1_000),
             monotonicUptimeNanoseconds: milliseconds * 1_000_000
         )
+    }
+
+    private func groundedControlMetadata(controlID: String = "search") -> [String: String] {
+        var metadata = LocalAppObservationGeometry.targetBoundsMetadata(
+            WindowTargetBounds(x: 100, y: 120, width: 900, height: 700)
+        )
+        metadata.merge(
+            LocalAppObservationGeometry.controlMetadata(
+                controlID: controlID,
+                frame: HotLoopRect(x: 140, y: 180, width: 320, height: 44, space: .screen),
+                source: .accessibility,
+                label: "Search",
+                kind: .searchField,
+                confidence: 0.86
+            )
+        ) { current, _ in current }
+        return metadata
     }
 
     private func temporaryStoreDirectory() -> URL {

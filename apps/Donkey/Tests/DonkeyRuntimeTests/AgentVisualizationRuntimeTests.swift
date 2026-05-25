@@ -6,55 +6,80 @@ import Testing
 @Suite
 struct AgentVisualizationRuntimeTests {
     @Test
-    func resolvedLocalTaskBuildsProjectedLiveVisualizationBeforeExecution() throws {
+    func localAppRunWithoutGroundedTargetsDoesNotCreateCursorPlayback() throws {
         let definition = localAppDefinition()
         let intent = taskIntent(definition: definition)
-        let plan = try #require(LocalAppTaskAgentVisualizationBuilder.projectedPlan(
+        let actionPlan = LocalAppEvidenceBackedActionPlan(
+            intent: intent,
+            targetApp: definition.targetApp,
+            steps: definition.workflowSteps.map { step in
+                LocalAppEvidenceBackedActionStep(
+                    id: step.id,
+                    role: step.role,
+                    status: step.id == "verify" ? .verified : .needsEvidence,
+                    summary: step.summary,
+                    metadata: step.metadata
+                )
+            },
+            terminalState: .completed,
+            canExecuteGuardedActions: true,
+            verificationConfidence: 0.82
+        )
+        let result = LocalAppTaskLiveRunResult(
             command: "create a table in Numbers",
             traceID: "trace-projected-visualization",
+            status: .completed,
             resolution: LocalAppTaskCatalogResolution(
                 status: .resolved,
                 intent: intent,
                 definition: definition,
                 availability: LocalAppAvailability(target: definition.targetApp, isInstalled: true),
                 metadata: ["resolutionSource": "test"]
-            )
-        ))
+            ),
+            initialActionPlan: actionPlan,
+            finalActionPlan: actionPlan,
+            observation: LocalAppTaskObservation(appIsRunning: true, appIsFocused: true, confidence: 0.8)
+        )
+        let plan = try #require(LocalAppTaskAgentVisualizationBuilder.plan(for: result))
 
         #expect(plan.executionMode == .live)
-        #expect(plan.verification.status == .unverified)
+        #expect(plan.verification.status == .verified)
         #expect(plan.usesRealPointer == false)
-        #expect(plan.metadata["source"] == "local-app-projected-workflow")
-        #expect(plan.metadata["workflowStage"] == "preExecution")
+        #expect(plan.metadata["source"] == "local-app-live-runner")
         #expect(plan.metadata["cursorGuideEligible"] == "false")
+        #expect(plan.metadata["cursorGuide.reason"] == "noGroundedTargets")
         #expect(plan.cursorOverlayRequest() == nil)
         #expect(plan.steps.map(\.kind).contains(.observe))
         #expect(plan.steps.map(\.kind).contains(.enterText))
-        #expect(plan.steps.first?.target?.source == .dryRun)
-        #expect(plan.steps.first?.metadata["workflow.stepID"] == "launch")
+        #expect(plan.steps.allSatisfy { $0.target == nil })
+        #expect(plan.steps.first?.metadata["evidencePlan.stepID"] == "launch")
     }
 
     @Test
     func localAppRunBuildsLiveVisualizationPlanWithoutMovingRealPointer() throws {
         let definition = localAppDefinition()
         let intent = taskIntent(definition: definition)
-        let dryRunPlan = LocalAppTaskDryRunPlan(
+        let actionPlan = LocalAppEvidenceBackedActionPlan(
             intent: intent,
             targetApp: definition.targetApp,
             steps: definition.workflowSteps.map { step in
-                LocalAppTaskDryRunStep(
+                LocalAppEvidenceBackedActionStep(
                     id: step.id,
                     role: step.role,
-                    status: step.id == "verify" ? .verified : .projected,
+                    status: step.id == "verify" ? .verified : .needsEvidence,
                     summary: step.summary,
                     metadata: step.metadata
                 )
             },
             terminalState: .completed,
-            canAttemptGuardedLive: true,
+            canExecuteGuardedActions: true,
             verificationConfidence: 0.82
         )
-        let trace = actionTrace(commandID: "intent-set-text", workflowStepID: "set-text")
+        let trace = actionTrace(
+            commandID: "intent-set-text",
+            workflowStepID: "set-text",
+            targetBounds: HotLoopRect(x: 0.35, y: 0.48, width: 0.3, height: 0.08, space: .normalizedTarget)
+        )
         let result = LocalAppTaskLiveRunResult(
             command: "create a table in Numbers",
             traceID: "trace-visual-live",
@@ -65,8 +90,8 @@ struct AgentVisualizationRuntimeTests {
                 definition: definition,
                 availability: LocalAppAvailability(target: definition.targetApp, isInstalled: true)
             ),
-            initialPlan: dryRunPlan,
-            finalPlan: dryRunPlan,
+            initialActionPlan: actionPlan,
+            finalActionPlan: actionPlan,
             observation: LocalAppTaskObservation(appIsRunning: true, appIsFocused: true, confidence: 0.8),
             actionTraces: [trace]
         )
@@ -79,6 +104,7 @@ struct AgentVisualizationRuntimeTests {
         #expect(plan.verification.status == .verified)
         #expect(plan.steps.map(\.kind).contains(.enterText))
         #expect(plan.steps.first(where: { $0.id == "set-text" })?.metadata["actionTrace.executed"] == "true")
+        #expect(cursorRequest.steps.map(\.id) == ["set-text"])
         #expect(cursorRequest.metadata["realPointerMoved"] == "false")
         #expect(cursorRequest.metadata["agentVisualization.executionMode"] == "live")
     }
@@ -109,7 +135,7 @@ struct AgentVisualizationRuntimeTests {
             confidence: 0.9,
             metadata: observationMetadata
         )
-        let dryRunPlan = adapter.dryRunPlan(for: intent, observation: observation)
+        let actionPlan = adapter.evidenceBackedActionPlan(for: intent, observation: observation)
         let result = LocalAppTaskLiveRunResult(
             command: "create a table in Numbers",
             traceID: "trace-grounded-control",
@@ -120,8 +146,8 @@ struct AgentVisualizationRuntimeTests {
                 definition: definition,
                 availability: LocalAppAvailability(target: definition.targetApp, isInstalled: true)
             ),
-            initialPlan: dryRunPlan,
-            finalPlan: dryRunPlan,
+            initialActionPlan: actionPlan,
+            finalActionPlan: actionPlan,
             observation: observation
         )
 
@@ -206,7 +232,7 @@ struct AgentVisualizationRuntimeTests {
                     target: AgentVisualizationStepTarget(
                         point: HotLoopPoint(x: 0.38, y: 0.46, space: .normalizedTarget),
                         description: "first cell",
-                        source: .dryRun,
+                        source: .evidenceBackedActionPlan,
                         confidence: 0.58
                     )
                 )
@@ -231,6 +257,40 @@ struct AgentVisualizationRuntimeTests {
         #expect(grounded.steps.first?.metadata["target.windowID"] == "44")
         #expect(grounded.steps.first?.target?.metadata["grounding.source"] == AgentVisualizationGroundingSource.windowMetadata.rawValue)
         #expect(grounded.steps.first?.target?.point?.x == 0.38)
+    }
+
+    @Test
+    func windowMetadataGroundingDoesNotInventCursorTargets() throws {
+        let plan = AgentVisualizationPlan(
+            title: "Worked in Numbers",
+            executionMode: .live,
+            sourceTraceID: "trace-no-target-grounding",
+            steps: [
+                AgentVisualizationStep(
+                    id: "observe",
+                    kind: .observe,
+                    label: "Checking the screen"
+                )
+            ],
+            metadata: ["targetApp": "Numbers"]
+        )
+
+        let grounded = AgentVisualizationGrounder().ground(
+            plan: plan,
+            targetAppName: "Numbers",
+            candidates: [
+                window(
+                    appName: "Numbers",
+                    title: "Untitled",
+                    safetyStatus: .allowed,
+                    reasons: []
+                )
+            ]
+        )
+
+        #expect(grounded.steps.first?.metadata["target.windowID"] == "44")
+        #expect(grounded.steps.first?.target == nil)
+        #expect(grounded.cursorOverlayRequest() == nil)
     }
 
     @Test
@@ -327,7 +387,8 @@ struct AgentVisualizationRuntimeTests {
 
     private func actionTrace(
         commandID: String,
-        workflowStepID: String
+        workflowStepID: String,
+        targetBounds: HotLoopRect? = nil
     ) -> ActionEngineCommandTrace {
         let command = ActionEngineCommand(
             id: commandID,
@@ -335,6 +396,7 @@ struct AgentVisualizationRuntimeTests {
             targetID: "local-app-task-local-app-interaction",
             kind: .key,
             issuedAt: timestamp(10),
+            targetBounds: targetBounds,
             key: "Item\tValue",
             metadata: [
                 "workflowStepID": workflowStepID,

@@ -116,7 +116,7 @@ struct AgentVisualizationCursorPathFeedbackTests {
                     target: AgentVisualizationStepTarget(
                         point: HotLoopPoint(x: 0.30, y: 0.22, space: .normalizedTarget),
                         description: "A",
-                        source: .dryRun,
+                        source: .evidenceBackedActionPlan,
                         confidence: 0.8
                     ),
                     travelDuration: 0.4,
@@ -129,7 +129,7 @@ struct AgentVisualizationCursorPathFeedbackTests {
                     target: AgentVisualizationStepTarget(
                         point: HotLoopPoint(x: 0.44, y: 0.22, space: .normalizedTarget),
                         description: "B",
-                        source: .dryRun,
+                        source: .evidenceBackedActionPlan,
                         confidence: 0.8
                     ),
                     travelDuration: 0.4,
@@ -142,7 +142,7 @@ struct AgentVisualizationCursorPathFeedbackTests {
                     target: AgentVisualizationStepTarget(
                         point: HotLoopPoint(x: 0.58, y: 0.22, space: .normalizedTarget),
                         description: "C",
-                        source: .dryRun,
+                        source: .evidenceBackedActionPlan,
                         confidence: 0.8
                     ),
                     travelDuration: 0.4,

@@ -96,10 +96,10 @@ public struct GuardedLiveActionSmokeRunner: Sendable {
                 commandTrace: trace,
                 metadata: reportMetadata(latencyReport)
             )
-        case .projectedDryRun:
+        case .skippedNoLiveInput:
             return GuardedLiveActionSmokeResult(
                 status: .skipped,
-                reason: "action engine projected dry-run instead of live input",
+                reason: "action engine skipped live input",
                 commandTrace: trace,
                 metadata: reportMetadata(latencyReport)
             )

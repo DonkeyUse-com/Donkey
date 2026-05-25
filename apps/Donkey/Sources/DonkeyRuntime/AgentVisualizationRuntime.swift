@@ -2,97 +2,34 @@ import DonkeyContracts
 import Foundation
 
 public enum LocalAppTaskAgentVisualizationBuilder {
-    public static func projectedPlan(
-        command: String,
-        traceID: String,
-        resolution: LocalAppTaskCatalogResolution
-    ) -> AgentVisualizationPlan? {
-        guard resolution.status == .resolved,
-              let definition = resolution.definition
-        else {
-            return nil
-        }
-
-        let workflowSteps = definition.workflowSteps.isEmpty
-            ? fallbackWorkflowSteps(for: definition)
-            : definition.workflowSteps
-        let steps = workflowSteps.enumerated().map { index, workflowStep in
-            projectedStep(
-                from: workflowStep,
-                index: index,
-                definition: definition
-            )
-        }
-        guard !steps.isEmpty else { return nil }
-
-        var metadata = [
-            "source": "local-app-projected-workflow",
-            "targetApp": definition.targetApp.appName,
-            "taskType": definition.taskType,
-            "resolution.status": resolution.status.rawValue,
-            "realPointerMoved": "false",
-            "cursorGuideEligible": "false",
-            "grounding.source": AgentVisualizationGroundingSource.dryRun.rawValue,
-            "workflowStage": "preExecution"
-        ].merging(resolution.metadata) { current, _ in current }
-
-        if let intent = resolution.intent {
-            metadata["intent.id"] = intent.intentID
-            metadata["intent.confidence"] = String(intent.confidence)
-            metadata["intent.entityNames"] = intent.entities.keys.sorted().joined(separator: ",")
-        }
-        if !command.isEmpty {
-            metadata["command.present"] = "true"
-        }
-
-        return AgentVisualizationPlan(
-            id: "agent-visualization-\(traceID)-projected",
-            title: "Working in \(definition.targetApp.appName)",
-            executionMode: .live,
-            sourceTraceID: traceID,
-            steps: steps,
-            verification: AgentVisualizationVerificationReport(
-                status: .unverified,
-                summary: "Execution is still in progress.",
-                confidence: 0,
-                evidenceCount: 0,
-                metadata: ["workflowStage": "preExecution"]
-            ),
-            metadata: metadata
-        )
-    }
-
     public static func plan(
         for result: LocalAppTaskLiveRunResult,
         sourceTraceID: String? = nil
     ) -> AgentVisualizationPlan? {
         guard let definition = result.resolution.definition else { return nil }
 
-        let evidencePlan = result.finalPlan ?? result.initialPlan
+        let evidencePlan = result.finalActionPlan ?? result.initialActionPlan
         let initialStepsByID = Dictionary(
-            uniqueKeysWithValues: (result.initialPlan?.steps ?? []).map { ($0.id, $0) }
+            uniqueKeysWithValues: (result.initialActionPlan?.steps ?? []).map { ($0.id, $0) }
         )
-        var steps = (evidencePlan?.steps ?? []).enumerated().map { index, dryRunStep in
+        var steps = (evidencePlan?.steps ?? []).map { actionPlanStep in
             visualizationStep(
-                from: dryRunStep,
-                index: index,
+                from: actionPlanStep,
                 definition: definition,
-                fallbackStep: initialStepsByID[dryRunStep.id],
-                actionTrace: matchingTrace(for: dryRunStep, in: result.actionTraces)
+                fallbackStep: initialStepsByID[actionPlanStep.id],
+                actionTrace: matchingTrace(for: actionPlanStep, in: result.actionTraces)
             )
         }
 
-        let dryRunStepIDs = Set((evidencePlan?.steps ?? []).map(\.id))
+        let actionPlanStepIDs = Set((evidencePlan?.steps ?? []).map(\.id))
         let extraTraceSteps = result.actionTraces
             .filter { trace in
                 guard let workflowStepID = trace.command.metadata["workflowStepID"] else { return true }
-                return !dryRunStepIDs.contains(workflowStepID)
+                return !actionPlanStepIDs.contains(workflowStepID)
             }
-            .enumerated()
-            .map { offset, trace in
+            .map { trace in
                 actionTraceStep(
                     trace,
-                    index: steps.count + offset,
                     definition: definition
                 )
             }
@@ -101,12 +38,7 @@ public enum LocalAppTaskAgentVisualizationBuilder {
         guard !steps.isEmpty else { return nil }
 
         let verification = verificationReport(for: result)
-        let controllerAutomationOnly = !result.actionTraces.isEmpty &&
-            result.actionTraces.allSatisfy { $0.command.kind == .controller }
-        let hasGroundedElementTargets = steps.contains { step in
-            step.target?.metadata["control.bounds.space"] == HotLoopCoordinateSpace.normalizedTarget.rawValue
-        }
-        let cursorGuideEligible = controllerAutomationOnly == false || hasGroundedElementTargets
+        let cursorGuideEligible = steps.contains(where: hasCursorTarget)
         return AgentVisualizationPlan(
             id: "agent-visualization-\(result.traceID)",
             title: title(for: result, definition: definition),
@@ -120,7 +52,7 @@ public enum LocalAppTaskAgentVisualizationBuilder {
                 "taskType": definition.taskType,
                 "realPointerMoved": "false",
                 "cursorGuideEligible": String(cursorGuideEligible),
-                "cursorGuide.reason": cursorGuideEligible ? "" : "controllerAutomationNoElementTargets",
+                "cursorGuide.reason": cursorGuideEligible ? "" : "noGroundedTargets",
                 "actionTraceCount": String(result.actionTraces.count),
                 "workflowStageCount": String(result.workflowProgress.stages.count)
             ].merging(result.metadata.filter { key, _ in
@@ -129,47 +61,16 @@ public enum LocalAppTaskAgentVisualizationBuilder {
         )
     }
 
-    private static func projectedStep(
-        from step: LocalAppTaskWorkflowStepDefinition,
-        index: Int,
-        definition: LocalAppTaskDefinition
-    ) -> AgentVisualizationStep {
-        let metadata = step.metadata.merging([
-            "workflow.stepID": step.id,
-            "workflow.stepRole": step.role.rawValue,
-            "targetApp": definition.targetApp.appName,
-            "projection.status": LocalAppTaskStepStatus.projected.rawValue
-        ]) { current, _ in current }
-
-        return AgentVisualizationStep(
-            id: step.id,
-            kind: kind(for: step.role),
-            label: label(for: step.role, summary: step.summary),
-            target: AgentVisualizationStepTarget(
-                point: targetPoint(for: step.role, index: index),
-                description: step.summary,
-                controlID: step.metadata["controlID"],
-                source: .dryRun,
-                confidence: 0.58,
-                metadata: metadata
-            ),
-            travelDuration: duration(for: step.role).travel,
-            holdDuration: duration(for: step.role).hold,
-            metadata: metadata
-        )
-    }
-
     private static func visualizationStep(
-        from step: LocalAppTaskDryRunStep,
-        index: Int,
+        from step: LocalAppEvidenceBackedActionStep,
         definition: LocalAppTaskDefinition,
-        fallbackStep: LocalAppTaskDryRunStep?,
+        fallbackStep: LocalAppEvidenceBackedActionStep?,
         actionTrace: ActionEngineCommandTrace?
     ) -> AgentVisualizationStep {
         var metadata = step.metadata.merging([
-            "dryRun.stepID": step.id,
-            "dryRun.stepRole": step.role.rawValue,
-            "dryRun.stepStatus": step.status.rawValue,
+            "evidencePlan.stepID": step.id,
+            "evidencePlan.stepRole": step.role.rawValue,
+            "evidencePlan.stepStatus": step.status.rawValue,
             "targetApp": definition.targetApp.appName
         ]) { current, _ in current }
 
@@ -183,26 +84,26 @@ public enum LocalAppTaskAgentVisualizationBuilder {
             }) { current, _ in current }
         }
         let groundedBounds = LocalAppObservationGeometry.normalizedStepBounds(metadata: metadata)
-        let groundedPoint = centerPoint(for: groundedBounds)
-        let actionTracePoint = centerPoint(for: actionTrace?.command.targetBounds)
+        let actionTraceBounds = normalizedBounds(actionTrace?.command.targetBounds)
         let targetSource = groundingSource(
             metadata["control.source"],
-            fallback: actionTrace == nil ? .dryRun : .actionTrace
+            fallback: actionTrace == nil ? .evidenceBackedActionPlan : .actionTrace
+        )
+        let target = stepTarget(
+            point: centerPoint(for: groundedBounds) ?? centerPoint(for: actionTraceBounds),
+            bounds: groundedBounds ?? actionTraceBounds,
+            description: step.summary,
+            controlID: step.metadata["controlID"],
+            source: groundedBounds == nil ? (actionTraceBounds == nil ? nil : .actionTrace) : targetSource,
+            confidence: groundedBounds == nil ? confidence(for: step.status, actionTrace: actionTrace) : 0.9,
+            metadata: metadata
         )
 
         return AgentVisualizationStep(
             id: step.id,
             kind: kind(for: step.role),
             label: label(for: step),
-            target: AgentVisualizationStepTarget(
-                point: groundedPoint ?? actionTracePoint ?? targetPoint(for: step.role, index: index),
-                bounds: groundedBounds ?? normalizedBounds(actionTrace?.command.targetBounds),
-                description: step.summary,
-                controlID: step.metadata["controlID"],
-                source: groundedBounds == nil ? (actionTrace == nil ? .dryRun : .actionTrace) : targetSource,
-                confidence: groundedBounds == nil ? confidence(for: step.status, actionTrace: actionTrace) : 0.9,
-                metadata: metadata
-            ),
+            target: target,
             travelDuration: duration(for: step.role).travel,
             holdDuration: duration(for: step.role).hold,
             metadata: metadata
@@ -211,7 +112,6 @@ public enum LocalAppTaskAgentVisualizationBuilder {
 
     private static func actionTraceStep(
         _ trace: ActionEngineCommandTrace,
-        index: Int,
         definition: LocalAppTaskDefinition
     ) -> AgentVisualizationStep {
         let role = trace.command.metadata["workflowStepRole"] ?? "custom"
@@ -224,9 +124,9 @@ public enum LocalAppTaskAgentVisualizationBuilder {
             id: trace.command.id,
             kind: kind(forActionTraceRole: role),
             label: label,
-            target: AgentVisualizationStepTarget(
-                point: centerPoint(for: trace.command.targetBounds) ?? fallbackPoint(index: index),
-                bounds: trace.command.targetBounds,
+            target: stepTarget(
+                point: centerPoint(for: normalizedBounds(trace.command.targetBounds)),
+                bounds: normalizedBounds(trace.command.targetBounds),
                 description: trace.command.metadata["workflowStepID"] ?? trace.command.id,
                 controlID: trace.command.metadata["controlID"],
                 source: .actionTrace,
@@ -240,7 +140,7 @@ public enum LocalAppTaskAgentVisualizationBuilder {
     }
 
     private static func matchingTrace(
-        for step: LocalAppTaskDryRunStep,
+        for step: LocalAppEvidenceBackedActionStep,
         in traces: [ActionEngineCommandTrace]
     ) -> ActionEngineCommandTrace? {
         traces.first { trace in
@@ -263,10 +163,10 @@ public enum LocalAppTaskAgentVisualizationBuilder {
             status = .failed
         }
 
-        let verificationStep = result.finalPlan?.steps.first(where: { $0.role == .verifyResult })
-            ?? result.initialPlan?.steps.first(where: { $0.role == .verifyResult })
-        let confidence = result.finalPlan?.verificationConfidence
-            ?? result.initialPlan?.verificationConfidence
+        let verificationStep = result.finalActionPlan?.steps.first(where: { $0.role == .verifyResult })
+            ?? result.initialActionPlan?.steps.first(where: { $0.role == .verifyResult })
+        let confidence = result.finalActionPlan?.verificationConfidence
+            ?? result.initialActionPlan?.verificationConfidence
             ?? 0
         return AgentVisualizationVerificationReport(
             status: status,
@@ -289,7 +189,7 @@ public enum LocalAppTaskAgentVisualizationBuilder {
         return "Worked in \(definition.targetApp.appName)"
     }
 
-    private static func label(for step: LocalAppTaskDryRunStep) -> String {
+    private static func label(for step: LocalAppEvidenceBackedActionStep) -> String {
         label(for: step.role, summary: step.summary)
     }
 
@@ -359,8 +259,8 @@ public enum LocalAppTaskAgentVisualizationBuilder {
         switch status {
         case .verified:
             return 0.84
-        case .projected:
-            return 0.58
+        case .needsEvidence:
+            return 0.35
         case .blocked:
             return 0.2
         }
@@ -377,34 +277,6 @@ public enum LocalAppTaskAgentVisualizationBuilder {
         default:
             return (0.55, 1.0)
         }
-    }
-
-    private static func targetPoint(
-        for role: LocalAppTaskStepRole,
-        index: Int
-    ) -> HotLoopPoint {
-        switch role {
-        case .parseIntent:
-            return point(0.50, 0.16)
-        case .launchOrFocusApp:
-            return point(0.50, 0.24)
-        case .observeApp:
-            return point(0.50, 0.34)
-        case .focusControl:
-            return point(0.40, 0.44)
-        case .enterText:
-            return point(0.50, 0.54)
-        case .submit:
-            return point(0.62, 0.62)
-        case .verifyResult:
-            return point(0.50, 0.74)
-        case .custom:
-            return fallbackPoint(index: index)
-        }
-    }
-
-    private static func fallbackPoint(index: Int) -> HotLoopPoint {
-        point(min(0.82, 0.28 + Double(index % 4) * 0.16), min(0.86, 0.20 + Double(index / 4) * 0.18))
     }
 
     private static func centerPoint(for rect: HotLoopRect?) -> HotLoopPoint? {
@@ -428,6 +300,40 @@ public enum LocalAppTaskAgentVisualizationBuilder {
         return rect
     }
 
+    private static func stepTarget(
+        point: HotLoopPoint?,
+        bounds: HotLoopRect?,
+        description: String,
+        controlID: String?,
+        source: AgentVisualizationGroundingSource?,
+        confidence: Double,
+        metadata: [String: String]
+    ) -> AgentVisualizationStepTarget? {
+        let usableBounds = normalizedBounds(bounds)
+        guard let source,
+              point != nil || usableBounds != nil
+        else {
+            return nil
+        }
+
+        return AgentVisualizationStepTarget(
+            point: point,
+            bounds: usableBounds,
+            description: description,
+            controlID: controlID,
+            source: source,
+            confidence: confidence,
+            metadata: metadata
+        )
+    }
+
+    private static func hasCursorTarget(_ step: AgentVisualizationStep) -> Bool {
+        if step.target?.point?.space == .normalizedTarget {
+            return true
+        }
+        return step.target?.bounds?.space == .normalizedTarget
+    }
+
     private static func groundingSource(
         _ value: String?,
         fallback: AgentVisualizationGroundingSource
@@ -444,23 +350,6 @@ public enum LocalAppTaskAgentVisualizationBuilder {
         HotLoopPoint(x: min(max(x, 0.04), 0.96), y: min(max(y, 0.06), 0.94), space: .normalizedTarget)
     }
 
-    private static func fallbackWorkflowSteps(
-        for definition: LocalAppTaskDefinition
-    ) -> [LocalAppTaskWorkflowStepDefinition] {
-        [
-            LocalAppTaskWorkflowStepDefinition(
-                id: "observe",
-                role: .observeApp,
-                summary: "Observe \(definition.targetApp.appName)"
-            ),
-            LocalAppTaskWorkflowStepDefinition(
-                id: "verify",
-                role: .verifyResult,
-                summary: "Verify the result"
-            )
-        ]
-    }
-
     private static func actionTraceMetadata(_ trace: ActionEngineCommandTrace) -> [String: String] {
         [
             "actionTrace.commandID": trace.command.id,
@@ -474,8 +363,8 @@ public enum LocalAppTaskAgentVisualizationBuilder {
 
     private static func decisionDescription(_ decision: ActionEngineCommandDecision) -> String {
         switch decision {
-        case .projectedDryRun:
-            return "projectedDryRun"
+        case .skippedNoLiveInput:
+            return "skippedNoLiveInput"
         case .executedLive:
             return "executedLive"
         case .denied(let reason):
@@ -504,7 +393,7 @@ public struct AgentVisualizationGrounder: Sendable {
         }
 
         var grounded = plan
-        grounded.steps = grounded.steps.enumerated().map { index, step in
+        grounded.steps = grounded.steps.map { step in
             var copy = step
             let targetMetadata = [
                 "target.windowID": String(target.windowID),
@@ -520,14 +409,6 @@ public struct AgentVisualizationGrounder: Sendable {
             if var stepTarget = copy.target {
                 stepTarget.metadata = stepTarget.metadata.merging(targetMetadata) { current, _ in current }
                 copy.target = stepTarget
-            } else {
-                copy.target = AgentVisualizationStepTarget(
-                    point: normalizedCenter(for: target, metadata: plan.metadata) ?? fallbackPoint(index: index),
-                    description: target.title ?? target.appName ?? "target window",
-                    source: .windowMetadata,
-                    confidence: 0.68,
-                    metadata: targetMetadata
-                )
             }
             copy.metadata = copy.metadata.merging(targetMetadata) { current, _ in current }
             return copy
@@ -593,33 +474,6 @@ public struct AgentVisualizationGrounder: Sendable {
                 || normalize(candidate.bundleIdentifier ?? "") == normalized
                 || normalize(candidate.title ?? "") == normalized
         }
-    }
-
-    private func normalizedCenter(
-        for target: MacWindowTargetCandidate,
-        metadata: [String: String]
-    ) -> HotLoopPoint? {
-        guard let screenWidth = Double(metadata["screen.width"] ?? ""),
-              let screenHeight = Double(metadata["screen.height"] ?? ""),
-              screenWidth > 0,
-              screenHeight > 0
-        else {
-            return nil
-        }
-
-        return HotLoopPoint(
-            x: min(max((target.bounds.x + target.bounds.width / 2) / screenWidth, 0.04), 0.96),
-            y: min(max((target.bounds.y + target.bounds.height / 2) / screenHeight, 0.06), 0.94),
-            space: .normalizedTarget
-        )
-    }
-
-    private func fallbackPoint(index: Int) -> HotLoopPoint {
-        HotLoopPoint(
-            x: min(0.82, 0.28 + Double(index % 4) * 0.16),
-            y: min(0.86, 0.20 + Double(index / 4) * 0.18),
-            space: .normalizedTarget
-        )
     }
 
     private func normalize(_ value: String) -> String {

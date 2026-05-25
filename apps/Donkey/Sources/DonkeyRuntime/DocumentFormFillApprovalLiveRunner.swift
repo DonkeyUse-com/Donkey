@@ -126,7 +126,7 @@ public struct DocumentFormFillApprovalLiveRunner: Sendable {
             )
             let trace = await engine.handle(command, permissionPolicy: permissionPolicy)
             traces.append(trace)
-            guard trace.executed || trace.decision == .projectedDryRun else {
+            guard trace.executed || trace.decision == .skippedNoLiveInput else {
                 break
             }
         }

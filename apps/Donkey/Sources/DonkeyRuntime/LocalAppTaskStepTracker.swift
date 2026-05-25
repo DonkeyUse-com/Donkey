@@ -101,8 +101,8 @@ public struct LocalAppTaskStepTracker: Sendable {
             return "Resolve task and target app"
         case .observe:
             return "Observe target app state"
-        case .dryRun:
-            return "Project guarded workflow"
+        case .evidencePlan:
+            return "Build evidence-backed action plan"
         case .approval:
             return "Check user review or approval boundary"
         case .execute:

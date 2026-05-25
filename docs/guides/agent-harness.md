@@ -261,15 +261,17 @@ task-intent parsing.
 
 The harness is allowed to coordinate execution, but it should not bypass the
 runtime safety model. Local-app work flows through typed contracts, catalog
-resolution, observation, dry-run projection, guardrails, and verification before
-or during live control.
+resolution, observation, evidence-backed action planning, guardrails, and
+verification before or during live control.
 
 Local-app workflow progress is tracked outside prompt/context text. Each run
 records typed stage state for intent parsing, task/app resolution, observation,
-dry-run projection, approval/review, guarded execution, and verification. The
-runner can derive projected agent visualization steps before live execution and
-verified visualization steps from runtime state plus action traces. The model
-can be told about this state, but the runner owns it.
+internal planning, approval/review, guarded execution, and verification.
+Evidence planning remains a background runtime concern: the handler should not
+publish a pre-execution visualization for normal live work. The runner derives
+agent visualization steps from observed evidence and action traces, and cursor
+playback requires Accessibility, screenshot-understanding, or action-trace
+targets. The model can be told about this state, but the runner owns it.
 
 Live input remains guarded. The action engine checks permission policy, target
 focus, rate limits, hold duration, and backend evidence before issuing input.

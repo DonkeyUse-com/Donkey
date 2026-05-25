@@ -21,7 +21,7 @@ public enum AgentVisualizationStepKind: String, Codable, Equatable, Sendable {
 
 public enum AgentVisualizationGroundingSource: String, Codable, Equatable, Sendable {
     case modelPlan
-    case dryRun
+    case evidenceBackedActionPlan
     case accessibility
     case windowMetadata
     case localUIUnderstanding
@@ -150,16 +150,18 @@ public struct AgentVisualizationPlan: Codable, Equatable, Sendable, Identifiable
     public func cursorOverlayRequest() -> PointerCoachCursorGuideRequest? {
         guard metadata["cursorGuideEligible"] != "false" else { return nil }
 
-        let cursorSteps = steps.prefix(8).enumerated().map { index, step in
-            PointerCoachCursorGuideStep(
+        let cursorSteps = Array(steps.compactMap { step -> PointerCoachCursorGuideStep? in
+            guard let target = cursorPoint(for: step) else { return nil }
+
+            return PointerCoachCursorGuideStep(
                 id: step.id,
                 label: step.label,
-                target: cursorPoint(for: step, index: index),
+                target: target,
                 travelDuration: step.travelDuration,
                 holdDuration: step.holdDuration,
                 metadata: cursorStepMetadata(for: step)
             )
-        }
+        }.prefix(8))
         guard !cursorSteps.isEmpty else { return nil }
 
         return PointerCoachCursorGuideRequest(
@@ -177,7 +179,7 @@ public struct AgentVisualizationPlan: Codable, Equatable, Sendable, Identifiable
         )
     }
 
-    private func cursorPoint(for step: AgentVisualizationStep, index: Int) -> CGPoint {
+    private func cursorPoint(for step: AgentVisualizationStep) -> CGPoint? {
         if let point = step.target?.point,
            point.space == .normalizedTarget {
             return CGPoint(
@@ -194,7 +196,7 @@ public struct AgentVisualizationPlan: Codable, Equatable, Sendable, Identifiable
             )
         }
 
-        return Self.fallbackPoint(index: index)
+        return nil
     }
 
     private func cursorStepMetadata(for step: AgentVisualizationStep) -> [String: String] {
@@ -212,14 +214,5 @@ public struct AgentVisualizationPlan: Codable, Equatable, Sendable, Identifiable
             metadata["cursor.targetSpace"] = "screenNormalized"
         }
         return metadata
-    }
-
-    private static func fallbackPoint(index: Int) -> CGPoint {
-        let lane = Double(index % 4)
-        let row = Double(index / 4)
-        return CGPoint(
-            x: min(0.82, 0.28 + lane * 0.16),
-            y: min(0.86, 0.20 + row * 0.18)
-        )
     }
 }

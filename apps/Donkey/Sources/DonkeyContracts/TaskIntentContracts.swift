@@ -221,7 +221,7 @@ public enum LocalAppTaskWorkflowStage: String, Codable, CaseIterable, Equatable,
     case parseIntent
     case resolveApp
     case observe
-    case dryRun
+    case evidencePlan = "evidence-plan"
     case approval
     case execute
     case verify
@@ -331,7 +331,7 @@ public struct LocalAppTaskDefinition: Codable, Equatable, Sendable {
 }
 
 public enum LocalAppTaskStepStatus: String, Codable, Equatable, Sendable {
-    case projected
+    case needsEvidence = "needs-evidence"
     case blocked
     case verified
 }
@@ -368,7 +368,7 @@ public struct LocalAppTaskObservation: Codable, Equatable, Sendable {
     }
 }
 
-public struct LocalAppTaskDryRunStep: Codable, Equatable, Sendable {
+public struct LocalAppEvidenceBackedActionStep: Codable, Equatable, Sendable {
     public var id: String
     public var role: LocalAppTaskStepRole
     public var status: LocalAppTaskStepStatus
@@ -390,21 +390,21 @@ public struct LocalAppTaskDryRunStep: Codable, Equatable, Sendable {
     }
 }
 
-public struct LocalAppTaskDryRunPlan: Codable, Equatable, Sendable {
+public struct LocalAppEvidenceBackedActionPlan: Codable, Equatable, Sendable {
     public var intent: TaskIntent
     public var targetApp: LocalAppTarget
-    public var steps: [LocalAppTaskDryRunStep]
+    public var steps: [LocalAppEvidenceBackedActionStep]
     public var terminalState: LocalAppTaskTerminalState
-    public var canAttemptGuardedLive: Bool
+    public var canExecuteGuardedActions: Bool
     public var verificationConfidence: Double
     public var metadata: [String: String]
 
     public init(
         intent: TaskIntent,
         targetApp: LocalAppTarget,
-        steps: [LocalAppTaskDryRunStep],
+        steps: [LocalAppEvidenceBackedActionStep],
         terminalState: LocalAppTaskTerminalState,
-        canAttemptGuardedLive: Bool,
+        canExecuteGuardedActions: Bool,
         verificationConfidence: Double,
         metadata: [String: String] = [:]
     ) {
@@ -412,7 +412,7 @@ public struct LocalAppTaskDryRunPlan: Codable, Equatable, Sendable {
         self.targetApp = targetApp
         self.steps = steps
         self.terminalState = terminalState
-        self.canAttemptGuardedLive = canAttemptGuardedLive
+        self.canExecuteGuardedActions = canExecuteGuardedActions
         self.verificationConfidence = min(max(verificationConfidence, 0), 1)
         self.metadata = metadata
     }

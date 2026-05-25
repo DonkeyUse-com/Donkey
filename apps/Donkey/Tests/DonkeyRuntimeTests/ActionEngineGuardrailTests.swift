@@ -18,7 +18,7 @@ struct ActionEngineGuardrailTests {
     }
 
     @Test
-    func allowedInputProjectsDryRunWithoutLiveExecution() async {
+    func allowedInputSkipsWhenLiveExecutionIsDisabled() async {
         let engine = ActionEngineGuardrail()
         let policy = ToolCallPolicy(deniedCapabilities: [])
 
@@ -27,7 +27,7 @@ struct ActionEngineGuardrailTests {
             permissionPolicy: policy
         )
 
-        #expect(trace.decision == .projectedDryRun)
+        #expect(trace.decision == .skippedNoLiveInput)
         #expect(trace.executed == false)
         #expect(trace.liveInputEnabled == false)
         #expect(trace.focusGuardPassed == true)

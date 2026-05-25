@@ -51,7 +51,7 @@ public struct ActionEngineCommand: Codable, Equatable, Sendable {
 }
 
 public enum ActionEngineCommandDecision: Codable, Equatable, Sendable {
-    case projectedDryRun
+    case skippedNoLiveInput
     case executedLive
     case denied(reason: String)
 }
@@ -182,7 +182,7 @@ public actor ActionEngineGuardrail {
             heldCommandIDs.removeAll()
             return appendTrace(
                 command: command,
-                decision: .projectedDryRun,
+                decision: .skippedNoLiveInput,
                 focusGuardPassed: true,
                 permissionDecision: .allow,
                 rateLimited: false,
@@ -256,7 +256,7 @@ public actor ActionEngineGuardrail {
 
             return appendTrace(
                 command: command,
-                decision: .projectedDryRun,
+                decision: .skippedNoLiveInput,
                 executed: false,
                 focusGuardPassed: true,
                 permissionDecision: permissionDecision,

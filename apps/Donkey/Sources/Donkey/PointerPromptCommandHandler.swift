@@ -282,16 +282,6 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
             trace: localModelResult.trace,
             latencyMS: parseLatencyMS
         )
-        if let projectedVisualizationPlan = LocalAppTaskAgentVisualizationBuilder.projectedPlan(
-            command: commandRedaction.redactedText,
-            traceID: traceID,
-            resolution: resolution
-        ) {
-            await reportAgentVisualization(
-                groundAgentVisualizationPlan(projectedVisualizationPlan),
-                context: context
-            )
-        }
         let semanticMemoryResults = await retrieveSemanticMemory(
             command: commandRedaction.redactedText,
             resolution: resolution
@@ -432,15 +422,6 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
         guard let spawnProgressChanged = context?.spawnProgressChanged else { return }
 
         await spawnProgressChanged(update)
-    }
-
-    private func reportAgentVisualization(
-        _ plan: AgentVisualizationPlan,
-        context: PointerPromptCommandContext?
-    ) async {
-        guard let agentVisualizationChanged = context?.agentVisualizationChanged else { return }
-
-        await agentVisualizationChanged(plan)
     }
 
     private func groundAgentVisualizationPlan(_ plan: AgentVisualizationPlan) -> AgentVisualizationPlan {
@@ -633,8 +614,8 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
 
     private func decisionDescription(_ decision: ActionEngineCommandDecision) -> String {
         switch decision {
-        case .projectedDryRun:
-            return "projectedDryRun"
+        case .skippedNoLiveInput:
+            return "skippedNoLiveInput"
         case .executedLive:
             return "executedLive"
         case .denied(let reason):

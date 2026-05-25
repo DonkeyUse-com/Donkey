@@ -17,8 +17,8 @@ public struct LocalAppTaskLiveRunResult: Equatable, Sendable {
     public var traceID: String
     public var status: LocalAppTaskLiveRunStatus
     public var resolution: LocalAppTaskCatalogResolution
-    public var initialPlan: LocalAppTaskDryRunPlan?
-    public var finalPlan: LocalAppTaskDryRunPlan?
+    public var initialActionPlan: LocalAppEvidenceBackedActionPlan?
+    public var finalActionPlan: LocalAppEvidenceBackedActionPlan?
     public var observation: LocalAppTaskObservation?
     public var documentFormFillPlan: DocumentFormFillPlan?
     public var actionTraces: [ActionEngineCommandTrace]
@@ -30,8 +30,8 @@ public struct LocalAppTaskLiveRunResult: Equatable, Sendable {
         traceID: String,
         status: LocalAppTaskLiveRunStatus,
         resolution: LocalAppTaskCatalogResolution,
-        initialPlan: LocalAppTaskDryRunPlan? = nil,
-        finalPlan: LocalAppTaskDryRunPlan? = nil,
+        initialActionPlan: LocalAppEvidenceBackedActionPlan? = nil,
+        finalActionPlan: LocalAppEvidenceBackedActionPlan? = nil,
         observation: LocalAppTaskObservation? = nil,
         documentFormFillPlan: DocumentFormFillPlan? = nil,
         actionTraces: [ActionEngineCommandTrace] = [],
@@ -42,8 +42,8 @@ public struct LocalAppTaskLiveRunResult: Equatable, Sendable {
         self.traceID = traceID
         self.status = status
         self.resolution = resolution
-        self.initialPlan = initialPlan
-        self.finalPlan = finalPlan
+        self.initialActionPlan = initialActionPlan
+        self.finalActionPlan = finalActionPlan
         self.observation = observation
         self.documentFormFillPlan = documentFormFillPlan
         self.actionTraces = actionTraces
@@ -228,7 +228,7 @@ public struct LocalAppTaskLiveRunner: Sendable {
                 summary: "Captured local app task context",
                 metadata: ["observer": "local-app-task-context"]
             )
-            stepTracker.start(.dryRun, summary: "Planning review-first document form fill")
+            stepTracker.start(.evidencePlan, summary: "Building review-first evidence-backed action plan")
             let documentPlan = documentFormFillPlanner.plan(
                 intent: intent,
                 definition: definition,
@@ -249,11 +249,11 @@ public struct LocalAppTaskLiveRunner: Sendable {
                     "documentFormFillPlan.status": documentPlan.status.rawValue
                 ]
             )
-            let initialPlan = adapter.dryRunPlan(for: intent, observation: observation)
+            let initialActionPlan = adapter.evidenceBackedActionPlan(for: intent, observation: observation)
             stepTracker.complete(
-                .dryRun,
+                .evidencePlan,
                 summary: "Built review-first document form-fill plan",
-                metadata: ["terminalState": initialPlan.terminalState.rawValue]
+                metadata: ["terminalState": initialActionPlan.terminalState.rawValue]
             )
             stepTracker.wait(
                 .approval,
@@ -272,8 +272,8 @@ public struct LocalAppTaskLiveRunner: Sendable {
                 traceID: traceID,
                 status: .needsUserReview,
                 resolution: resolution,
-                initialPlan: initialPlan,
-                finalPlan: initialPlan,
+                initialActionPlan: initialActionPlan,
+                finalActionPlan: initialActionPlan,
                 observation: observation,
                 documentFormFillPlan: documentPlan,
                 workflowProgress: progress,
@@ -316,29 +316,29 @@ public struct LocalAppTaskLiveRunner: Sendable {
                 "appIsFocused": String(launchObservation.appIsFocused)
             ]
         )
-        stepTracker.start(.dryRun, summary: "Projecting guarded local-app workflow")
-        let initialPlan = adapter.dryRunPlan(for: intent, observation: launchObservation)
-        guard initialPlan.canAttemptGuardedLive else {
+        stepTracker.start(.evidencePlan, summary: "Building evidence-backed action plan")
+        let initialActionPlan = adapter.evidenceBackedActionPlan(for: intent, observation: launchObservation)
+        guard initialActionPlan.canExecuteGuardedActions else {
             stepTracker.block(
-                .dryRun,
-                summary: "Dry-run plan blocked live input",
-                metadata: ["terminalState": initialPlan.terminalState.rawValue]
+                .evidencePlan,
+                summary: "Evidence-backed action plan blocked live input",
+                metadata: ["terminalState": initialActionPlan.terminalState.rawValue]
             )
-            stepTracker.skip(.approval, summary: "No approval requested for blocked dry run")
-            stepTracker.skip(.execute, summary: "Execution skipped because dry run blocked")
-            stepTracker.skip(.verify, summary: "Verification skipped because dry run blocked")
+            stepTracker.skip(.approval, summary: "No approval requested for blocked evidence plan")
+            stepTracker.skip(.execute, summary: "Execution skipped because evidence was incomplete")
+            stepTracker.skip(.verify, summary: "Verification skipped because evidence was incomplete")
             let progress = stepTracker.snapshot()
-            await coordinator?.pause(reason: "Local app task dry-run plan blocked live input")
+            await coordinator?.pause(reason: "Local app task evidence-backed action plan blocked live input")
             return LocalAppTaskLiveRunResult(
                 command: command,
                 traceID: traceID,
-                status: status(for: initialPlan.terminalState),
+                status: status(for: initialActionPlan.terminalState),
                 resolution: resolution,
-                initialPlan: initialPlan,
+                initialActionPlan: initialActionPlan,
                 observation: launchObservation,
                 workflowProgress: progress,
                 metadata: runMetadata.merging([
-                    "reason": "dryRunPlanBlocked",
+                    "reason": "evidencePlanBlocked",
                     "latency.totalMS": Self.formatLatency(Self.uptimeMilliseconds() - runStartedAt)
                 ], uniquingKeysWith: { current, _ in current }).merging(
                     Self.workflowProgressMetadata(progress),
@@ -347,18 +347,18 @@ public struct LocalAppTaskLiveRunner: Sendable {
             )
         }
         stepTracker.complete(
-            .dryRun,
-            summary: "Dry-run plan allows guarded live execution",
-            metadata: ["terminalState": initialPlan.terminalState.rawValue]
+            .evidencePlan,
+            summary: "Evidence-backed action plan allows guarded live execution",
+            metadata: ["terminalState": initialActionPlan.terminalState.rawValue]
         )
         if LocalAppTaskVerificationPolicy.mode(for: definition) == .openedLocalItem,
-           initialPlan.terminalState == .completed {
+           initialActionPlan.terminalState == .completed {
             stepTracker.skip(.approval, summary: "No review gate required for opened local item")
             stepTracker.skip(.execute, summary: "Local item was opened through NSWorkspace")
             stepTracker.complete(
                 .verify,
                 summary: "Local item open request confirmed",
-                metadata: ["terminalState": initialPlan.terminalState.rawValue]
+                metadata: ["terminalState": initialActionPlan.terminalState.rawValue]
             )
             await coordinator?.complete(reason: "Local item opened")
             let progress = stepTracker.snapshot()
@@ -367,8 +367,8 @@ public struct LocalAppTaskLiveRunner: Sendable {
                 traceID: traceID,
                 status: .completed,
                 resolution: resolution,
-                initialPlan: initialPlan,
-                finalPlan: initialPlan,
+                initialActionPlan: initialActionPlan,
+                finalActionPlan: initialActionPlan,
                 observation: launchObservation,
                 workflowProgress: progress,
                 metadata: runMetadata.merging([
@@ -417,7 +417,7 @@ public struct LocalAppTaskLiveRunner: Sendable {
                     )
                     accessibilityActionMS += Self.uptimeMilliseconds() - actionStartedAt
                     actionTraces.append(trace)
-                    guard trace.executed || trace.decision == .projectedDryRun else {
+                    guard trace.executed || trace.decision == .skippedNoLiveInput else {
                         break
                     }
                 }
@@ -427,7 +427,7 @@ public struct LocalAppTaskLiveRunner: Sendable {
 
         let engine = actionEngineFactory(definition)
         let accessibilityHandledStepIDs: Set<String> = Set(actionTraces.compactMap { trace -> String? in
-            guard trace.executed || trace.decision == ActionEngineCommandDecision.projectedDryRun else { return nil }
+            guard trace.executed || trace.decision == ActionEngineCommandDecision.skippedNoLiveInput else { return nil }
             return workflowStepID(from: trace.command)
         })
         runMetadata["accessibilityHandledStepIDs"] = accessibilityHandledStepIDs.sorted().joined(separator: ",")
@@ -483,7 +483,7 @@ public struct LocalAppTaskLiveRunner: Sendable {
                 actionTraces.append(trace)
             }
 
-            guard trace.executed || trace.decision == ActionEngineCommandDecision.projectedDryRun else {
+            guard trace.executed || trace.decision == ActionEngineCommandDecision.skippedNoLiveInput else {
                 stepTracker.fail(
                     .execute,
                     summary: "Guarded local-app action was denied",
@@ -505,7 +505,7 @@ public struct LocalAppTaskLiveRunner: Sendable {
                     Self.uptimeMilliseconds() - observationStartedAt
                 )
                 let verificationStartedAt = Self.uptimeMilliseconds()
-                let finalPlan = adapter.dryRunPlan(for: intent, observation: finalObservation)
+                let finalActionPlan = adapter.evidenceBackedActionPlan(for: intent, observation: finalObservation)
                 runMetadata["latency.verificationMS"] = Self.formatLatency(
                     Self.uptimeMilliseconds() - verificationStartedAt
                 )
@@ -516,8 +516,8 @@ public struct LocalAppTaskLiveRunner: Sendable {
                     traceID: traceID,
                     status: .failedSafe,
                     resolution: resolution,
-                    initialPlan: initialPlan,
-                    finalPlan: finalPlan,
+                    initialActionPlan: initialActionPlan,
+                    finalActionPlan: finalActionPlan,
                     observation: finalObservation,
                     actionTraces: actionTraces,
                     workflowProgress: progress,
@@ -550,7 +550,7 @@ public struct LocalAppTaskLiveRunner: Sendable {
             summary: "Guarded local-app actions completed",
             metadata: [
                 "executedCommandCount": String(actionTraces.filter(\.executed).count),
-                "projectedCommandCount": String(actionTraces.filter { $0.decision == .projectedDryRun }.count)
+                "skippedNoLiveInputCommandCount": String(actionTraces.filter { $0.decision == .skippedNoLiveInput }.count)
             ]
         )
 
@@ -569,29 +569,29 @@ public struct LocalAppTaskLiveRunner: Sendable {
         let finalObservation = await appController.observe(definition: definition)
         runMetadata["latency.observationMS"] = Self.formatLatency(Self.uptimeMilliseconds() - observationStartedAt)
         let verificationStartedAt = Self.uptimeMilliseconds()
-        let finalPlan = adapter.dryRunPlan(for: intent, observation: finalObservation)
+        let finalActionPlan = adapter.evidenceBackedActionPlan(for: intent, observation: finalObservation)
         runMetadata["latency.verificationMS"] = Self.formatLatency(Self.uptimeMilliseconds() - verificationStartedAt)
         runMetadata["latency.totalMS"] = Self.formatLatency(Self.uptimeMilliseconds() - runStartedAt)
-        if let verificationStep = finalPlan.steps.first(where: { $0.role == .verifyResult }) {
+        if let verificationStep = finalActionPlan.steps.first(where: { $0.role == .verifyResult }) {
             runMetadata["verification.summary"] = verificationStep.summary
             runMetadata["verification.status"] = verificationStep.status.rawValue
             for (key, value) in verificationStep.metadata {
                 runMetadata["verification.\(key)"] = value
             }
         }
-        let status = status(for: finalPlan.terminalState)
+        let status = status(for: finalActionPlan.terminalState)
         if status == .completed {
             stepTracker.complete(
                 .verify,
                 summary: "Local app task result verified",
-                metadata: ["terminalState": finalPlan.terminalState.rawValue]
+                metadata: ["terminalState": finalActionPlan.terminalState.rawValue]
             )
             await coordinator?.complete(reason: "Local app task completed")
         } else {
             stepTracker.block(
                 .verify,
                 summary: "Local app task needs user review after verification",
-                metadata: ["terminalState": finalPlan.terminalState.rawValue]
+                metadata: ["terminalState": finalActionPlan.terminalState.rawValue]
             )
             await coordinator?.pause(reason: "Local app task needs user review")
         }
@@ -601,14 +601,14 @@ public struct LocalAppTaskLiveRunner: Sendable {
             traceID: traceID,
             status: status,
             resolution: resolution,
-            initialPlan: initialPlan,
-            finalPlan: finalPlan,
+            initialActionPlan: initialActionPlan,
+            finalActionPlan: finalActionPlan,
             observation: finalObservation,
             actionTraces: actionTraces,
             workflowProgress: progress,
             metadata: runMetadata.merging([
                 "executedCommandCount": String(actionTraces.filter(\.executed).count),
-                "projectedCommandCount": String(actionTraces.filter { $0.decision == .projectedDryRun }.count)
+                "skippedNoLiveInputCommandCount": String(actionTraces.filter { $0.decision == .skippedNoLiveInput }.count)
             ], uniquingKeysWith: { current, _ in current }).merging(
                 Self.workflowProgressMetadata(progress),
                 uniquingKeysWith: { current, _ in current }
@@ -769,8 +769,8 @@ public struct LocalAppTaskLiveRunner: Sendable {
         switch decision {
         case .denied(let reason):
             return reason
-        case .projectedDryRun:
-            return "projectedDryRun"
+        case .skippedNoLiveInput:
+            return "skippedNoLiveInput"
         case .executedLive:
             return "executedLive"
         }
@@ -868,8 +868,8 @@ public struct LocalAppTaskLiveRunner: Sendable {
 
     private static func decisionDescription(_ decision: ActionEngineCommandDecision) -> String {
         switch decision {
-        case .projectedDryRun:
-            return "projectedDryRun"
+        case .skippedNoLiveInput:
+            return "skippedNoLiveInput"
         case .executedLive:
             return "executedLive"
         case .denied(let reason):
@@ -972,7 +972,7 @@ public struct MacLocalAppTaskController: LocalAppTaskAppControlling {
                     return nil
                 }
                 let discovered = accessibilityIndex?.firstControl(matching: controlID) != nil
-                return (controlID, discovered || step.metadata["key"] != nil || visibleText != nil)
+                return (controlID, discovered)
             }
         )
 

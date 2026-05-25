@@ -86,18 +86,21 @@ The catalog resolves dynamic targets through the agent memory store, Spotlight/a
 - every planned tool is in the allowlist
 - the plan can be represented as guarded workflow steps
 
-The live runner then owns launch/focus, observation, dry-run projection, guarded
-execution, verification, and agent visualization evidence. Accessibility and
-keyboard input run through action-engine guardrails. AppleScript may be used
-only when supplied by typed task metadata or validated generated artifacts;
-free-form planner text is never direct input.
+The live runner then owns launch/focus, observation, evidence-backed action
+planning, guarded execution, verification, and agent visualization evidence.
+Accessibility and keyboard input run through action-engine guardrails.
+AppleScript may be used only when supplied by typed task metadata or validated
+generated artifacts; free-form planner text is never direct input.
 
 Agent visualization is evidence-derived, not a separate command path for real
-work. Normal local-app tasks emit a projected `AgentVisualizationPlan` before
-execution, then may emit a verified plan from dry-run steps, observations, and
-action traces. Visual-only demonstration requests use the same plan shape with
-`executionMode=visualOnly` and no live input. In both cases, the overlay cursor
-is a visualization surface only and does not move the real macOS pointer.
+work. Normal local-app tasks may emit a final plan from evidence-backed action
+steps, observations, and action traces after the runner has evidence; they do
+not publish a pre-execution visualization from intent resolution. Cursor
+playback only uses steps with grounded control bounds or action targets, so
+background planning does not animate to invented points. Visual-only
+demonstration requests use the same plan shape with `executionMode=visualOnly`
+and no live input. In both cases, the overlay cursor is a visualization surface
+only and does not move the real macOS pointer.
 
 ## Learning Boundary
 
