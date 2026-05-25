@@ -233,6 +233,12 @@ write_info_plist() {
   <string>Donkey captures bounded screenshots for user-requested app context.</string>
   <key>NSAppleEventsUsageDescription</key>
   <string>Donkey uses local app automation only for user-requested actions.</string>
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>Donkey may search Desktop files only when you ask it to find or open a local item.</string>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>Donkey may search Documents files only when you ask it to find or open a local item.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>Donkey may search Downloads files only when you ask it to find or open a local item.</string>
 </dict>
 </plist>
 PLIST

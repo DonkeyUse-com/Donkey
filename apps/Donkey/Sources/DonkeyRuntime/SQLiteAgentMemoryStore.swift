@@ -68,20 +68,16 @@ public struct AgentMemoryPrewarmOptions: Sendable {
     }
 
     public static func defaults() -> AgentMemoryPrewarmOptions {
-        let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
         return AgentMemoryPrewarmOptions(
             applicationRoots: [
                 URL(fileURLWithPath: "/Applications", isDirectory: true),
                 URL(fileURLWithPath: "/Applications/Utilities", isDirectory: true),
                 URL(fileURLWithPath: "/System/Applications", isDirectory: true),
                 URL(fileURLWithPath: "/System/Applications/Utilities", isDirectory: true),
-                homeDirectory.appendingPathComponent("Applications", isDirectory: true)
+                FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent("Applications", isDirectory: true)
             ],
-            fileRoots: [
-                homeDirectory.appendingPathComponent("Desktop", isDirectory: true),
-                homeDirectory.appendingPathComponent("Documents", isDirectory: true),
-                homeDirectory.appendingPathComponent("Downloads", isDirectory: true)
-            ]
+            fileRoots: []
         )
     }
 }

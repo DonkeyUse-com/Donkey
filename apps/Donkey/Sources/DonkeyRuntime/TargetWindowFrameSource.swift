@@ -429,7 +429,13 @@ public struct ContinuousTargetWindowFrameSource: DryRunStreamingFrameSource {
     }
 }
 
-private final class ScreenCaptureKitTargetWindowFrameCapturer: TargetWindowFrameCapturing {
+final class ScreenCaptureKitTargetWindowFrameCapturer: TargetWindowFrameCapturing {
+    private let permissionChecker: any ScreenRecordingPermissionChecking
+
+    init(permissionChecker: any ScreenRecordingPermissionChecking = CoreGraphicsScreenRecordingPermissionChecker()) {
+        self.permissionChecker = permissionChecker
+    }
+
     var captureMethod: WindowScreenshotCaptureMethod {
         .screenCaptureKitDesktopIndependentWindow
     }
@@ -441,6 +447,10 @@ private final class ScreenCaptureKitTargetWindowFrameCapturer: TargetWindowFrame
     func captureFrame(
         target: MacWindowTargetCandidate
     ) async throws -> CapturedTargetWindowFrame {
+        guard permissionChecker.hasScreenRecordingAccess() else {
+            throw WindowScreenshotCaptureError.screenRecordingPermissionDenied
+        }
+
         let content = try await SCShareableContent.current
         guard let window = content.windows.first(where: { $0.windowID == target.windowID }) else {
             throw WindowScreenshotCaptureError.targetWindowUnavailable(windowID: target.windowID)

@@ -98,6 +98,13 @@ struct AgentMemoryStoreTests {
     }
 
     @Test
+    func defaultPrewarmOptionsDoNotScanProtectedUserFolders() {
+        let options = AgentMemoryPrewarmOptions.defaults()
+
+        #expect(options.fileRoots.isEmpty)
+    }
+
+    @Test
     func storePrewarmsTaskDefinitionsAsSearchableCapabilities() throws {
         let root = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

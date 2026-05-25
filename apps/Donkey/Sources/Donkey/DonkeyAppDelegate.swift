@@ -7,6 +7,7 @@ import Foundation
 final class DonkeyAppDelegate: NSObject, NSApplicationDelegate {
     private var authCoordinator: DonkeyAuthCoordinator?
     private var loginWindowController: DonkeyLoginWindowController?
+    private var permissionSetupController: MacPermissionSetupWindowController?
     private var overlayController: PointerPromptOverlayController?
     private var runtimeOnboardingController: LocalRuntimeOnboardingWindowController?
 
@@ -48,6 +49,10 @@ final class DonkeyAppDelegate: NSObject, NSApplicationDelegate {
     ) -> Bool {
         if authCoordinator?.isAuthenticated != true {
             showLoginWindow()
+        } else if let permissionSetupController {
+            permissionSetupController.showSetup()
+        } else if overlayController == nil {
+            startAuthenticatedAppSurfaces()
         }
         return true
     }
@@ -75,10 +80,31 @@ final class DonkeyAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startAuthenticatedAppSurfaces() {
-        guard overlayController == nil else { return }
+        guard overlayController == nil,
+              permissionSetupController == nil
+        else { return }
 
         loginWindowController?.close()
         loginWindowController = nil
+        NSApp.setActivationPolicy(.regular)
+
+        let permissionSetupController = MacPermissionSetupWindowController()
+        if permissionSetupController.permissionsAreReady {
+            startOverlaySurfaces()
+            return
+        }
+
+        self.permissionSetupController = permissionSetupController
+        permissionSetupController.completed = { [weak self] in
+            self?.permissionSetupController = nil
+            self?.startOverlaySurfaces()
+        }
+        permissionSetupController.showSetup()
+    }
+
+    private func startOverlaySurfaces() {
+        guard overlayController == nil else { return }
+
         NSApp.setActivationPolicy(.accessory)
 
         let model = PointerPromptOverlayModel()

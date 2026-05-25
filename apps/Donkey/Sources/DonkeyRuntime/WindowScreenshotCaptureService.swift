@@ -26,6 +26,7 @@ public enum WindowScreenshotCaptureError: Error, Equatable, Sendable {
         windowID: UInt32,
         occludingWindowID: UInt32
     )
+    case screenRecordingPermissionDenied
     case targetWindowUnavailable(windowID: UInt32)
     case captureFailed(windowID: UInt32, reason: String)
     case pngEncodingFailed(windowID: UInt32)
@@ -85,6 +86,16 @@ protocol WindowScreenshotCapturing {
     func capture(
         target: MacWindowTargetCandidate
     ) async throws -> CapturedWindowScreenshot
+}
+
+protocol ScreenRecordingPermissionChecking: Sendable {
+    func hasScreenRecordingAccess() -> Bool
+}
+
+struct CoreGraphicsScreenRecordingPermissionChecker: ScreenRecordingPermissionChecking {
+    func hasScreenRecordingAccess() -> Bool {
+        CGPreflightScreenCaptureAccess()
+    }
 }
 
 public final class WindowScreenshotCaptureService {
@@ -283,6 +294,12 @@ public final class WindowScreenshotCaptureService {
 }
 
 final class ScreenCaptureKitWindowScreenshotCapturer: WindowScreenshotCapturing {
+    private let permissionChecker: any ScreenRecordingPermissionChecking
+
+    init(permissionChecker: any ScreenRecordingPermissionChecking = CoreGraphicsScreenRecordingPermissionChecker()) {
+        self.permissionChecker = permissionChecker
+    }
+
     var captureMethod: WindowScreenshotCaptureMethod {
         .screenCaptureKitDesktopIndependentWindow
     }
@@ -294,6 +311,10 @@ final class ScreenCaptureKitWindowScreenshotCapturer: WindowScreenshotCapturing 
     func capture(
         target: MacWindowTargetCandidate
     ) async throws -> CapturedWindowScreenshot {
+        guard permissionChecker.hasScreenRecordingAccess() else {
+            throw WindowScreenshotCaptureError.screenRecordingPermissionDenied
+        }
+
         let content = try await SCShareableContent.current
         guard let window = content.windows.first(where: { $0.windowID == target.windowID }) else {
             throw WindowScreenshotCaptureError.targetWindowUnavailable(windowID: target.windowID)

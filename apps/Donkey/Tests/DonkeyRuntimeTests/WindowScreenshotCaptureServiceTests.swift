@@ -67,6 +67,21 @@ struct WindowScreenshotCaptureServiceTests {
     }
 
     @Test
+    func screenCaptureKitCapturerFailsFastWhenScreenRecordingPermissionIsDenied() async throws {
+        let capturer = ScreenCaptureKitWindowScreenshotCapturer(
+            permissionChecker: FakeScreenRecordingPermissionChecker(hasAccess: false)
+        )
+
+        do {
+            _ = try await capturer.capture(target: allowedTargetWindow())
+            Issue.record("Expected screen recording permission denial")
+        } catch WindowScreenshotCaptureError.screenRecordingPermissionDenied {
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test
     func explicitWindowSelectionIsPassedToCapturer() async throws {
         let root = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -416,6 +431,34 @@ struct WindowScreenshotCaptureServiceTests {
 
     private func pngBytes() -> Data {
         Data([0x89, 0x50, 0x4E, 0x47])
+    }
+
+    private func allowedTargetWindow(
+        windowID: UInt32 = 10,
+        processID: Int32 = 100
+    ) -> MacWindowTargetCandidate {
+        MacWindowTargetCandidate(
+            windowID: windowID,
+            processID: processID,
+            bounds: WindowTargetBounds(x: 0, y: 0, width: 100, height: 100),
+            isVisible: true,
+            isOnScreen: true,
+            isFrontmost: true,
+            isFocused: true,
+            isIPhoneMirroring: false,
+            safetyAssessment: WindowTargetSafetyAssessment(
+                status: .allowed,
+                summary: "Allowed fixture window"
+            )
+        )
+    }
+}
+
+private struct FakeScreenRecordingPermissionChecker: ScreenRecordingPermissionChecking {
+    var hasAccess: Bool
+
+    func hasScreenRecordingAccess() -> Bool {
+        hasAccess
     }
 }
 

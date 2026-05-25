@@ -6,10 +6,12 @@ Donkey supports a floating macOS overlay for conversational task threads and
 quick local-app actions:
 
 - On first launch, Donkey shows a native welcome screen, then a Google-only Mac
-  sign-in screen before starting the overlay. Until the browser returns through
-  the `donkey://auth/callback` handoff and the app exchanges the returned code
-  for a Better Auth cookie, the notch surface is not shown and double-Command
-  activation is not registered.
+  sign-in screen, then a native permission setup screen for Accessibility,
+  Screenshots, and Microphone before starting the overlay. Until the browser
+  returns through the `donkey://auth/callback` handoff, the app exchanges the
+  returned code for a Better Auth cookie, and the core permission setup is
+  complete, the notch surface is not shown and double-Command activation is not
+  registered.
 - Double-tap Command and release to open a centered prompt with keyboard focus.
 - Double-tap Command and hold the second press to open the prompt in voice mode.
 - Show a top-center notch status surface for task progress, recent tasks, follow-up input, file drops, updates, and per-task pause/resume.
@@ -22,17 +24,19 @@ quick local-app actions:
 - Resolve model-classified local-item requests against local apps, files, and folders by querying the current Mac with the SQLite-backed agent memory store, Spotlight/`mdfind`, and bounded filesystem fallback. If the requested local item cannot be found, keep the task safe and report that it was not found instead of falling back to a vague clarification.
 - Handle scriptable app tasks as guarded AppleScript automation when possible. Commands may use task metadata, generated source, or compact templates; completion is verified through generic task verification policy instead of requiring visible result text for every app.
 - Visualize agent work with a transparent overlay cursor. Normal local-app tasks emit a projected `AgentVisualizationPlan` once the workflow is resolved, then a verified plan from runtime evidence such as dry-run steps, observations, and action traces; visual-only demonstration turns use the same plan shape without live input. Donkey moves the overlay cursor along curved paths and types compact labels next to it while keeping the real mouse untouched.
-- Maintain a background agent memory store in Application Support. The store records resolved and missing local-item lookups, prewarms apps plus common user file folders, stores runtime task definitions, keeps metadata such as kind/path/bundle ID/source/task/action, indexes records with SQLite FTS5 plus local vectors, and passes a bounded set of matching hints into the agent harness memory section for classifier and model consideration. See `docs/guides/decision-system.md` for how those hints feed typed model decisions and guarded local-app plans.
+- Maintain a background agent memory store in Application Support. The store records resolved and missing local-item lookups, prewarms apps, stores runtime task definitions, keeps metadata such as kind/path/bundle ID/source/task/action, indexes records with SQLite FTS5 plus local vectors, and passes a bounded set of matching hints into the agent harness memory section for classifier and model consideration. Protected file folders such as Desktop, Documents, and Downloads stay lazy and are searched only when a user-requested local-item lookup needs them. See `docs/guides/decision-system.md` for how those hints feed typed model decisions and guarded local-app plans.
 - Persist task threads as searchable Core Data conversations with event history, task assets, and per-run runtime coordination for any action work attached to the thread.
-- Keep the overlay non-invasive. It may request microphone permission for local waveform capture and voice commands, but it must not capture the screen, synthesize input directly, or require Accessibility permission.
+- Keep the overlay non-invasive. Permission setup requests Accessibility, screenshot, and microphone access with user-visible reasons, but the overlay itself does not capture the screen or synthesize input directly. Bounded screenshots and Accessibility reads are used only by guarded local-app workflows.
 
 ## Technical Guidelines
 
 - `PointerPromptOverlayController` owns AppKit surfaces, placement, hover tracking, focus, keyboard shortcut recognition, dismissal, file-drop routing, and microphone level capture.
 - `DonkeyAuthCoordinator` and `DonkeyLoginWindowController` own the Mac sign-in
+  gate. `MacPermissionSetupWindowController` owns the post-auth core permission
   gate. App startup should create the overlay controller only after a stored
   Google session exists or a pending sign-in callback validates its state token
-  and stores a Better Auth cookie in the app cookie jar.
+  and stores a Better Auth cookie in the app cookie jar, and the permission
+  setup has completed.
 - SwiftUI rendering lives in `DonkeyUI` and consumes state/contracts from `DonkeyContracts`. It should not perform command parsing, model calls, input execution, screen capture, or microphone capture.
 - `PointerPromptOverlayModel` owns product state. Durable task data is persisted through Core Data in Application Support.
 - Spawn display state is typed state. The model emits progress, target hints, and current selection; the overlay controller resolves hints against safe visible windows and keeps voice capture on the centered prompt; SwiftUI renders the notch cue, cursors, labels, label-to-editor transition, and selection state.

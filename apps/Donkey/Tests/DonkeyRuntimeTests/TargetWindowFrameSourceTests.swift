@@ -53,6 +53,21 @@ struct TargetWindowFrameSourceTests {
     }
 
     @Test
+    func screenCaptureKitFrameCapturerFailsFastWhenScreenRecordingPermissionIsDenied() async throws {
+        let capturer = ScreenCaptureKitTargetWindowFrameCapturer(
+            permissionChecker: FakeScreenRecordingPermissionChecker(hasAccess: false)
+        )
+
+        do {
+            _ = try await capturer.captureFrame(target: allowedTargetWindow())
+            Issue.record("Expected screen recording permission denial")
+        } catch WindowScreenshotCaptureError.screenRecordingPermissionDenied {
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test
     func captureFramesAppliesOptionalCropWithoutWritingPlannerSnapshotArtifact() async throws {
         let service = makeService(
             windows: [
@@ -304,6 +319,34 @@ struct TargetWindowFrameSourceTests {
             title: title,
             bounds: bounds
         )
+    }
+
+    private func allowedTargetWindow(
+        windowID: UInt32 = 10,
+        processID: Int32 = 100
+    ) -> MacWindowTargetCandidate {
+        MacWindowTargetCandidate(
+            windowID: windowID,
+            processID: processID,
+            bounds: WindowTargetBounds(x: 0, y: 0, width: 100, height: 100),
+            isVisible: true,
+            isOnScreen: true,
+            isFrontmost: true,
+            isFocused: true,
+            isIPhoneMirroring: false,
+            safetyAssessment: WindowTargetSafetyAssessment(
+                status: .allowed,
+                summary: "Allowed fixture window"
+            )
+        )
+    }
+}
+
+private struct FakeScreenRecordingPermissionChecker: ScreenRecordingPermissionChecking {
+    var hasAccess: Bool
+
+    func hasScreenRecordingAccess() -> Bool {
+        hasAccess
     }
 }
 

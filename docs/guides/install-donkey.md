@@ -106,9 +106,12 @@ selection. The Mac client sends typed requests to the backend and does not need
 OpenAI, Gemini, or other provider API keys.
 
 First launch setup is therefore an account and permission setup flow, not a
-local model installer. There are no supported release manifest URLs, model
-weight override URLs, local LLM packages, or local model repair steps in the
-hosted-model install path.
+local model installer. After sign-in, Donkey asks for Accessibility,
+Screenshots, and Microphone with user-visible reasons before starting the
+overlay. Protected folders such as Desktop, Documents, and Downloads remain
+lazy and are requested only when a user-requested local-item lookup needs them.
+There are no supported release manifest URLs, model weight override URLs, local
+LLM packages, or local model repair steps in the hosted-model install path.
 
 ## Local Development
 

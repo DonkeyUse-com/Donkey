@@ -12,19 +12,40 @@ struct Donkey: App {
 }
 
 private struct LocalRuntimeSettingsView: View {
+    @State private var permissionSetupController: MacPermissionSetupWindowController?
     @State private var runtimeSetupController: LocalRuntimeOnboardingWindowController?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Local Runtimes")
-                .font(.headline)
-            Text("Reopen setup to install, repair, or recheck Donkey's local model sidecars.")
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button("Set Up Local Runtimes") {
-                let controller = LocalRuntimeOnboardingWindowController()
-                runtimeSetupController = controller
-                controller.showSetup()
+        VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Permissions")
+                    .font(.headline)
+                Text("Reopen setup for Accessibility, screenshot, and microphone access.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Open Permissions Setup") {
+                    let controller = MacPermissionSetupWindowController()
+                    permissionSetupController = controller
+                    controller.completed = {
+                        permissionSetupController = nil
+                    }
+                    controller.showSetup()
+                }
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Local Runtimes")
+                    .font(.headline)
+                Text("Reopen setup to install, repair, or recheck Donkey's local model sidecars.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Set Up Local Runtimes") {
+                    let controller = LocalRuntimeOnboardingWindowController()
+                    runtimeSetupController = controller
+                    controller.showSetup()
+                }
             }
         }
         .padding(20)
