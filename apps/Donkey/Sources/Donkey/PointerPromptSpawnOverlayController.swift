@@ -123,7 +123,7 @@ final class PointerPromptSpawnOverlayController {
             screenSize: screen.frame.size
         )
 
-        let initialLocalFrame = viewModel.cursorOnlyVisualFrame(at: origin)
+        let initialLocalFrame = viewModel.cursorPanelFrame(at: origin)
         viewModel.updateViewport(
             origin: initialLocalFrame.origin,
             size: initialLocalFrame.size
@@ -306,7 +306,7 @@ final class PointerPromptSpawnOverlayController {
         surface.destination = destination
         surface.isTraveling = true
 
-        let currentLocalFrame = surface.viewModel.cursorOnlyVisualFrame(
+        let currentLocalFrame = surface.viewModel.cursorPanelFrame(
             at: surface.viewModel.position
         )
         applyViewport(
@@ -319,7 +319,7 @@ final class PointerPromptSpawnOverlayController {
             display: true
         )
 
-        let destinationLocalFrame = surface.viewModel.cursorOnlyVisualFrame(
+        let destinationLocalFrame = surface.viewModel.cursorPanelFrame(
             at: destination
         )
         let destinationGlobalFrame = panelFrame(

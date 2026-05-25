@@ -211,6 +211,55 @@ struct PointerPromptSpawnGeometryTests {
     }
 
     @Test @MainActor
+    func spawnOverlayReservesPanelDrawingRoomWithoutExpandingHitArea() async throws {
+        let viewModel = PointerPromptSpawnOverlayViewModel()
+        let state = PointerPromptSpawnState(
+            id: "spawn-1",
+            taskID: "task-1",
+            commandText: "plan",
+            label: Array(repeating: "checking", count: 18).joined(separator: " "),
+            accentIndex: 1,
+            phase: .holding
+        )
+
+        viewModel.show(
+            state: state,
+            origin: CGPoint(x: 600, y: 282),
+            destination: CGPoint(x: 600, y: 282),
+            screenSize: CGSize(width: 1200, height: 800)
+        )
+        let landedDelay = UInt64(
+            (PointerPromptSpawnOverlayViewModel.travelDuration + 0.05) * 1_000_000_000
+        )
+        try await Task.sleep(nanoseconds: landedDelay)
+
+        let panelFrame = viewModel.visualFrame
+        let hitTestFrame = viewModel.hitTestFrame
+        viewModel.updateViewport(origin: panelFrame.origin, size: panelFrame.size)
+
+        #expect(!panelFrame.isNull)
+        #expect(!hitTestFrame.isNull)
+        #expect(panelFrame.contains(hitTestFrame))
+        #expect(panelFrame.width > hitTestFrame.width)
+        #expect(viewModel.localHitTestFrame.minX >= 0)
+        #expect(viewModel.localHitTestFrame.maxX <= viewModel.viewportSize.width)
+        #expect(viewModel.localHitTestFrame.minY >= 0)
+        #expect(viewModel.localHitTestFrame.maxY <= viewModel.viewportSize.height)
+    }
+
+    @Test @MainActor
+    func spawnOverlayUsesPaddedPanelFrameForTravelingCursor() {
+        let viewModel = PointerPromptSpawnOverlayViewModel()
+        let point = CGPoint(x: 420, y: 282)
+        let cursorFrame = viewModel.cursorOnlyVisualFrame(at: point)
+        let panelFrame = viewModel.cursorPanelFrame(at: point)
+
+        #expect(panelFrame.contains(cursorFrame))
+        #expect(panelFrame.width > cursorFrame.width)
+        #expect(panelFrame.height > cursorFrame.height)
+    }
+
+    @Test @MainActor
     func inlineSpawnLabelEditorSubmitsTrimmedFollowUpForTask() {
         let viewModel = PointerPromptSpawnOverlayViewModel()
         let state = PointerPromptSpawnState(

@@ -36,7 +36,7 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
     public var hitTestFrame: CGRect {
         guard state != nil, isHolding else { return .null }
 
-        return visualFrame(at: position, includesLabel: true)
+        return contentFrame(at: position, includesLabel: true)
     }
 
     public var localHitTestFrame: CGRect {
@@ -48,7 +48,7 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
     public var visualFrame: CGRect {
         guard state != nil else { return .null }
 
-        return visualFrame(at: position, includesLabel: isHolding)
+        return panelFrame(at: position, includesLabel: isHolding)
     }
 
     public var renderPosition: CGPoint {
@@ -93,6 +93,11 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
         viewportSize.width > 0 && viewportSize.height > 0
     }
 
+    public var displayLabelContentWidth: CGFloat {
+        let maximumWidth = isLabelHovered ? Self.expandedCollapsedLabelWidth : Self.collapsedLabelContentWidth
+        return Self.displayLabelContentSize(for: state?.label ?? "", maximumWidth: maximumWidth).width
+    }
+
     public func cursorOnlyVisualFrame(at point: CGPoint) -> CGRect {
         CGRect(
             x: point.x - Self.cursorVisualFrameSize.width / 2,
@@ -102,26 +107,51 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
         )
     }
 
+    public func cursorPanelFrame(at point: CGPoint) -> CGRect {
+        panelFrame(at: point, includesLabel: false)
+    }
+
     public func updateViewport(origin: CGPoint, size: CGSize) {
         viewportOrigin = origin
         viewportSize = size
     }
 
-    private func visualFrame(
+    private func contentFrame(
         at point: CGPoint,
         includesLabel: Bool
     ) -> CGRect {
         var frame = cursorOnlyVisualFrame(at: point)
-        guard includesLabel else { return frame }
+        guard includesLabel else { return frame.insetBy(dx: -Self.contentOverdrawPadding, dy: -Self.contentOverdrawPadding) }
 
         let labelSize = labelSize()
-        let offset = labelOffset(for: point, in: screenSize)
-        let origin = CGPoint(
+        frame = frame.union(labelFrame(for: point, labelSize: labelSize))
+        return frame.insetBy(dx: -Self.contentOverdrawPadding, dy: -Self.contentOverdrawPadding)
+    }
+
+    private func panelFrame(
+        at point: CGPoint,
+        includesLabel: Bool
+    ) -> CGRect {
+        var frame = contentFrame(at: point, includesLabel: includesLabel)
+        guard includesLabel else { return frame.insetBy(dx: -Self.panelOverdrawPadding, dy: -Self.panelOverdrawPadding) }
+
+        for labelSize in reservedPanelLabelSizes() {
+            frame = frame.union(labelFrame(for: point, labelSize: labelSize))
+        }
+        return frame.insetBy(dx: -Self.panelOverdrawPadding, dy: -Self.panelOverdrawPadding)
+    }
+
+    private func labelFrame(
+        for point: CGPoint,
+        labelSize: CGSize
+    ) -> CGRect {
+        let offset = labelOffset(for: point, labelSize: labelSize, in: screenSize)
+        return CGRect(
             x: point.x + offset.width - labelSize.width / 2,
-            y: point.y + offset.height - labelSize.height / 2
+            y: point.y + offset.height - labelSize.height / 2,
+            width: labelSize.width,
+            height: labelSize.height
         )
-        frame = frame.union(CGRect(origin: origin, size: labelSize))
-        return frame.insetBy(dx: -10, dy: -10)
     }
 
     public var cursorHitTestFrame: CGRect {
@@ -136,15 +166,15 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
     }
 
     public func labelOffset(in screenSize: CGSize) -> CGSize {
-        labelOffset(for: position, in: screenSize)
+        labelOffset(for: position, labelSize: labelSize(), in: screenSize)
     }
 
     private func labelOffset(
         for cursorPosition: CGPoint,
+        labelSize: CGSize,
         in screenSize: CGSize
     ) -> CGSize {
-        let labelSize = labelSize()
-        let margin: CGFloat = 20
+        let margin = Self.screenMargin
         let preferredOffset = CGSize(width: 0, height: -(labelSize.height / 2 + Self.collapsedLabelBottomGap))
         let rightOffset = CGSize(width: labelSize.width / 2 + 44, height: 0)
         let leftOffset = CGSize(width: -labelSize.width / 2 - 44, height: 0)
@@ -159,16 +189,33 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
         if point(cursorPosition, offsetBy: rightOffset, labelSize: labelSize, fitsIn: screenSize, margin: margin) {
             return rightOffset
         }
-        return belowOffset
+        return clampedOffset(
+            belowOffset,
+            from: cursorPosition,
+            labelSize: labelSize,
+            in: screenSize,
+            margin: margin
+        )
     }
 
     private func labelSize() -> CGSize {
         if isLabelEditing {
             return Self.inlineEditorLabelSize(for: state?.label ?? "")
         }
-        guard isLabelHovered else { return Self.collapsedLabelSize }
+        guard isLabelHovered else {
+            return Self.collapsedLabelSize(for: state?.label ?? "")
+        }
 
         return Self.expandedCollapsedLabelSize(for: state?.label ?? "")
+    }
+
+    private func reservedPanelLabelSizes() -> [CGSize] {
+        let text = state?.label ?? ""
+        return [
+            Self.collapsedLabelSize(for: text),
+            Self.expandedCollapsedLabelSize(for: text),
+            Self.inlineEditorLabelSize(for: text)
+        ]
     }
 
     public func show(
@@ -220,8 +267,19 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
             return
         }
 
+        let previousLabel = self.state?.label
+        let previousLabelSize = labelSize()
+        let previousScreenSize = self.screenSize
         self.state = state
         self.screenSize = screenSize
+        if isHolding,
+           (
+            previousLabel != state.label ||
+                previousLabelSize != labelSize() ||
+                previousScreenSize != screenSize
+           ) {
+            labelLayoutChanged?()
+        }
         guard state.phase != .fading else {
             fadeOut()
             return
@@ -428,6 +486,44 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
             rect.maxY <= screenSize.height - margin
     }
 
+    private func clampedOffset(
+        _ offset: CGSize,
+        from point: CGPoint,
+        labelSize: CGSize,
+        in screenSize: CGSize,
+        margin: CGFloat
+    ) -> CGSize {
+        guard screenSize.width > 0, screenSize.height > 0 else { return offset }
+
+        let proposedCenter = CGPoint(
+            x: point.x + offset.width,
+            y: point.y + offset.height
+        )
+        let minX = margin + labelSize.width / 2
+        let maxX = screenSize.width - margin - labelSize.width / 2
+        let minY = margin + labelSize.height / 2
+        let maxY = screenSize.height - margin - labelSize.height / 2
+        let clampedCenter = CGPoint(
+            x: Self.clamp(proposedCenter.x, minimum: minX, maximum: maxX, fallback: screenSize.width / 2),
+            y: Self.clamp(proposedCenter.y, minimum: minY, maximum: maxY, fallback: screenSize.height / 2)
+        )
+        return CGSize(
+            width: clampedCenter.x - point.x,
+            height: clampedCenter.y - point.y
+        )
+    }
+
+    private static func clamp(
+        _ value: CGFloat,
+        minimum: CGFloat,
+        maximum: CGFloat,
+        fallback: CGFloat
+    ) -> CGFloat {
+        guard minimum <= maximum else { return fallback }
+
+        return min(max(value, minimum), maximum)
+    }
+
     public static let travelDuration: TimeInterval = 0.82
     public static let terminalTailAnimationDuration: TimeInterval = 0.70
     private static let terminalTailFrameDuration: TimeInterval = 0.08
@@ -440,9 +536,13 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
         (0.70, 0)
     ]
     fileprivate static let cursorVisualFrameSize = CGSize(width: 84, height: 112)
+    private static let screenMargin: CGFloat = 20
+    private static let contentOverdrawPadding: CGFloat = 10
+    private static let panelOverdrawPadding: CGFloat = 28
     fileprivate static let labelHorizontalPadding: CGFloat = 10
+    fileprivate static let labelVerticalPadding: CGFloat = 3
     fileprivate static let collapsedLabelContentWidth: CGFloat = 240
-    fileprivate static let collapsedLabelSize = CGSize(width: 260, height: 48)
+    fileprivate static let collapsedLabelMinimumHeight: CGFloat = 48
     fileprivate static let collapsedLabelBottomGap: CGFloat = 22
     fileprivate static let expandedCollapsedLabelWidth: CGFloat = 480
     fileprivate static let inlineEditorContentWidth: CGFloat = expandedCollapsedLabelWidth
@@ -457,14 +557,19 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
     fileprivate static let collapsedHaloVerticalOffset: CGFloat = 12
     private static let travelAnimation = Animation.timingCurve(0.45, 0.05, 0.3, 1, duration: travelDuration)
 
+    private static func collapsedLabelSize(for text: String) -> CGSize {
+        displayLabelSize(for: text, maximumWidth: collapsedLabelContentWidth)
+    }
+
     private static func expandedCollapsedLabelSize(for text: String) -> CGSize {
-        let characterCount = max(Array(text).count, 1)
-        let approximateCharactersPerLine = 44
-        let lineCount = max(1, Int(ceil(Double(characterCount) / Double(approximateCharactersPerLine))))
-        let height = CGFloat(lineCount) * 14 + 12
+        displayLabelSize(for: text, maximumWidth: expandedCollapsedLabelWidth)
+    }
+
+    private static func displayLabelSize(for text: String, maximumWidth: CGFloat) -> CGSize {
+        let contentSize = displayLabelContentSize(for: text, maximumWidth: maximumWidth)
         return CGSize(
-            width: expandedCollapsedLabelWidth + Self.labelHorizontalPadding * 2,
-            height: max(collapsedLabelSize.height, height)
+            width: contentSize.width + Self.labelHorizontalPadding * 2,
+            height: max(collapsedLabelMinimumHeight, contentSize.height + Self.labelVerticalPadding * 2)
         )
     }
 
@@ -499,12 +604,26 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
             attributes: attributes
         )
         let lineHeight = NSLayoutManager().defaultLineHeight(for: font)
-        return min(max(ceil(rect.height), lineHeight), ceil(lineHeight * 3))
+        return max(ceil(rect.height), ceil(lineHeight))
     }
 
     private static func collapsedLabelNeedsExpansion(_ text: String) -> Bool {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty else { return false }
+
+        let collapsed = displayLabelSize(for: text, maximumWidth: collapsedLabelContentWidth)
+        let expanded = displayLabelSize(for: text, maximumWidth: expandedCollapsedLabelWidth)
+        return expanded.height < collapsed.height - 0.5
+    }
+
+    fileprivate static func displayLabelContentSize(
+        for text: String,
+        maximumWidth: CGFloat
+    ) -> CGSize {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else {
+            return CGSize(width: 1, height: 14)
+        }
 
         let font = NSFont.systemFont(ofSize: labelFontSize, weight: .medium)
         let paragraphStyle = NSMutableParagraphStyle()
@@ -514,20 +633,20 @@ public final class PointerPromptSpawnOverlayViewModel: ObservableObject {
             .font: font,
             .paragraphStyle: paragraphStyle
         ]
-        let singleLineWidth = ceil((trimmedText as NSString).size(withAttributes: attributes).width)
         let boundingRect = (trimmedText as NSString).boundingRect(
             with: CGSize(
-                width: collapsedLabelContentWidth,
+                width: maximumWidth,
                 height: CGFloat.greatestFiniteMagnitude
             ),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: attributes
         )
         let lineHeight = NSLayoutManager().defaultLineHeight(for: font)
-        let maximumVisibleHeight = ceil(lineHeight * 2 + 1)
-
-        return singleLineWidth > collapsedLabelContentWidth * 2 ||
-            ceil(boundingRect.height) > maximumVisibleHeight
+        let singleLineWidth = ceil((trimmedText as NSString).size(withAttributes: attributes).width)
+        return CGSize(
+            width: min(max(ceil(boundingRect.width), min(singleLineWidth, maximumWidth)), maximumWidth),
+            height: max(ceil(boundingRect.height), ceil(lineHeight))
+        )
     }
 }
 
@@ -638,24 +757,18 @@ public struct PointerPromptSpawnOverlayView: View {
     }
 
     private func displayLabel(state: PointerPromptSpawnState) -> some View {
-        TypewriterText(
-            text: state.label,
-            identity: PointerPromptSpawnGeometry.labelTypingIdentity(
-                spawnID: state.id,
-                label: state.label
-            )
-        )
+        Text(state.label)
         .font(.system(size: PointerPromptSpawnOverlayViewModel.labelFontSize, weight: .medium))
         .foregroundStyle(.white)
         .multilineTextAlignment(.leading)
-        .lineLimit(viewModel.isLabelHovered ? nil : 2)
-        .truncationMode(.tail)
+        .lineLimit(nil)
+        .fixedSize(horizontal: false, vertical: true)
         .frame(
-            maxWidth: viewModel.isLabelHovered ? PointerPromptSpawnOverlayViewModel.expandedCollapsedLabelWidth : PointerPromptSpawnOverlayViewModel.collapsedLabelContentWidth,
+            width: viewModel.displayLabelContentWidth,
             alignment: .leading
         )
         .padding(.horizontal, PointerPromptSpawnOverlayViewModel.labelHorizontalPadding)
-        .padding(.vertical, 3)
+        .padding(.vertical, PointerPromptSpawnOverlayViewModel.labelVerticalPadding)
     }
 
     private func inlineLabelEditor(state: PointerPromptSpawnState) -> some View {
@@ -664,8 +777,8 @@ public struct PointerPromptSpawnOverlayView: View {
                 .font(.system(size: PointerPromptSpawnOverlayViewModel.labelFontSize, weight: .medium))
                 .foregroundStyle(.white)
                 .multilineTextAlignment(.leading)
-                .lineLimit(3)
-                .truncationMode(.tail)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(
                     width: PointerPromptSpawnOverlayViewModel.inlineEditorContentWidth,
                     alignment: .leading
@@ -751,40 +864,6 @@ public struct PointerPromptSpawnOverlayView: View {
         Color(red: 0.73, green: 0.89, blue: 0.90),
         Color(red: 0.88, green: 0.77, blue: 0.93)
     ]
-}
-
-private struct TypewriterText: View {
-    let text: String
-    let identity: String
-    @State private var visibleText = ""
-    @State private var generation = UUID()
-
-    var body: some View {
-        Text(visibleText)
-            .onAppear {
-                restart()
-            }
-            .onChange(of: identity) {
-                restart()
-            }
-    }
-
-    private func restart() {
-        let currentGeneration = UUID()
-        generation = currentGeneration
-        visibleText = ""
-
-        let characters = Array(text)
-        guard !characters.isEmpty else { return }
-
-        for index in characters.indices {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.026) {
-                guard generation == currentGeneration else { return }
-
-                visibleText = String(characters[...index])
-            }
-        }
-    }
 }
 
 private struct SpawnLabelInlineTextInput: NSViewRepresentable {
