@@ -390,6 +390,56 @@ struct LocalAppTaskTests {
     }
 
     @Test
+    func catalogResolvesValidatedGenericPlayMediaToMusicAutomation() throws {
+        let catalog = LocalAppTaskCatalog(
+            taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
+            availabilityProvider: StaticLocalAppAvailabilityProvider(
+                installedBundleIdentifiers: ["com.apple.Music"]
+            )
+        )
+        var genericIntent = genericLocalAppInteractionIntent(
+            appName: "Music",
+            query: "Viva La Vida Coldplay",
+            planTools: [
+                .openOrFocusApp,
+                .observeApp,
+                .focusSearch,
+                .setText,
+                .pressReturn,
+                .verifyCommand
+            ]
+        )
+        genericIntent.metadata.merge([
+            "appFinder.selectedAppID": "com.apple.Music",
+            "appFinder.selectedCapabilityID": "play_media",
+            "appFinder.controlProfile": "search_then_enter",
+            "mediaSelection.kind": "representative_song",
+            "mediaSelection.seed": "Coldplay",
+            "mediaSelection.selectedTitle": "Viva La Vida"
+        ]) { _, new in new }
+
+        let resolution = catalog.resolve(intent: genericIntent)
+        let intent = try #require(resolution.intent)
+        let definition = try #require(resolution.definition)
+        let commands = catalog.adapter(for: definition).guardedAutomationCommandTemplates(
+            for: intent,
+            issuedAt: timestamp(100)
+        )
+
+        #expect(resolution.status == .resolved)
+        #expect(intent.taskType == "media_playback")
+        #expect(intent.targetApp.appName == "Music")
+        #expect(intent.normalizedEntities["query"] == "Viva La Vida Coldplay")
+        #expect(intent.metadata["resolvedFromCapability"] == "play_media")
+        #expect(intent.metadata["automationBackend"] == "appleScript")
+        #expect(definition.taskType == "media_playback")
+        #expect(definition.metadata["automationBackend"] == "appleScript")
+        #expect(commands.map(\.kind) == [.controller])
+        #expect(commands.first?.metadata["appleScript.action"] == "music.playMediaQuery")
+        #expect(commands.first?.key == "Viva La Vida Coldplay")
+    }
+
+    @Test
     func staticProviderBuildsAppFinderCatalogWithSupportAndDenyMetadata() throws {
         let provider = StaticLocalAppAvailabilityProvider(
             installedBundleIdentifiers: [
@@ -1086,6 +1136,76 @@ struct LocalAppTaskTests {
         #expect(result.metadata["action.overlayPointer"] == "visualOnly")
         #expect(result.workflowProgress.state(for: .execute)?.status == .completed)
         #expect(result.workflowProgress.state(for: .verify)?.status == .completed)
+    }
+
+    @Test @MainActor
+    func liveRunnerExecutesValidatedGenericPlayMediaThroughAutomation() async throws {
+        let backend = RecordingLocalAppTaskInputBackend()
+        let controller = FakeLocalAppTaskAppController(
+            launchObservation: LocalAppTaskObservation(
+                appIsRunning: true,
+                appIsFocused: true,
+                availableControls: [:],
+                confidence: 0.7
+            ),
+            finalObservation: LocalAppTaskObservation(
+                appIsRunning: true,
+                appIsFocused: true,
+                availableControls: [:],
+                confidence: 0.74
+            )
+        )
+        let catalog = LocalAppTaskCatalog(
+            taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
+            availabilityProvider: StaticLocalAppAvailabilityProvider(installedBundleIdentifiers: ["com.apple.Music"])
+        )
+        let runner = LocalAppTaskLiveRunner(
+            catalog: catalog,
+            appController: controller,
+            actionEngineFactory: { _ in
+                ActionEngineGuardrail(
+                    configuration: ActionEngineConfiguration(liveInputEnabled: true),
+                    inputBackend: backend
+                )
+            },
+            permissionPolicy: ToolCallPolicy(deniedCapabilities: [])
+        )
+        var intent = genericLocalAppInteractionIntent(
+            appName: "Music",
+            query: "Viva La Vida Coldplay",
+            planTools: [
+                .openOrFocusApp,
+                .observeApp,
+                .focusSearch,
+                .setText,
+                .pressReturn,
+                .verifyCommand
+            ]
+        )
+        intent.metadata.merge([
+            "appFinder.selectedAppID": "com.apple.Music",
+            "appFinder.selectedCapabilityID": "play_media",
+            "appFinder.controlProfile": "search_then_enter",
+            "mediaSelection.kind": "representative_song",
+            "mediaSelection.seed": "Coldplay",
+            "mediaSelection.selectedTitle": "Viva La Vida"
+        ]) { _, new in new }
+
+        let result = await runner.run(
+            command: "play some cold play",
+            traceID: "trace-generic-play-media-automation",
+            resolution: catalog.resolve(intent: intent),
+            metadata: ["intentParser": "test-model"]
+        )
+
+        #expect(result.status == .completed)
+        #expect(result.resolution.definition?.taskType == "media_playback")
+        #expect(result.metadata["reason"] != "evidencePlanBlocked")
+        #expect(result.metadata["automation.backend"] == "appleScript")
+        #expect(result.metadata["automation.action"] == "music.playMediaQuery")
+        #expect(result.workflowProgress.state(for: .evidencePlan)?.status == .completed)
+        #expect(result.workflowProgress.state(for: .execute)?.status == .completed)
+        #expect(await backend.executedKeys() == ["Viva La Vida Coldplay"])
     }
 
     @Test @MainActor

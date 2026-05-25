@@ -1014,6 +1014,16 @@ public struct LocalAppTaskCatalog: Sendable {
 
         let availability = availabilityProvider.availability(namedApp: cleanedRequestedAppName)
         let target = availability.target
+        if let playMediaResolution = resolveGenericPlayMediaInteraction(
+            intent: intent,
+            target: target,
+            availability: availability,
+            requestedAppName: cleanedRequestedAppName,
+            plan: plan
+        ) {
+            return playMediaResolution
+        }
+
         let definition = Self.genericLocalAppInteractionDefinition(
             target: target,
             plan: plan
@@ -1054,6 +1064,96 @@ public struct LocalAppTaskCatalog: Sendable {
                 "lookupProvider": availability.metadata["provider"] ?? "",
                 "itemKind": availability.metadata["itemKind"] ?? target.metadata["localItem.kind"] ?? "",
                 "plan.tools": plan.tools.map(\.rawValue).joined(separator: ",")
+            ]
+        )
+    }
+
+    private func resolveGenericPlayMediaInteraction(
+        intent: TaskIntent,
+        target: LocalAppTarget,
+        availability: LocalAppAvailability,
+        requestedAppName: String,
+        plan: LocalAppActionPlan
+    ) -> LocalAppTaskCatalogResolution? {
+        let selectedCapabilityID = intent.metadata["appFinder.selectedCapabilityID"]
+            ?? intent.metadata["selectedCapabilityID"]
+            ?? ""
+        guard selectedCapabilityID == "play_media" else { return nil }
+
+        let mediaDefinition = BuiltInLocalAppTaskDefinitions.mediaPlayback
+        let targetIsMusic = target.bundleIdentifier == mediaDefinition.targetApp.bundleIdentifier
+            || LocalAppLookup.normalized(target.appName) == LocalAppLookup.normalized(mediaDefinition.targetApp.appName)
+        guard targetIsMusic else { return nil }
+
+        let inputEntity = plan.inputEntity.isEmpty ? "query" : plan.inputEntity
+        let query = Self.entityValue(named: inputEntity, in: intent)
+        guard !query.isEmpty else {
+            return LocalAppTaskCatalogResolution(
+                status: .needsConfirmation,
+                intent: intent,
+                definition: mediaDefinition,
+                availability: availability,
+                metadata: [
+                    "reason": inputEntity,
+                    "taskType": mediaDefinition.taskType,
+                    "targetApp": mediaDefinition.targetApp.appName,
+                    "requestedItemName": requestedAppName,
+                    "appFinder.selectedCapabilityID": selectedCapabilityID
+                ]
+            )
+        }
+
+        let mediaAvailability = availabilityProvider.availability(for: mediaDefinition.targetApp)
+        var metadata = mediaDefinition.metadata.merging(intent.metadata) { _, new in new }
+        metadata["bundleIdentifier"] = mediaDefinition.targetApp.bundleIdentifier ?? ""
+        metadata["targetApp"] = mediaDefinition.targetApp.appName
+        metadata["requestedItemName"] = requestedAppName
+        metadata["genericTaskType"] = Self.genericLocalAppInteractionTaskType
+        metadata["genericPlan.tools"] = plan.tools.map(\.rawValue).joined(separator: ",")
+        metadata["resolvedFromCapability"] = selectedCapabilityID
+
+        let mediaIntent = TaskIntent(
+            intentID: "\(mediaDefinition.taskType)-\(slug(query))",
+            taskType: mediaDefinition.taskType,
+            targetApp: mediaDefinition.targetApp,
+            entities: ["query": intent.entities[inputEntity] ?? query],
+            normalizedEntities: ["query": query],
+            confidence: intent.confidence,
+            parserSource: intent.parserSource,
+            needsConfirmation: intent.needsConfirmation,
+            sourceModelCallID: intent.sourceModelCallID,
+            metadata: metadata
+        )
+
+        guard mediaAvailability.isInstalled else {
+            return LocalAppTaskCatalogResolution(
+                status: .appUnavailable,
+                intent: mediaIntent,
+                definition: mediaDefinition,
+                availability: mediaAvailability,
+                metadata: [
+                    "reason": "targetAppUnavailable",
+                    "taskType": mediaDefinition.taskType,
+                    "targetApp": mediaDefinition.targetApp.appName,
+                    "requestedItemName": requestedAppName,
+                    "lookupProvider": mediaAvailability.metadata["provider"] ?? "",
+                    "appFinder.selectedCapabilityID": selectedCapabilityID
+                ]
+            )
+        }
+
+        return LocalAppTaskCatalogResolution(
+            status: .resolved,
+            intent: mediaIntent,
+            definition: mediaDefinition,
+            availability: mediaAvailability,
+            metadata: [
+                "taskType": mediaDefinition.taskType,
+                "targetApp": mediaDefinition.targetApp.appName,
+                "requestedItemName": requestedAppName,
+                "lookupProvider": mediaAvailability.metadata["provider"] ?? "",
+                "appFinder.selectedCapabilityID": selectedCapabilityID,
+                "resolvedFromCapability": selectedCapabilityID
             ]
         )
     }
