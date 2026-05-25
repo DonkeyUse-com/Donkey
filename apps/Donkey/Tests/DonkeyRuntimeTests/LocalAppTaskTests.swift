@@ -596,6 +596,126 @@ struct LocalAppTaskTests {
     }
 
     @Test
+    func appFinderProfilesLoadFromBundledJSON() throws {
+        let store = LocalAppFinderProfileStore.defaultStore
+
+        let music = try #require(store.profile(appName: "Music", bundleIdentifier: "com.apple.Music"))
+        #expect(music.supportStatus == .supported)
+        #expect(music.capabilities.map(\.id).contains("play_media"))
+
+        let chrome = try #require(store.profile(appName: "Chrome", bundleIdentifier: nil))
+        #expect(chrome.bundleIdentifier == "com.google.Chrome")
+        #expect(chrome.capabilities.map(\.id).contains("open_url"))
+
+        let terminal = try #require(store.profile(appName: "Terminal", bundleIdentifier: "com.apple.Terminal"))
+        #expect(terminal.supportStatus == .denied)
+        #expect(terminal.capabilities.isEmpty)
+    }
+
+    @Test
+    func dynamicCatalogRefreshProfilesOnlyNewApplicationsOncePerDay() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DonkeyAppCatalog-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+
+        let seedURL = rootURL.appendingPathComponent("seed.json")
+        let seedEntry = LocalAppFinderCatalogEntry(
+            appID: "com.apple.Notes",
+            appName: "Notes",
+            bundleIdentifier: "com.apple.Notes",
+            description: "Seeded Notes profile.",
+            supportStatus: .supported,
+            capabilities: [
+                LocalAppFinderCapability(
+                    id: "write_text",
+                    summary: "Write text.",
+                    controlProfiles: ["new_document_text"],
+                    requiredEntities: ["query"]
+                )
+            ]
+        )
+        try JSONEncoder().encode(LocalAppFinderProfileCatalog(entries: [seedEntry])).write(to: seedURL)
+
+        let profileStore = LocalAppFinderProfileStore(
+            seedCatalogURL: seedURL,
+            generatedCatalogURL: rootURL.appendingPathComponent("generated.json"),
+            resolvedCatalogURL: rootURL.appendingPathComponent("snapshot.json"),
+            refreshStateURL: rootURL.appendingPathComponent("state.json")
+        )
+        let scanner = RecordingApplicationCatalogScanner(applications: [
+            LocalApplicationCatalogCandidate(
+                appName: "Notes",
+                bundleIdentifier: "com.apple.Notes",
+                path: "/Applications/Notes.app"
+            ),
+            LocalApplicationCatalogCandidate(
+                appName: "Figma",
+                bundleIdentifier: "com.figma.Desktop",
+                path: "/Applications/Figma.app"
+            )
+        ])
+        let generator = RecordingCatalogProfileGenerator()
+        let refreshLoop = LocalAppDynamicCatalogRefreshLoop(
+            scanner: scanner,
+            profileStore: profileStore,
+            profileGenerator: generator,
+            refreshInterval: 86_400
+        )
+        let now = Date(timeIntervalSince1970: 1_000)
+
+        let firstRefresh = await refreshLoop.refreshIfNeeded(now: now)
+
+        #expect(firstRefresh.status == "refreshed")
+        #expect(firstRefresh.newApplicationCount == 1)
+        #expect(firstRefresh.generatedProfileCount == 1)
+        #expect(await generator.requestedBatches() == [["com.figma.Desktop"]])
+        let figmaProfile = try #require(profileStore.profile(
+            appName: "Figma",
+            bundleIdentifier: "com.figma.Desktop"
+        ))
+        #expect(figmaProfile.supportStatus == .supported)
+        #expect(profileStore.resolvedCatalogEntries().contains {
+            $0.appID == "com.figma.Desktop" && $0.supportStatus == .supported
+        })
+
+        let skippedRefresh = await refreshLoop.refreshIfNeeded(
+            now: now.addingTimeInterval(3_600)
+        )
+        #expect(skippedRefresh.status == "skipped")
+        #expect(await generator.requestedBatches() == [["com.figma.Desktop"]])
+
+        scanner.setApplications([
+            LocalApplicationCatalogCandidate(
+                appName: "Notes",
+                bundleIdentifier: "com.apple.Notes",
+                path: "/Applications/Notes.app"
+            ),
+            LocalApplicationCatalogCandidate(
+                appName: "Figma",
+                bundleIdentifier: "com.figma.Desktop",
+                path: "/Applications/Figma.app"
+            ),
+            LocalApplicationCatalogCandidate(
+                appName: "Linear",
+                bundleIdentifier: "com.linear",
+                path: "/Applications/Linear.app"
+            )
+        ])
+
+        let nextDayRefresh = await refreshLoop.refreshIfNeeded(
+            now: now.addingTimeInterval(90_000)
+        )
+
+        #expect(nextDayRefresh.status == "refreshed")
+        #expect(nextDayRefresh.newApplicationCount == 1)
+        #expect(await generator.requestedBatches() == [
+            ["com.figma.Desktop"],
+            ["com.linear"]
+        ])
+    }
+
+    @Test
     func documentFormFillPlannerMapsStructuredDataToObservedFieldsForReview() throws {
         let intent = documentFormFillIntent()
         let context = LocalAppTaskContext(
@@ -1305,6 +1425,68 @@ struct LocalAppTaskTests {
     private func temporaryStoreDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("donkey-task-memory-\(UUID().uuidString)", isDirectory: true)
+    }
+}
+
+private final class RecordingApplicationCatalogScanner: LocalApplicationCatalogScanning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var applications: [LocalApplicationCatalogCandidate]
+
+    init(applications: [LocalApplicationCatalogCandidate]) {
+        self.applications = applications
+    }
+
+    func installedApplications() -> [LocalApplicationCatalogCandidate] {
+        lock.lock()
+        defer { lock.unlock() }
+        return applications
+    }
+
+    func setApplications(_ applications: [LocalApplicationCatalogCandidate]) {
+        lock.lock()
+        self.applications = applications
+        lock.unlock()
+    }
+}
+
+private actor RecordingCatalogProfileGenerator: LocalAppCatalogProfileGenerating {
+    private var batches: [[String]] = []
+
+    func generateProfiles(
+        for applications: [LocalApplicationCatalogCandidate],
+        existingProfiles _: [LocalAppFinderCatalogEntry],
+        sourceTraceID _: String
+    ) async -> LocalAppCatalogProfileGenerationResult {
+        let ids = applications.map(\.catalogID).sorted()
+        batches.append(ids)
+
+        let entries = applications.map { application in
+            LocalAppFinderCatalogEntry(
+                appID: application.catalogID,
+                appName: application.appName,
+                bundleIdentifier: application.bundleIdentifier,
+                description: "Generated profile for \(application.appName).",
+                supportStatus: .supported,
+                capabilities: [
+                    LocalAppFinderCapability(
+                        id: "write_text",
+                        summary: "Write text in \(application.appName).",
+                        controlProfiles: ["new_document_text"],
+                        requiredEntities: ["query"]
+                    )
+                ],
+                metadata: ["generated": "test"]
+            )
+        }
+        return LocalAppCatalogProfileGenerationResult(
+            generatedEntries: entries,
+            attemptedApplicationIDs: Set(ids),
+            metadata: ["generator": "recording-test"]
+        )
+    }
+
+    func requestedBatches() -> [[String]] {
+        batches
     }
 }
 

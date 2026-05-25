@@ -38,7 +38,11 @@ public struct MacLocalAppAvailabilityProvider: LocalAppAvailabilityProviding {
     public init() {}
 
     public func appFinderCatalogEntries() -> [LocalAppFinderCatalogEntry] {
-        Self.cachedInstalledApplicationCatalogEntries
+        let snapshotEntries = LocalAppFinderProfileStore.defaultStore.resolvedCatalogEntries()
+        if !snapshotEntries.isEmpty {
+            return snapshotEntries
+        }
+        return Self.cachedInstalledApplicationCatalogEntries
     }
 
     public func availability(for target: LocalAppTarget) -> LocalAppAvailability {
@@ -204,31 +208,50 @@ public struct MacLocalAppAvailabilityProvider: LocalAppAvailabilityProviding {
             .first
     }
 
-    private static func installedApplicationCatalogEntries() -> [LocalAppFinderCatalogEntry] {
+    public static func installedApplications() -> [LocalApplicationCatalogCandidate] {
         let urls = spotlightApplicationURLs() + fallbackApplicationURLs()
-        var entriesByID: [String: LocalAppFinderCatalogEntry] = [:]
+        var applicationsByID: [String: LocalApplicationCatalogCandidate] = [:]
         for url in urls {
             guard LocalItemKind(url: url) == .application else { continue }
             let bundle = Bundle(url: url)
             let appName = displayName(for: url, kind: .application)
             let bundleIdentifier = bundle?.bundleIdentifier
-            let entry = LocalAppFinderCatalogBuilder.entry(
+            let candidate = LocalApplicationCatalogCandidate(
                 appName: appName,
                 bundleIdentifier: bundleIdentifier,
-                path: url.path
+                path: url.path,
+                metadata: [
+                    "localItem.kind": LocalItemKind.application.rawValue,
+                    "localItem.path": url.path
+                ]
             )
-            entriesByID[entry.appID] = entry
+            applicationsByID[candidate.catalogID] = candidate
         }
 
-        return entriesByID.values.sorted {
+        return applicationsByID.values.sorted {
             if $0.appName == $1.appName {
-                return $0.appID < $1.appID
+                return $0.catalogID < $1.catalogID
             }
             return $0.appName.localizedCaseInsensitiveCompare($1.appName) == .orderedAscending
         }
     }
 
-    private static let cachedInstalledApplicationCatalogEntries = installedApplicationCatalogEntries()
+    private static func installedApplicationCatalogEntries() -> [LocalAppFinderCatalogEntry] {
+        cachedInstalledApplications
+            .map { LocalAppFinderProfileStore.defaultStore.entry(for: $0) }
+            .sorted {
+                if $0.appName == $1.appName {
+                    return $0.appID < $1.appID
+                }
+                return $0.appName.localizedCaseInsensitiveCompare($1.appName) == .orderedAscending
+            }
+    }
+
+    private static let cachedInstalledApplications = installedApplications()
+
+    private static var cachedInstalledApplicationCatalogEntries: [LocalAppFinderCatalogEntry] {
+        installedApplicationCatalogEntries()
+    }
 
     private static func spotlightApplicationURLs() -> [URL] {
         let query = #"kMDItemContentTypeTree == "com.apple.application-bundle""#
@@ -609,7 +632,7 @@ public struct StaticLocalAppAvailabilityProvider: LocalAppAvailabilityProviding 
     }
 
     private static func inferredAppName(from bundleIdentifier: String) -> String {
-        LocalAppLookup.titleCased(bundleIdentifier.split(separator: ".").last.map(String.init) ?? bundleIdentifier)
+        LocalAppFinderProfileStore.defaultStore.inferredAppName(from: bundleIdentifier)
     }
 }
 
@@ -713,261 +736,20 @@ enum LocalAppLookup {
 }
 
 private enum LocalAppFinderCatalogBuilder {
-    private struct Profile {
-        var description: String
-        var supportStatus: LocalAppFinderSupportStatus
-        var capabilities: [LocalAppFinderCapability]
-        var denyReason: String?
-    }
-
     static func entry(
         appName: String,
         bundleIdentifier: String?,
         path: String? = nil
     ) -> LocalAppFinderCatalogEntry {
-        let appID = bundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            ? bundleIdentifier!
-            : "app:\(LocalAppLookup.normalized(appName))"
-        let profile = profile(appName: appName, bundleIdentifier: bundleIdentifier)
-        let metadata: [String: String] = ["localItem.kind": LocalItemKind.application.rawValue]
-
-        return LocalAppFinderCatalogEntry(
-            appID: appID,
+        LocalAppFinderProfileStore.defaultStore.entry(
             appName: appName,
             bundleIdentifier: bundleIdentifier,
-            description: profile.description,
-            supportStatus: profile.supportStatus,
-            capabilities: profile.capabilities,
-            denyReason: profile.denyReason,
-            metadata: metadata
+            path: path
         )
     }
 
     static func inferredAppName(from bundleIdentifier: String) -> String {
-        let normalizedKnownNames = profileNameByBundleID[bundleIdentifier]
-        if let normalizedKnownNames {
-            return normalizedKnownNames
-        }
-        return LocalAppLookup.titleCased(bundleIdentifier.split(separator: ".").last.map(String.init) ?? bundleIdentifier)
-    }
-
-    private static func profile(
-        appName: String,
-        bundleIdentifier: String?
-    ) -> Profile {
-        if let bundleIdentifier,
-           let profile = profileByBundleID[bundleIdentifier] {
-            return profile
-        }
-        let normalizedName = LocalAppLookup.normalized(appName)
-        if let profile = profileByName[normalizedName] {
-            return profile
-        }
-
-        return Profile(
-            description: "Installed app; no declared executable workflow.",
-            supportStatus: .candidate,
-            capabilities: []
-        )
-    }
-
-    private static func capability(
-        _ id: String,
-        _ summary: String,
-        controlProfiles: [String],
-        requiredEntities: [String]
-    ) -> LocalAppFinderCapability {
-        LocalAppFinderCapability(
-            id: id,
-            summary: summary,
-            controlProfiles: controlProfiles,
-            requiredEntities: requiredEntities
-        )
-    }
-
-    private static let playMedia = capability(
-        "play_media",
-        "Search for and play a song, artist, album, podcast, or playlist.",
-        controlProfiles: ["search_then_enter"],
-        requiredEntities: ["query"]
-    )
-    private static let openURL = capability(
-        "open_url",
-        "Open a requested website or URL.",
-        controlProfiles: ["address_bar_submit"],
-        requiredEntities: ["query"]
-    )
-    private static let writeText = capability(
-        "write_text",
-        "Create a new text document or note and type the requested text.",
-        controlProfiles: ["new_document_text"],
-        requiredEntities: ["query"]
-    )
-    private static let createTable = capability(
-        "create_table",
-        "Create a compact table or spreadsheet from tab-separated text.",
-        controlProfiles: ["new_document_text"],
-        requiredEntities: ["query"]
-    )
-
-    private static let profileNameByBundleID: [String: String] = [
-        "com.apple.Music": "Music",
-        "com.spotify.client": "Spotify",
-        "com.apple.Safari": "Safari",
-        "com.google.Chrome": "Google Chrome",
-        "company.thebrowser.Browser": "Arc",
-        "com.apple.Notes": "Notes",
-        "com.apple.TextEdit": "TextEdit",
-        "com.apple.iWork.Numbers": "Numbers",
-        "com.microsoft.Excel": "Microsoft Excel",
-        "com.apple.Terminal": "Terminal",
-        "com.googlecode.iterm2": "iTerm",
-        "com.apple.keychainaccess": "Keychain Access",
-        "com.apple.Passwords": "Passwords",
-        "com.apple.systempreferences": "System Settings",
-        "com.apple.ActivityMonitor": "Activity Monitor",
-        "com.apple.Console": "Console"
-    ]
-
-    private static let profileByBundleID: [String: Profile] = [
-        "com.apple.Music": Profile(
-            description: "Apple Music library and playback app.",
-            supportStatus: .supported,
-            capabilities: [playMedia]
-        ),
-        "com.spotify.client": Profile(
-            description: "Spotify music and podcast playback app.",
-            supportStatus: .supported,
-            capabilities: [playMedia]
-        ),
-        "com.apple.Safari": Profile(
-            description: "Apple web browser for opening websites and URLs.",
-            supportStatus: .supported,
-            capabilities: [openURL]
-        ),
-        "com.google.Chrome": Profile(
-            description: "Google web browser for opening websites and URLs.",
-            supportStatus: .supported,
-            capabilities: [openURL]
-        ),
-        "company.thebrowser.Browser": Profile(
-            description: "Arc web browser for opening websites and URLs.",
-            supportStatus: .supported,
-            capabilities: [openURL]
-        ),
-        "com.apple.Notes": Profile(
-            description: "Apple Notes app for creating and editing notes.",
-            supportStatus: .supported,
-            capabilities: [writeText]
-        ),
-        "com.apple.TextEdit": Profile(
-            description: "Apple text editor for creating plain or rich text documents.",
-            supportStatus: .supported,
-            capabilities: [writeText]
-        ),
-        "com.apple.iWork.Numbers": Profile(
-            description: "Apple spreadsheet app for creating tables and spreadsheets.",
-            supportStatus: .supported,
-            capabilities: [createTable]
-        ),
-        "com.microsoft.Excel": Profile(
-            description: "Microsoft spreadsheet app for creating and editing workbooks.",
-            supportStatus: .candidate,
-            capabilities: [createTable]
-        )
-    ].merging(deniedProfilesByBundleID) { supported, _ in supported }
-
-    private static let profileByName: [String: Profile] = [
-        "music": Profile(
-            description: "Apple Music library and playback app.",
-            supportStatus: .supported,
-            capabilities: [playMedia]
-        ),
-        "spotify": Profile(
-            description: "Spotify music and podcast playback app.",
-            supportStatus: .supported,
-            capabilities: [playMedia]
-        ),
-        "safari": Profile(
-            description: "Apple web browser for opening websites and URLs.",
-            supportStatus: .supported,
-            capabilities: [openURL]
-        ),
-        "google chrome": Profile(
-            description: "Google web browser for opening websites and URLs.",
-            supportStatus: .supported,
-            capabilities: [openURL]
-        ),
-        "chrome": Profile(
-            description: "Google web browser for opening websites and URLs.",
-            supportStatus: .supported,
-            capabilities: [openURL]
-        ),
-        "arc": Profile(
-            description: "Arc web browser for opening websites and URLs.",
-            supportStatus: .supported,
-            capabilities: [openURL]
-        ),
-        "notes": Profile(
-            description: "Apple Notes app for creating and editing notes.",
-            supportStatus: .supported,
-            capabilities: [writeText]
-        ),
-        "textedit": Profile(
-            description: "Apple text editor for creating plain or rich text documents.",
-            supportStatus: .supported,
-            capabilities: [writeText]
-        ),
-        "numbers": Profile(
-            description: "Apple spreadsheet app for creating tables and spreadsheets.",
-            supportStatus: .supported,
-            capabilities: [createTable]
-        ),
-        "microsoft excel": Profile(
-            description: "Microsoft spreadsheet app for creating and editing workbooks.",
-            supportStatus: .candidate,
-            capabilities: [createTable]
-        ),
-        "excel": Profile(
-            description: "Microsoft spreadsheet app for creating and editing workbooks.",
-            supportStatus: .candidate,
-            capabilities: [createTable]
-        )
-    ].merging(deniedProfilesByName) { supported, _ in supported }
-
-    private static let deniedProfilesByBundleID: [String: Profile] = [
-        "com.apple.Terminal": denied("Terminal is a shell app and is not selected for generic local-app automation."),
-        "com.googlecode.iterm2": denied("iTerm is a shell app and is not selected for generic local-app automation."),
-        "com.apple.keychainaccess": denied("Keychain Access can expose credentials and is denied for local-app automation."),
-        "com.apple.Passwords": denied("Password manager apps are denied for local-app automation."),
-        "com.apple.systempreferences": denied("System settings changes require a more specific reviewed capability."),
-        "com.apple.ActivityMonitor": denied("Process-management tools are denied for generic local-app automation."),
-        "com.apple.Console": denied("System log tools are denied for generic local-app automation.")
-    ]
-
-    private static let deniedProfilesByName: [String: Profile] = [
-        "terminal": denied("Shell apps are denied for generic local-app automation."),
-        "iterm": denied("Shell apps are denied for generic local-app automation."),
-        "iterm2": denied("Shell apps are denied for generic local-app automation."),
-        "keychain access": denied("Credential tools are denied for local-app automation."),
-        "passwords": denied("Password manager apps are denied for local-app automation."),
-        "1password": denied("Password manager apps are denied for local-app automation."),
-        "bitwarden": denied("Password manager apps are denied for local-app automation."),
-        "lastpass": denied("Password manager apps are denied for local-app automation."),
-        "dashlane": denied("Password manager apps are denied for local-app automation."),
-        "system settings": denied("System settings changes require a more specific reviewed capability."),
-        "system preferences": denied("System settings changes require a more specific reviewed capability."),
-        "activity monitor": denied("Process-management tools are denied for generic local-app automation."),
-        "console": denied("System log tools are denied for generic local-app automation.")
-    ]
-
-    private static func denied(_ reason: String) -> Profile {
-        Profile(
-            description: reason,
-            supportStatus: .denied,
-            capabilities: [],
-            denyReason: reason
-        )
+        LocalAppFinderProfileStore.defaultStore.inferredAppName(from: bundleIdentifier)
     }
 }
 

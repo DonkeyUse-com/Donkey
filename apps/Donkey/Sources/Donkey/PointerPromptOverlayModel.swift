@@ -28,6 +28,7 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
     private let voiceTranscriber: LocalVoiceTranscriptionAdapter
     private var updateChecker: any DonkeyUpdateChecking
     private let documentReviewController: DocumentFormFillReviewWindowController
+    private let appCatalogRefreshLoop: LocalAppDynamicCatalogRefreshLoop
     private var activeTaskIDs: Set<String> = []
     private var lastActiveTaskID: String?
     private static let notchTaskDisplayLimit = 12
@@ -52,6 +53,9 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         self.voiceTranscriber = voiceTranscriber
         self.updateChecker = updateChecker
         self.documentReviewController = documentReviewController
+        self.appCatalogRefreshLoop = LocalAppDynamicCatalogRefreshLoop(
+            profileGenerator: HostedLocalAppCatalogProfileGenerator()
+        )
         let restoredTasks = Self.restoredTasks(from: taskStore.loadRecentTasks(limit: Self.notchTaskDisplayLimit))
         notchTasks = restoredTasks
         notchAccentIndex = restoredTasks.first.map { PointerPromptAccentPalette.normalizedIndex($0.accentIndex) }
@@ -73,6 +77,7 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         }
         updateChecker.start()
         SQLiteAgentMemoryStore.shared?.prewarmDefaultLocalItemsInBackground()
+        appCatalogRefreshLoop.start()
         checkForUpdates()
     }
 

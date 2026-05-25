@@ -11,6 +11,7 @@ public enum AIModelRole: String, Codable, Equatable, Sendable {
     case taskIntent
     case voiceTranscription
     case plannerHint
+    case localAppCatalogProfile
     case traceSummary
     case recovery
 }
@@ -127,6 +128,27 @@ public struct AIModelRegistry: Codable, Equatable, Sendable {
                     "lastVerifiedAt": "2026-05-23",
                     "docsSource": "Donkey backend inference API"
                 ]
+            ),
+            AIModelRegistryEntry(
+                id: "backend-local-app-catalog-profile-default",
+                role: .localAppCatalogProfile,
+                provider: .donkeyBackend,
+                modelID: AIModelRegistryEntry.backendSelectedModelID,
+                endpoint: URL(string: "donkey://backend/api/inference/responses")!,
+                capabilities: [.textInput, .structuredOutputs],
+                timeoutMS: 20_000,
+                promptVersion: "local-app-catalog-profile-v1",
+                evalStatus: .candidate,
+                docsURL: URL(string: "donkey://docs/guides/backend-apis")!,
+                rollbackID: nil,
+                metadata: [
+                    "hosted": "true",
+                    "backendProxy": "true",
+                    "modelSelection": "backendDefault",
+                    "privacy.store": "false",
+                    "lastVerifiedAt": "2026-05-25",
+                    "docsSource": "Donkey backend inference API"
+                ]
             )
         ]
     )
@@ -138,6 +160,7 @@ public enum AIModelJobType: String, Codable, Equatable, Sendable {
     case taskIntent
     case voiceTranscription
     case plannerHint
+    case localAppCatalogProfile
     case traceSummary
     case recovery
 }
@@ -241,6 +264,8 @@ public struct AIModelRouter: Sendable {
             return .voiceTranscription
         case .plannerHint:
             return .plannerHint
+        case .localAppCatalogProfile:
+            return .localAppCatalogProfile
         case .traceSummary:
             return .traceSummary
         case .recovery:

@@ -31,6 +31,9 @@ let package = Package(
         .target(
             name: "DonkeyRuntime",
             dependencies: ["DonkeyContracts"],
+            resources: [
+                .process("Resources")
+            ],
             linkerSettings: [
                 .linkedLibrary("sqlite3")
             ]

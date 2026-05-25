@@ -108,10 +108,13 @@ Successful or reviewed plans can be stored as runtime task definitions in agent 
 
 Weather, Music, and document form-fill fixtures remain useful for tests and replay. The supported runtime path is generic: local app/item lookup, model-selected intent or plan, catalog validation, guarded execution, verification, and optional memory-backed learning.
 
+The local app finder catalog is seeded from bundled JSON and refreshed in the background from the user's installed applications. Donkey persists a daily app-catalog snapshot under Application Support, compares it with the previously seen application ids, and sends only newly discovered apps through the typed catalog-profile model route. Generated profiles are persisted as JSON, sanitized to the allowed generic control profiles, and merged with the shipped seed; bundled deny/support entries remain authoritative.
+
 ## Source Entry Points
 
 - Prompt command handling starts in `apps/Donkey/Sources/Donkey/PointerPromptCommandHandler.swift`.
 - Harness routing and context packet assembly live in `apps/Donkey/Sources/DonkeyRuntime/AppHarnessTurnRouter.swift`.
 - Task-intent parsing, app-finder prompt context, and the hosted Responses adapter live in `apps/Donkey/Sources/DonkeyAI/LocalGenerateTaskIntentAdapter.swift`.
 - Catalog validation and generic local-app interaction materialization live in `apps/Donkey/Sources/DonkeyRuntime/LocalAppTaskCatalog.swift`.
+- App-finder profile JSON loading and background refresh live in `apps/Donkey/Sources/DonkeyRuntime/LocalAppCatalogProfiles.swift`; hosted profile generation lives in `apps/Donkey/Sources/DonkeyAI/HostedLocalAppCatalogProfileGenerator.swift`.
 - Guarded execution lives in `apps/Donkey/Sources/DonkeyRuntime/LocalAppTaskLiveRunner.swift` and the action-engine backends.
