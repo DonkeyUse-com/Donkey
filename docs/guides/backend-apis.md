@@ -57,14 +57,15 @@ provider names are configuration/data inside private adapters only.
   OpenAI through `donkey_openai_mac_desktop_interaction`, which the hosted
   Responses adapter maps to OpenAI's `computer` tool.
 - The Gemini adapter uses the official `@google/genai` Node/TypeScript SDK for
-  general non-streaming chat, normal structured Responses calls, and browser
+  general non-streaming chat, structured Responses calls, and browser
   computer-use calls. It uses Vertex AI's global endpoint only when
   `GOOGLE_APPLICATION_CREDENTIALS_JSON` includes a `project_id`. If the project
-  is missing, the provider is unavailable. The adapter's defaults should track
-  Google's newest supported Gemini models: use the latest stable Flash model for
-  normal chat and Responses calls, and the latest Google-listed Computer
-  Use-capable model for browser Computer Use tool calls. Keep model selection in
-  code rather than environment overrides. For Google Cloud credits, set
+  is missing, the provider is unavailable. The adapter's defaults should route
+  fast structured task-intent and follow-up decisions to `gemini-3.1-flash-lite`,
+  keep `gemini-3.5-flash` available for general chat and non-decision Responses
+  calls, and use `gemini-3-flash-preview` for browser Computer Use tool calls.
+  Keep model selection in code rather than environment overrides. For Google
+  Cloud credits, set
   `GOOGLE_APPLICATION_CREDENTIALS_JSON` as a hosted-deploy sensitive env var
   rather than storing Google provider credentials in the Mac app.
 - The OpenAI hosted Responses adapter uses `OPENAI_API_KEY` only for macOS

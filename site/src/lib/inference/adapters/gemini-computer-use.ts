@@ -37,12 +37,23 @@ type GeminiClientFactory = (options: GoogleGenAIOptions) => GeminiClient;
 
 const providerID = "gemini-computer-use";
 const geminiProviderID = "gemini";
+const defaultDecisionResponsesModel = "gemini-3.1-flash-lite";
 const defaultVertexResponsesModel = "gemini-3.5-flash";
 const defaultComputerUseModel = "gemini-3-flash-preview";
 const vertexLocation = "global";
 const vertexAIScope = "https://www.googleapis.com/auth/cloud-platform";
 
 export const geminiBrowserInteractionToolType = "donkey_gemini_browser_interaction";
+
+const fastDecisionSchemaNames = new Set([
+  "task_intent_v1",
+  "task_followup_resolution_v1",
+]);
+
+const fastDecisionPromptVersions = new Set([
+  "task-intent-v1",
+  "task-followup-resolution-v1",
+]);
 
 const browserOnlyFunctionExclusions = [
   "drag_and_drop",
@@ -62,6 +73,7 @@ export function createGeminiComputerUseProvider(
     }
 
     return [
+      staticModel(defaultDecisionResponsesModel, false),
       staticModel(defaultVertexResponsesModel, false),
       staticModel(defaultComputerUseModel, true),
     ];
@@ -87,9 +99,7 @@ export function createGeminiComputerUseProvider(
 
     const model = requestedModel(
       request.body,
-      registeredTools.length > 0
-        ? defaultComputerUseModel
-        : defaultVertexResponsesModel,
+      defaultResponseModel(request.body, registeredTools),
     );
     const requestParameters = geminiGenerateContentParameters(
       request.body,
@@ -425,6 +435,37 @@ function responseFormatFromBody(body: JsonObject): { json: boolean; schema?: Jso
   return null;
 }
 
+function defaultResponseModel(body: JsonObject, registeredTools: string[]) {
+  if (registeredTools.length > 0) {
+    return defaultComputerUseModel;
+  }
+
+  if (isFastDecisionRequest(body)) {
+    return defaultDecisionResponsesModel;
+  }
+
+  return defaultVertexResponsesModel;
+}
+
+function isFastDecisionRequest(body: JsonObject) {
+  const metadata = isJsonObject(body.metadata) ? body.metadata : {};
+  const promptVersion =
+    stringValue(metadata.prompt_version) ??
+    stringValue(metadata.promptVersion);
+  if (promptVersion && fastDecisionPromptVersions.has(promptVersion)) {
+    return true;
+  }
+
+  const format =
+    isJsonObject(body.text) && isJsonObject(body.text.format)
+      ? body.text.format
+      : isJsonObject(body.response_format)
+        ? body.response_format
+        : null;
+  const schemaName = format ? stringValue(format.name) : undefined;
+  return Boolean(schemaName && fastDecisionSchemaNames.has(schemaName));
+}
+
 function systemInstructionFromBody(body: JsonObject): string | undefined {
   const instruction = [
     stringValue(body.instructions),
@@ -721,7 +762,7 @@ function staticModel(model: string, computerUse: boolean): InferenceModel {
     provider: geminiProviderID,
     inputModalities: ["text", "image"],
     outputModalities: ["text"],
-    contextLength: 128_000,
+    contextLength: 1_048_576,
     pricing: null,
     metadata: {
       provider: geminiProviderID,
