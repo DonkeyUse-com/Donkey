@@ -47,8 +47,11 @@ final class PointerPromptOverlayController {
     ) {
         self.model = model
         self.activationShortcut = activationShortcut
-        model.agentVisualizationPresenter = { [weak self] request in
-            self?.agentVisualizationCursorController.show(request: request)
+        model.agentVisualizationPresenter = { [weak self] request, preferredSpawnID in
+            self?.presentAgentVisualization(
+                request: request,
+                preferredSpawnID: preferredSpawnID
+            )
         }
         spawnOverlayController.followUpSubmitted = { [weak self] spawnID, taskID, text in
             self?.model.submitSpawnFollowUp(spawnID: spawnID, taskID: taskID, text: text)
@@ -622,6 +625,22 @@ final class PointerPromptOverlayController {
 
     private func openAvailableUpdate() {
         model.showUpdateUI()
+    }
+
+    private func presentAgentVisualization(
+        request: PointerCoachCursorGuideRequest,
+        preferredSpawnID: String?
+    ) {
+        if spawnOverlayController.playGuide(
+            request: request,
+            on: preferredSpawnID,
+            screen: activeScreen()
+        ) {
+            agentVisualizationCursorController.close()
+            return
+        }
+
+        agentVisualizationCursorController.show(request: request)
     }
 
     private func updateSpawnOverlay() {

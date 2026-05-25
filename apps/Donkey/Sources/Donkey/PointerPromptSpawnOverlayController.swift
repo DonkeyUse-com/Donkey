@@ -9,6 +9,7 @@ import SwiftUI
 final class PointerPromptSpawnOverlayController {
     private var surfacesByID: [String: PointerPromptSpawnSurface] = [:]
     private var viewModelsByID: [String: PointerPromptSpawnOverlayViewModel] = [:]
+    private var pendingGuideRequestsBySpawnID: [String: PointerCoachCursorGuideRequest] = [:]
     private var windowResolver = MacWindowResolver()
     private var localOutsideClickMonitor: Any?
     private var globalOutsideClickMonitor: Any?
@@ -39,11 +40,16 @@ final class PointerPromptSpawnOverlayController {
 
         let visibleSpawnStates = spawnStates.filter { $0.phase != .notchCue }
         guard !visibleSpawnStates.isEmpty else {
+            if spawnStates.isEmpty {
+                pendingGuideRequestsBySpawnID = [:]
+            }
             fadeAndCloseAll()
             return
         }
 
+        let allSpawnIDs = Set(spawnStates.map(\.id))
         let visibleIDs = Set(visibleSpawnStates.map(\.id))
+        pendingGuideRequestsBySpawnID = pendingGuideRequestsBySpawnID.filter { allSpawnIDs.contains($0.key) }
         for spawnState in visibleSpawnStates {
             updateSurface(
                 for: spawnState,
@@ -63,11 +69,39 @@ final class PointerPromptSpawnOverlayController {
         for surface in surfacesByID.values {
             surface.travelWorkItem?.cancel()
             surface.removalWorkItem?.cancel()
+            cancelGuide(for: surface)
             surface.viewModel.fadeOut()
             surface.panel.close()
         }
         surfacesByID = [:]
         viewModelsByID = [:]
+        pendingGuideRequestsBySpawnID = [:]
+    }
+
+    @discardableResult
+    func playGuide(
+        request: PointerCoachCursorGuideRequest,
+        on spawnID: String?,
+        screen: NSScreen?
+    ) -> Bool {
+        guard let spawnID,
+              !request.steps.isEmpty,
+              let screen else {
+            return false
+        }
+
+        guard let surface = surfacesByID[spawnID] else {
+            pendingGuideRequestsBySpawnID[spawnID] = request
+            return true
+        }
+
+        startGuide(
+            request: request,
+            on: surface,
+            screen: screen,
+            startDelay: surface.isTraveling ? PointerPromptSpawnOverlayViewModel.travelDuration + 0.04 : 0
+        )
+        return true
     }
 
     private func updateSurface(
@@ -142,6 +176,11 @@ final class PointerPromptSpawnOverlayController {
             to: destination,
             on: screen
         )
+        startPendingGuideIfNeeded(
+            for: surface,
+            screen: screen,
+            startDelay: PointerPromptSpawnOverlayViewModel.travelDuration + 0.04
+        )
     }
 
     private func updateExistingSurface(
@@ -153,6 +192,25 @@ final class PointerPromptSpawnOverlayController {
     ) {
         surface.screen = screen
         surface.viewModel.setSelected(spawnState.id == selectedSpawnID)
+        if spawnState.phase == .fading {
+            fadeAndRemove(id: spawnState.id)
+            return
+        }
+
+        if surface.isPlayingGuide {
+            updateMouseEventPassthrough(for: surface)
+            return
+        }
+        startPendingGuideIfNeeded(
+            for: surface,
+            screen: screen,
+            startDelay: surface.isTraveling ? PointerPromptSpawnOverlayViewModel.travelDuration + 0.04 : 0
+        )
+        if surface.isPlayingGuide {
+            updateMouseEventPassthrough(for: surface)
+            return
+        }
+
         let shouldRetarget = !surface.viewModel.freezesMovement &&
             distance(from: surface.destination, to: destination) > 1
 
@@ -161,11 +219,6 @@ final class PointerPromptSpawnOverlayController {
             destination: destination,
             screenSize: screen.frame.size
         )
-
-        if spawnState.phase == .fading {
-            fadeAndRemove(id: spawnState.id)
-            return
-        }
 
         if shouldRetarget {
             animateSurfaceTravel(
@@ -355,6 +408,121 @@ final class PointerPromptSpawnOverlayController {
         updateMouseEventPassthrough(for: surface)
     }
 
+    private func startGuide(
+        request: PointerCoachCursorGuideRequest,
+        on surface: PointerPromptSpawnSurface,
+        screen: NSScreen,
+        startDelay: TimeInterval
+    ) {
+        cancelGuide(for: surface)
+        surface.isPlayingGuide = true
+
+        var delay = startDelay
+        for step in request.steps {
+            let workItem = DispatchWorkItem { [weak self, weak surface] in
+                Task { @MainActor in
+                    guard let self,
+                          let surface else {
+                        return
+                    }
+
+                    self.applyGuideStep(
+                        step,
+                        request: request,
+                        to: surface,
+                        screen: screen
+                    )
+                }
+            }
+            surface.guideWorkItems.append(workItem)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+            delay += PointerPromptSpawnOverlayViewModel.travelDuration + step.holdDuration
+        }
+
+        let completionWorkItem = DispatchWorkItem { [weak self, weak surface] in
+            guard let self,
+                  let surface else {
+                return
+            }
+
+            surface.isPlayingGuide = false
+            surface.guideWorkItems = []
+            surface.guideCompletionWorkItem = nil
+            self.layoutSurface(surface, on: surface.screen, animated: false)
+        }
+        surface.guideCompletionWorkItem = completionWorkItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay + 0.05, execute: completionWorkItem)
+    }
+
+    private func applyGuideStep(
+        _ step: PointerCoachCursorGuideStep,
+        request: PointerCoachCursorGuideRequest,
+        to surface: PointerPromptSpawnSurface,
+        screen: NSScreen
+    ) {
+        guard var state = surface.viewModel.state else { return }
+
+        state.label = step.label
+        state.phase = .traveling
+        state.updatedAt = Date()
+        state.targetHint = PointerPromptSpawnTargetHint(
+            metadata: [
+                "agentVisualization.planID": request.id,
+                "agentVisualization.stepID": step.id,
+                "agentVisualization.reusedSpawn": "true"
+            ]
+        )
+        let destination = guideDestination(
+            for: step,
+            on: screen
+        )
+        surface.screen = screen
+        surface.viewModel.update(
+            state: state,
+            destination: destination,
+            screenSize: screen.frame.size
+        )
+        animateSurfaceTravel(surface, to: destination, on: screen)
+    }
+
+    private func guideDestination(
+        for step: PointerCoachCursorGuideStep,
+        on screen: NSScreen
+    ) -> CGPoint {
+        AgentVisualizationCursorPathSampler.point(
+            step.target,
+            metadata: step.metadata,
+            screenFrame: screen.frame
+        )
+    }
+
+    private func cancelGuide(for surface: PointerPromptSpawnSurface) {
+        for workItem in surface.guideWorkItems {
+            workItem.cancel()
+        }
+        surface.guideWorkItems = []
+        surface.guideCompletionWorkItem?.cancel()
+        surface.guideCompletionWorkItem = nil
+        surface.isPlayingGuide = false
+    }
+
+    private func startPendingGuideIfNeeded(
+        for surface: PointerPromptSpawnSurface,
+        screen: NSScreen,
+        startDelay: TimeInterval
+    ) {
+        guard let request = pendingGuideRequestsBySpawnID.removeValue(forKey: surface.id) else {
+            return
+        }
+
+        startGuide(
+            request: request,
+            on: surface,
+            screen: screen,
+            startDelay: startDelay
+        )
+    }
+
     private func layoutSurface(
         _ surface: PointerPromptSpawnSurface,
         on screen: NSScreen,
@@ -445,6 +613,8 @@ final class PointerPromptSpawnOverlayController {
 
         surface.travelWorkItem?.cancel()
         surface.removalWorkItem?.cancel()
+        pendingGuideRequestsBySpawnID[spawnID] = nil
+        cancelGuide(for: surface)
         surface.viewModel.fadeOut()
         let workItem = DispatchWorkItem { [weak self, weak surface] in
             guard let self,
@@ -653,6 +823,9 @@ private final class PointerPromptSpawnSurface {
     var isTraveling = false
     var travelWorkItem: DispatchWorkItem?
     var removalWorkItem: DispatchWorkItem?
+    var isPlayingGuide = false
+    var guideWorkItems: [DispatchWorkItem] = []
+    var guideCompletionWorkItem: DispatchWorkItem?
 
     init(
         id: String,

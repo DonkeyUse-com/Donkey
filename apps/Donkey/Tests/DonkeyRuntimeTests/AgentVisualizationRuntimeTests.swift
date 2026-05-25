@@ -26,6 +26,8 @@ struct AgentVisualizationRuntimeTests {
         #expect(plan.usesRealPointer == false)
         #expect(plan.metadata["source"] == "local-app-projected-workflow")
         #expect(plan.metadata["workflowStage"] == "preExecution")
+        #expect(plan.metadata["cursorGuideEligible"] == "false")
+        #expect(plan.cursorOverlayRequest() == nil)
         #expect(plan.steps.map(\.kind).contains(.observe))
         #expect(plan.steps.map(\.kind).contains(.enterText))
         #expect(plan.steps.first?.target?.source == .dryRun)
@@ -79,6 +81,73 @@ struct AgentVisualizationRuntimeTests {
         #expect(plan.steps.first(where: { $0.id == "set-text" })?.metadata["actionTrace.executed"] == "true")
         #expect(cursorRequest.metadata["realPointerMoved"] == "false")
         #expect(cursorRequest.metadata["agentVisualization.executionMode"] == "live")
+    }
+
+    @Test
+    func localAppVisualizationUsesObservedControlBounds() throws {
+        let definition = localAppDefinition()
+        let intent = taskIntent(definition: definition)
+        let adapter = LocalAppTaskAdapter(definition: definition)
+        var observationMetadata = LocalAppObservationGeometry.targetBoundsMetadata(
+            WindowTargetBounds(x: 100, y: 200, width: 800, height: 600)
+        )
+        observationMetadata.merge(
+            LocalAppObservationGeometry.controlMetadata(
+                controlID: "editor",
+                frame: HotLoopRect(x: 180, y: 320, width: 240, height: 30, space: .screen),
+                source: .accessibility,
+                label: "Editor",
+                kind: .textField,
+                confidence: 0.88
+            )
+        ) { current, _ in current }
+        let observation = LocalAppTaskObservation(
+            appIsRunning: true,
+            appIsFocused: true,
+            availableControls: ["editor": true],
+            visibleText: ["query": "Item"],
+            confidence: 0.9,
+            metadata: observationMetadata
+        )
+        let dryRunPlan = adapter.dryRunPlan(for: intent, observation: observation)
+        let result = LocalAppTaskLiveRunResult(
+            command: "create a table in Numbers",
+            traceID: "trace-grounded-control",
+            status: .completed,
+            resolution: LocalAppTaskCatalogResolution(
+                status: .resolved,
+                intent: intent,
+                definition: definition,
+                availability: LocalAppAvailability(target: definition.targetApp, isInstalled: true)
+            ),
+            initialPlan: dryRunPlan,
+            finalPlan: dryRunPlan,
+            observation: observation
+        )
+
+        let plan = try #require(LocalAppTaskAgentVisualizationBuilder.plan(for: result))
+        let focusStep = try #require(plan.steps.first(where: { $0.id == "focus-input" }))
+        let enterStep = try #require(plan.steps.first(where: { $0.id == "set-text" }))
+        let cursorRequest = try #require(plan.cursorOverlayRequest())
+        let cursorFocusStep = try #require(cursorRequest.steps.first(where: { $0.id == "focus-input" }))
+        let cursorEnterStep = try #require(cursorRequest.steps.first(where: { $0.id == "set-text" }))
+
+        #expect(focusStep.target?.source == .accessibility)
+        #expect(focusStep.target?.bounds?.space == .normalizedTarget)
+        #expect(enterStep.target?.controlID == "editor")
+        #expect(cursorFocusStep.metadata["cursor.targetSpace"] == "targetWindowNormalized")
+        #expect(cursorFocusStep.metadata["target.bounds.x"] == "100.0")
+        #expect(abs(cursorFocusStep.target.x - 0.25) < 0.001)
+        #expect(abs(cursorFocusStep.target.y - 0.225) < 0.001)
+        #expect(abs(cursorEnterStep.target.x - cursorFocusStep.target.x) < 0.001)
+        #expect(abs(cursorEnterStep.target.y - cursorFocusStep.target.y) < 0.001)
+        let screenPoint = AgentVisualizationCursorPathSampler.point(
+            cursorFocusStep.target,
+            metadata: cursorFocusStep.metadata,
+            screenFrame: CGRect(x: 0, y: 0, width: 1200, height: 900)
+        )
+        #expect(abs(screenPoint.x - 300) < 0.001)
+        #expect(abs(screenPoint.y - 335) < 0.001)
     }
 
     @Test

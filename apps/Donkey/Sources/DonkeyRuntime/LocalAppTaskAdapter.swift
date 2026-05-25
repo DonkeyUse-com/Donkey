@@ -224,13 +224,24 @@ public struct LocalAppTaskAdapter: Sendable {
             ]
         }
 
+        var activeControlID: String?
         return definition.workflowSteps.map { step in
-            LocalAppTaskDryRunStep(
+            let controlID = step.metadata["controlID"] ?? activeControlID
+            if let stepControlID = step.metadata["controlID"] {
+                activeControlID = stepControlID
+            }
+            return LocalAppTaskDryRunStep(
                 id: step.id,
                 role: step.role,
                 status: status(for: step, observation: observation, verificationStatus: verification.status),
                 summary: summary(for: step, observation: observation, verificationSummary: verification.summary),
-                metadata: metadata(for: step, intent: intent, verificationMetadata: verification.metadata)
+                metadata: metadata(
+                    for: step,
+                    intent: intent,
+                    verificationMetadata: verification.metadata,
+                    observation: observation,
+                    inheritedControlID: controlID
+                )
             )
         }
     }
@@ -279,12 +290,26 @@ public struct LocalAppTaskAdapter: Sendable {
     private func metadata(
         for step: LocalAppTaskWorkflowStepDefinition,
         intent: TaskIntent,
-        verificationMetadata: [String: String]
+        verificationMetadata: [String: String],
+        observation: LocalAppTaskObservation?,
+        inheritedControlID: String?
     ) -> [String: String] {
         var metadata = step.metadata.merging([
             "taskIntentID": intent.intentID,
             "taskType": intent.taskType
         ]) { current, _ in current }
+        let controlID = step.metadata["controlID"] ?? inheritedControlID
+        if let controlID,
+           metadata["controlID"] == nil,
+           [.enterText, .submit].contains(step.role) {
+            metadata["controlID"] = controlID
+        }
+        metadata.merge(
+            LocalAppObservationGeometry.groundedMetadata(
+                controlID: controlID,
+                observation: observation
+            )
+        ) { current, _ in current }
 
         for (name, value) in intent.normalizedEntities {
             metadata["normalizedEntity.\(name)"] = value

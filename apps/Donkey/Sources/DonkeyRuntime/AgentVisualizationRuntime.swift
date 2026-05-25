@@ -31,6 +31,7 @@ public enum LocalAppTaskAgentVisualizationBuilder {
             "taskType": definition.taskType,
             "resolution.status": resolution.status.rawValue,
             "realPointerMoved": "false",
+            "cursorGuideEligible": "false",
             "grounding.source": AgentVisualizationGroundingSource.dryRun.rawValue,
             "workflowStage": "preExecution"
         ].merging(resolution.metadata) { current, _ in current }
@@ -68,11 +69,15 @@ public enum LocalAppTaskAgentVisualizationBuilder {
         guard let definition = result.resolution.definition else { return nil }
 
         let evidencePlan = result.finalPlan ?? result.initialPlan
+        let initialStepsByID = Dictionary(
+            uniqueKeysWithValues: (result.initialPlan?.steps ?? []).map { ($0.id, $0) }
+        )
         var steps = (evidencePlan?.steps ?? []).enumerated().map { index, dryRunStep in
             visualizationStep(
                 from: dryRunStep,
                 index: index,
                 definition: definition,
+                fallbackStep: initialStepsByID[dryRunStep.id],
                 actionTrace: matchingTrace(for: dryRunStep, in: result.actionTraces)
             )
         }
@@ -96,6 +101,12 @@ public enum LocalAppTaskAgentVisualizationBuilder {
         guard !steps.isEmpty else { return nil }
 
         let verification = verificationReport(for: result)
+        let controllerAutomationOnly = !result.actionTraces.isEmpty &&
+            result.actionTraces.allSatisfy { $0.command.kind == .controller }
+        let hasGroundedElementTargets = steps.contains { step in
+            step.target?.metadata["control.bounds.space"] == HotLoopCoordinateSpace.normalizedTarget.rawValue
+        }
+        let cursorGuideEligible = controllerAutomationOnly == false || hasGroundedElementTargets
         return AgentVisualizationPlan(
             id: "agent-visualization-\(result.traceID)",
             title: title(for: result, definition: definition),
@@ -108,6 +119,8 @@ public enum LocalAppTaskAgentVisualizationBuilder {
                 "targetApp": definition.targetApp.appName,
                 "taskType": definition.taskType,
                 "realPointerMoved": "false",
+                "cursorGuideEligible": String(cursorGuideEligible),
+                "cursorGuide.reason": cursorGuideEligible ? "" : "controllerAutomationNoElementTargets",
                 "actionTraceCount": String(result.actionTraces.count),
                 "workflowStageCount": String(result.workflowProgress.stages.count)
             ].merging(result.metadata.filter { key, _ in
@@ -150,6 +163,7 @@ public enum LocalAppTaskAgentVisualizationBuilder {
         from step: LocalAppTaskDryRunStep,
         index: Int,
         definition: LocalAppTaskDefinition,
+        fallbackStep: LocalAppTaskDryRunStep?,
         actionTrace: ActionEngineCommandTrace?
     ) -> AgentVisualizationStep {
         var metadata = step.metadata.merging([
@@ -162,17 +176,31 @@ public enum LocalAppTaskAgentVisualizationBuilder {
         if let actionTrace {
             metadata.merge(actionTraceMetadata(actionTrace)) { current, _ in current }
         }
+        if LocalAppObservationGeometry.normalizedStepBounds(metadata: metadata) == nil,
+           let fallbackStep {
+            metadata.merge(fallbackStep.metadata.filter { key, _ in
+                key.hasPrefix("control.")
+            }) { current, _ in current }
+        }
+        let groundedBounds = LocalAppObservationGeometry.normalizedStepBounds(metadata: metadata)
+        let groundedPoint = centerPoint(for: groundedBounds)
+        let actionTracePoint = centerPoint(for: actionTrace?.command.targetBounds)
+        let targetSource = groundingSource(
+            metadata["control.source"],
+            fallback: actionTrace == nil ? .dryRun : .actionTrace
+        )
 
         return AgentVisualizationStep(
             id: step.id,
             kind: kind(for: step.role),
             label: label(for: step),
             target: AgentVisualizationStepTarget(
-                point: targetPoint(for: step.role, index: index),
+                point: groundedPoint ?? actionTracePoint ?? targetPoint(for: step.role, index: index),
+                bounds: groundedBounds ?? normalizedBounds(actionTrace?.command.targetBounds),
                 description: step.summary,
                 controlID: step.metadata["controlID"],
-                source: actionTrace == nil ? .dryRun : .actionTrace,
-                confidence: confidence(for: step.status, actionTrace: actionTrace),
+                source: groundedBounds == nil ? (actionTrace == nil ? .dryRun : .actionTrace) : targetSource,
+                confidence: groundedBounds == nil ? confidence(for: step.status, actionTrace: actionTrace) : 0.9,
                 metadata: metadata
             ),
             travelDuration: duration(for: step.role).travel,
@@ -391,6 +419,27 @@ public enum LocalAppTaskAgentVisualizationBuilder {
         )
     }
 
+    private static func normalizedBounds(_ rect: HotLoopRect?) -> HotLoopRect? {
+        guard let rect,
+              rect.space == .normalizedTarget,
+              rect.hasPositiveArea else {
+            return nil
+        }
+        return rect
+    }
+
+    private static func groundingSource(
+        _ value: String?,
+        fallback: AgentVisualizationGroundingSource
+    ) -> AgentVisualizationGroundingSource {
+        guard let value,
+              let source = AgentVisualizationGroundingSource(rawValue: value)
+        else {
+            return fallback
+        }
+        return source
+    }
+
     private static func point(_ x: Double, _ y: Double) -> HotLoopPoint {
         HotLoopPoint(x: min(max(x, 0.04), 0.96), y: min(max(y, 0.06), 0.94), space: .normalizedTarget)
     }
@@ -461,6 +510,11 @@ public struct AgentVisualizationGrounder: Sendable {
                 "target.windowID": String(target.windowID),
                 "target.appName": target.appName ?? "",
                 "target.bundleIdentifier": target.bundleIdentifier ?? "",
+                "target.bounds.x": String(target.bounds.x),
+                "target.bounds.y": String(target.bounds.y),
+                "target.bounds.width": String(target.bounds.width),
+                "target.bounds.height": String(target.bounds.height),
+                "target.bounds.space": HotLoopCoordinateSpace.screen.rawValue,
                 "grounding.source": AgentVisualizationGroundingSource.windowMetadata.rawValue
             ]
             if var stepTarget = copy.target {
@@ -480,6 +534,11 @@ public struct AgentVisualizationGrounder: Sendable {
         }
         grounded.metadata["grounding.source"] = AgentVisualizationGroundingSource.windowMetadata.rawValue
         grounded.metadata["grounding.targetWindowID"] = String(target.windowID)
+        grounded.metadata["target.bounds.x"] = String(target.bounds.x)
+        grounded.metadata["target.bounds.y"] = String(target.bounds.y)
+        grounded.metadata["target.bounds.width"] = String(target.bounds.width)
+        grounded.metadata["target.bounds.height"] = String(target.bounds.height)
+        grounded.metadata["target.bounds.space"] = HotLoopCoordinateSpace.screen.rawValue
         return grounded
     }
 

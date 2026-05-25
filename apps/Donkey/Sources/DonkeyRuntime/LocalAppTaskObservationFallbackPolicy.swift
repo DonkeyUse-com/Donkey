@@ -19,7 +19,7 @@ public enum LocalAppTaskObservationFallbackPolicy {
         case .missingVerificationText:
             return accessibilityObservation.visibleText[verificationKey]?.isEmpty != false
         case .missingControls:
-            return missingRequiredControls(
+            return missingRequiredControlsOrBounds(
                 definition: definition,
                 accessibilityObservation: accessibilityObservation
             )
@@ -27,14 +27,16 @@ public enum LocalAppTaskObservationFallbackPolicy {
             break
         }
 
-        if accessibilityObservation.visibleText[verificationKey]?.isEmpty == false {
+        let missingControlsOrBounds = missingRequiredControlsOrBounds(
+            definition: definition,
+            accessibilityObservation: accessibilityObservation
+        )
+        if accessibilityObservation.visibleText[verificationKey]?.isEmpty == false,
+           missingControlsOrBounds == false {
             return false
         }
 
-        return missingRequiredControls(
-            definition: definition,
-            accessibilityObservation: accessibilityObservation
-        ) || accessibilityObservation.visibleText.isEmpty
+        return missingControlsOrBounds || accessibilityObservation.visibleText.isEmpty
     }
 
     static func screenshotFallbackMode(
@@ -54,7 +56,7 @@ public enum LocalAppTaskObservationFallbackPolicy {
         }
     }
 
-    private static func missingRequiredControls(
+    private static func missingRequiredControlsOrBounds(
         definition: LocalAppTaskDefinition,
         accessibilityObservation: LocalAppTaskObservation
     ) -> Bool {
@@ -65,7 +67,13 @@ public enum LocalAppTaskObservationFallbackPolicy {
                 return false
             }
 
-            return accessibilityObservation.availableControls[controlID] != true
+            if accessibilityObservation.availableControls[controlID] != true {
+                return true
+            }
+            return LocalAppObservationGeometry.hasNormalizedControlBounds(
+                controlID: controlID,
+                metadata: accessibilityObservation.metadata
+            ) == false
         }
     }
 }

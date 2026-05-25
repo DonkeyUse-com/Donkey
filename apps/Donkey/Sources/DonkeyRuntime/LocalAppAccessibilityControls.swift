@@ -96,9 +96,13 @@ public struct LocalAppAccessibilityControlDiscovery: Sendable {
                 "observer": "local-app-accessibility-control-discovery",
                 "target.windowID": String(snapshot.target.windowID),
                 "target.processID": String(snapshot.target.processID),
+                "target.appName": snapshot.target.appName ?? "",
+                "target.bundleIdentifier": snapshot.target.bundleIdentifier ?? "",
                 "controlCount": String(controls.count),
                 "treeTruncated": String(snapshot.isTreeTruncated)
-            ]
+            ].merging(
+                LocalAppObservationGeometry.targetBoundsMetadata(snapshot.target.bounds)
+            ) { current, _ in current }
         )
     }
 
@@ -249,7 +253,31 @@ public struct LocalAppAccessibilityActionPlanner: Sendable {
                     ]
                 )
             case .submit:
-                return nil
+                guard let controlID = step.metadata["controlID"],
+                      let control = index.firstControl(
+                        matching: controlID,
+                        acceptedKinds: [.button, .menuItem, .checkbox]
+                      )
+                else {
+                    return nil
+                }
+                return command(
+                    id: "\(intent.intentID)-ax-\(step.id)",
+                    traceID: intent.metadata["traceID"] ?? intent.intentID,
+                    targetID: adapter.targetID,
+                    issuedAt: issuedAt,
+                    kind: .tap,
+                    control: control,
+                    definition: definition,
+                    step: step,
+                    metadata: [
+                        "accessibility.action": "AXPress",
+                        "accessibility.nodeID": control.id,
+                        "controlID": controlID,
+                        "inputStrategy": "accessibility",
+                        "inputIntent": "submit"
+                    ]
+                )
             case .parseIntent, .launchOrFocusApp, .observeApp, .verifyResult, .custom:
                 return nil
             }
@@ -448,6 +476,9 @@ public struct MacAccessibilityActionEngineInputBackend: ActionEngineInputBackend
             completedAt: command.issuedAt,
             metadata: [
                 "liveInputBackend": "mac-accessibility",
+                "inputMode": "accessibilityElement",
+                "elementClick": String(command.kind == .tap),
+                "controlID": command.metadata["controlID"] ?? "",
                 "accessibility.result": reason
             ]
         )

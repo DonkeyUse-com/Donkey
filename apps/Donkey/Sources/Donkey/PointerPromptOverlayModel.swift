@@ -20,7 +20,7 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
     @Published private(set) var notchTasks: [PointerPromptNotchTask]
     @Published private(set) var spawnStates: [PointerPromptSpawnState] = []
     @Published private(set) var selectedSpawnID: String?
-    var agentVisualizationPresenter: ((PointerCoachCursorGuideRequest) -> Void)?
+    var agentVisualizationPresenter: ((PointerCoachCursorGuideRequest, String?) -> Void)?
 
     private let commandHandler: any PointerPromptCommandHandling
     private let taskStore: any PointerPromptTaskStoring
@@ -348,10 +348,15 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
                 if let documentReviewRequest = result.documentReviewRequest {
                     self.documentReviewController.show(request: documentReviewRequest)
                 }
-                if let cursorOverlayRequest = result.cursorOverlayRequest {
-                    self.agentVisualizationPresenter?(cursorOverlayRequest)
+                let cursorOverlayRequest = result.cursorOverlayRequest
+                if let cursorOverlayRequest {
+                    self.agentVisualizationPresenter?(cursorOverlayRequest, spawnID)
                 }
-                self.finishSpawn(id: spawnID, result: result)
+                self.finishSpawn(
+                    id: spawnID,
+                    result: result,
+                    minimumFadeDelay: cursorOverlayRequest.map(Self.visualizationPlaybackDuration)
+                )
             }
         }
     }
@@ -480,7 +485,8 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
 
     private func finishSpawn(
         id spawnID: String?,
-        result: PointerPromptCommandHandlingResult
+        result: PointerPromptCommandHandlingResult,
+        minimumFadeDelay: TimeInterval? = nil
     ) {
         guard let spawnID,
               let index = spawnIndex(id: spawnID) else {
@@ -496,12 +502,12 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
             spawnStates[index] = spawnState
         } else {
             spawnStates[index] = spawnState
-            scheduleSpawnFade(id: spawnID)
+            scheduleSpawnFade(id: spawnID, after: minimumFadeDelay ?? 0.5)
         }
     }
 
-    private func scheduleSpawnFade(id spawnID: String) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+    private func scheduleSpawnFade(id spawnID: String, after delay: TimeInterval = 0.5) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0.5, delay)) { [weak self] in
             guard let self,
                   let index = self.spawnIndex(id: spawnID) else {
                 return
@@ -514,6 +520,14 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
                 self?.removeSpawn(id: spawnID)
             }
+        }
+    }
+
+    private static func visualizationPlaybackDuration(
+        for request: PointerCoachCursorGuideRequest
+    ) -> TimeInterval {
+        request.steps.reduce(0.5) { total, step in
+            total + max(0.82, step.travelDuration) + step.holdDuration
         }
     }
 
@@ -594,6 +608,9 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
     ) -> PointerPromptNotchTask {
         if let matchedTaskID,
            var task = task(withID: matchedTaskID) {
+            if let reservedAccentIndex {
+                task.accentIndex = PointerPromptAccentPalette.normalizedIndex(reservedAccentIndex)
+            }
             task.detail = "Running"
             task.status = .running
             task.updatedAt = Date()
@@ -672,7 +689,7 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
             isFollowUp: isFollowUp,
             turnSource: source,
             spawnProgressChanged: spawnProgressHandler(for: spawnID),
-            agentVisualizationChanged: agentVisualizationHandler()
+            agentVisualizationChanged: agentVisualizationHandler(for: spawnID)
         )
     }
 
@@ -691,10 +708,12 @@ final class PointerPromptOverlayModel: ObservableObject, PointerPromptIntentSink
         }
     }
 
-    private func agentVisualizationHandler() -> (@MainActor @Sendable (AgentVisualizationPlan) -> Void)? {
+    private func agentVisualizationHandler(
+        for spawnID: String?
+    ) -> (@MainActor @Sendable (AgentVisualizationPlan) -> Void)? {
         { [weak self] plan in
             guard let request = plan.cursorOverlayRequest() else { return }
-            self?.agentVisualizationPresenter?(request)
+            self?.agentVisualizationPresenter?(request, spawnID)
         }
     }
 

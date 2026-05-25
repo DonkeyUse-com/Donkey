@@ -870,18 +870,31 @@ public struct HostedTaskIntentParsingAdapter: TaskIntentParsingAdapter {
         let definitions = (try? JSONEncoder().encode(request.taskDefinitions))
             .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
         return [
-            "command: \(request.command)",
-            "context: \(request.contextSnippets.joined(separator: " | "))",
-            "taskDefinitions: \(definitions)"
+            "Command: \(request.command)",
+            "Relevant local cache:",
+            request.contextSnippets.joined(separator: "\n"),
+            "Supported task definitions JSON:",
+            definitions
         ].joined(separator: "\n")
     }
 
     private static let instructions = [
         "Decide whether the user is asking Donkey to run one of the provided local app task definitions.",
         "Return strict JSON only.",
-        "If the command is conversation, a question, or does not match a supported task definition, return taskType \"none\", targetAppName \"none\", empty entities, confidence 0, needsConfirmation false, an empty actionPlan, and metadata.responseMode \"conversation\".",
-        "For supported actions, choose only a provided taskType and target app. Fill normalizedEntities with the concrete values needed by required entity rules.",
-        "Model-planned actions may use only the enum tools allowed by the schema. Do not invent app scripts or direct input outside the schema."
+        "First decide whether Command is an executable local-app task or a conversation turn.",
+        "Executable local-app task means all three are clear: action, destination or target app/item, and enough payload to execute safely.",
+        "If Command is conversation, a question, malformed, or lacks a real executable payload, return taskType \"none\", targetAppName \"none\", empty entities, confidence 0, needsConfirmation false, an empty actionPlan, and metadata.responseMode \"conversation\".",
+        "For supported actions, choose only a provided taskType and target app. Fill entities and normalizedEntities with the concrete values needed by required entity rules.",
+        "Use the generic local_app_interaction task type for executable local app requests that need a model-planned app workflow and do not have a more specific provided task type.",
+        "For local_app_interaction, select the most likely local app, set targetAppName and entities.appName to the human app name, set entities.goal, and when text must be entered set entities.query plus normalizedEntities.query.",
+        "For local_app_interaction, fill actionPlan.tools with allowed tools only: app.openOrFocus, app.observe, ui.newDocument, ui.focusSearch, ui.focusAddressBar, ui.focusTextEntry, ui.setText, ui.pressReturn, app.verifyCommand, app.verifyVisibleText.",
+        "When ui.setText is present, entities.query and normalizedEntities.query must be non-empty, actionPlan.inputEntity should usually be query, and actionPlan.controlID/focusKey should describe the guarded UI strategy.",
+        "For media playback, targetAppName=Music, entities.appName=Music, entities.goal=play media, entities.query=<artist/song/album to play>, and actionPlan.tools=[app.openOrFocus, app.observe, ui.focusSearch, ui.setText, ui.pressReturn, app.verifyCommand] with inputEntity=query, controlID=search, focusKey=Command+F.",
+        "For website navigation, choose Safari or the user's browser, set query to the URL, and use ui.focusAddressBar, ui.setText, ui.pressReturn, app.verifyCommand.",
+        "For writing in Notes, choose Notes, make query the complete text to type, and use ui.newDocument, ui.setText, app.verifyCommand.",
+        "For spreadsheet or table creation, choose Numbers, put compact tab-separated table content in query, and use ui.newDocument, ui.setText, app.verifyCommand.",
+        "For every other task type, actionPlan.tools must be empty.",
+        "Do not invent task types, unsupported entities, unsupported tools, app scripts, or direct input outside the schema."
     ].joined(separator: " ")
 
     private static func outputDiagnostics(for outputText: String) -> [String: String] {

@@ -87,22 +87,55 @@ public struct LocalUIUnderstandingResult: Codable, Equatable, Sendable {
     }
 
     public func observation(for request: LocalUIUnderstandingRequest) -> LocalAppTaskObservation {
-        LocalAppTaskObservation(
+        var observationMetadata = request.metadata.merging(metadata) { _, new in new }
+        observationMetadata.merge([
+            "observer": "local-ui-understanding",
+            "traceID": request.traceID,
+            "targetID": request.targetID,
+            "controlCount": String(controls.count),
+            "formFieldCount": String(formFields.count),
+            "directInputActionsAllowed": "false"
+        ]) { current, _ in current }
+        if let cropBounds = request.cropBounds {
+            observationMetadata.merge(
+                LocalAppObservationGeometry.cropBoundsMetadata(cropBounds)
+            ) { current, _ in current }
+        }
+        if let pixelSize = request.pixelSize {
+            observationMetadata.merge(
+                LocalAppObservationGeometry.pixelSizeMetadata(pixelSize)
+            ) { current, _ in current }
+        }
+        for control in controls {
+            let controlID = control.metadata["controlID"] ?? control.id
+            observationMetadata.merge(
+                LocalAppObservationGeometry.controlMetadata(
+                    controlID: controlID,
+                    frame: control.frame,
+                    source: .localUIUnderstanding,
+                    label: control.label,
+                    kind: control.kind,
+                    confidence: control.confidence,
+                    extra: control.metadata
+                )
+            ) { current, _ in current }
+        }
+
+        let availableControls = controls.reduce(into: [String: Bool]()) { result, control in
+            result[control.id] = true
+            if let controlID = control.metadata["controlID"],
+               !controlID.isEmpty {
+                result[controlID] = true
+            }
+        }
+
+        return LocalAppTaskObservation(
             appIsRunning: request.appIsRunning,
             appIsFocused: request.appIsFocused,
-            availableControls: Dictionary(uniqueKeysWithValues: controls.map { control in
-                (control.metadata["controlID"] ?? control.id, true)
-            }),
+            availableControls: availableControls,
             visibleText: visibleText,
             confidence: confidence,
-            metadata: metadata.merging([
-                "observer": "local-ui-understanding",
-                "traceID": request.traceID,
-                "targetID": request.targetID,
-                "controlCount": String(controls.count),
-                "formFieldCount": String(formFields.count),
-                "directInputActionsAllowed": "false"
-            ]) { current, _ in current }
+            metadata: observationMetadata
         )
     }
 }

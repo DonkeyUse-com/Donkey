@@ -11,7 +11,12 @@ public struct MacKeyboardActionEngineInputBackend: ActionEngineInputBackend {
             return result(
                 command: command,
                 executed: false,
-                metadata: ["liveInputBackend": "mac-keyboard", "reason": "unsupportedCommandKind"]
+                metadata: [
+                    "liveInputBackend": "mac-keyboard",
+                    "inputMode": "keyboard",
+                    "elementClick": "false",
+                    "reason": "unsupportedCommandKind"
+                ]
             )
         }
 
@@ -35,6 +40,7 @@ public struct MacKeyboardActionEngineInputBackend: ActionEngineInputBackend {
             metadata: [
                 "liveInputBackend": "mac-keyboard",
                 "inputMode": inputMode,
+                "elementClick": "false",
                 "key": key
             ]
         )

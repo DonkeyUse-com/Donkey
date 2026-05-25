@@ -148,13 +148,16 @@ public struct AgentVisualizationPlan: Codable, Equatable, Sendable, Identifiable
     }
 
     public func cursorOverlayRequest() -> PointerCoachCursorGuideRequest? {
+        guard metadata["cursorGuideEligible"] != "false" else { return nil }
+
         let cursorSteps = steps.prefix(8).enumerated().map { index, step in
             PointerCoachCursorGuideStep(
                 id: step.id,
                 label: step.label,
                 target: cursorPoint(for: step, index: index),
                 travelDuration: step.travelDuration,
-                holdDuration: step.holdDuration
+                holdDuration: step.holdDuration,
+                metadata: cursorStepMetadata(for: step)
             )
         }
         guard !cursorSteps.isEmpty else { return nil }
@@ -192,6 +195,23 @@ public struct AgentVisualizationPlan: Codable, Equatable, Sendable, Identifiable
         }
 
         return Self.fallbackPoint(index: index)
+    }
+
+    private func cursorStepMetadata(for step: AgentVisualizationStep) -> [String: String] {
+        var metadata = step.metadata
+        if let targetMetadata = step.target?.metadata {
+            metadata.merge(targetMetadata) { current, _ in current }
+        }
+        if metadata["control.bounds.space"] == HotLoopCoordinateSpace.normalizedTarget.rawValue,
+           metadata["target.bounds.x"] != nil,
+           metadata["target.bounds.y"] != nil,
+           metadata["target.bounds.width"] != nil,
+           metadata["target.bounds.height"] != nil {
+            metadata["cursor.targetSpace"] = "targetWindowNormalized"
+        } else {
+            metadata["cursor.targetSpace"] = "screenNormalized"
+        }
+        return metadata
     }
 
     private static func fallbackPoint(index: Int) -> CGPoint {

@@ -64,6 +64,8 @@ public struct MacAppleScriptActionEngineInputBackend: ActionEngineInputBackend {
                 executed: false,
                 metadata: [
                     "liveInputBackend": "mac-apple-script",
+                    "inputMode": "appAutomation",
+                    "elementClick": "false",
                     "reason": "unsupportedCommandKind"
                 ]
             )
@@ -75,6 +77,8 @@ public struct MacAppleScriptActionEngineInputBackend: ActionEngineInputBackend {
                 executed: false,
                 metadata: [
                     "liveInputBackend": "mac-apple-script",
+                    "inputMode": "appAutomation",
+                    "elementClick": "false",
                     "reason": "missingAppleScriptBackendMarker"
                 ]
             )
@@ -86,6 +90,8 @@ public struct MacAppleScriptActionEngineInputBackend: ActionEngineInputBackend {
                 executed: false,
                 metadata: [
                     "liveInputBackend": "mac-apple-script",
+                    "inputMode": "appAutomation",
+                    "elementClick": "false",
                     "reason": "unsupportedAppleScriptAction",
                     "appleScript.action": command.metadata["appleScript.action"] ?? ""
                 ]
@@ -104,6 +110,8 @@ public struct MacAppleScriptActionEngineInputBackend: ActionEngineInputBackend {
             executed: executed,
             metadata: [
                 "liveInputBackend": "mac-apple-script",
+                "inputMode": "appAutomation",
+                "elementClick": "false",
                 "appleScript.action": generatedScript.action,
                 "appleScript.scriptKind": generatedScript.kind,
                 "appleScript.output": output,

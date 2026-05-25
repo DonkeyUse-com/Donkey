@@ -68,14 +68,23 @@ public final class PointerCoachCursorOverlayViewModel: ObservableObject {
         )
         if !frame.visibleLabel.isEmpty {
             let labelCenter = labelPosition(for: frame.position)
+            let labelSize = Self.labelSize(for: frame.visibleLabel)
             bounds = bounds.union(CGRect(
-                x: labelCenter.x - 160,
-                y: labelCenter.y - 42,
-                width: 320,
-                height: 84
+                x: labelCenter.x - labelSize.width / 2,
+                y: labelCenter.y - labelSize.height / 2,
+                width: labelSize.width,
+                height: labelSize.height
             ))
         }
         return bounds.insetBy(dx: -8, dy: -8)
+    }
+
+    private static func labelSize(for text: String) -> CGSize {
+        let lineCount = max(1, Int(ceil(Double(text.count) / 34.0)))
+        return CGSize(
+            width: 300,
+            height: max(40, CGFloat(lineCount) * 16 + 16)
+        )
     }
 
     private func animationFrame(size: CGSize) -> CoachCursorAnimationFrame {
@@ -143,11 +152,11 @@ public struct PointerCoachCursorOverlayView: View {
         Text(text)
             .font(.system(size: 12, weight: .medium))
             .foregroundStyle(.white)
-            .lineLimit(2)
+            .lineLimit(nil)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .frame(maxWidth: 280, alignment: .leading)
+            .frame(width: 280, alignment: .leading)
             .background {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(accent)

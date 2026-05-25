@@ -689,6 +689,66 @@ struct LocalAppTaskTests {
         #expect(fields.first(where: { $0.id == "ax-1.2" })?.label == "Name")
     }
 
+    @Test
+    func accessibilityActionPlannerPressesExplicitSubmitControls() throws {
+        let definition = LocalAppTaskDefinition(
+            taskType: "button_submit",
+            targetApp: LocalAppTarget(appName: "Music", bundleIdentifier: "com.apple.Music"),
+            triggerTerms: [],
+            workflowSteps: [
+                LocalAppTaskWorkflowStepDefinition(
+                    id: "play-result",
+                    role: .submit,
+                    summary: "Play the selected result",
+                    metadata: ["controlID": "play-result"]
+                )
+            ]
+        )
+        let intent = TaskIntent(
+            intentID: "button-submit-play-result",
+            taskType: definition.taskType,
+            targetApp: definition.targetApp,
+            entities: [:],
+            normalizedEntities: [:],
+            confidence: 0.9,
+            parserSource: .localModel
+        )
+        let index = LocalAppAccessibilityControlIndex(
+            controls: [
+                LocalAppDiscoveredControl(
+                    id: "ax-1.4",
+                    kind: .button,
+                    role: "AXButton",
+                    label: "Play Result",
+                    frame: WindowTargetBounds(x: 320, y: 240, width: 42, height: 28),
+                    actions: ["AXPress"],
+                    metadata: ["controlID": "play-result"]
+                )
+            ],
+            visibleText: "Play Result"
+        )
+
+        let commands = LocalAppAccessibilityActionPlanner().commands(
+            for: intent,
+            definition: definition,
+            index: index,
+            issuedAt: timestamp(200)
+        )
+        let command = try #require(commands.first)
+
+        #expect(commands.count == 1)
+        #expect(command.kind == .tap)
+        #expect(command.metadata["workflowStepID"] == "play-result")
+        #expect(command.metadata["inputIntent"] == "submit")
+        #expect(command.metadata["accessibility.action"] == "AXPress")
+        #expect(command.metadata["controlID"] == "play-result")
+        #expect(command.targetBounds?.origin.x == 320)
+        #expect(command.targetBounds?.origin.y == 240)
+        #expect(command.targetBounds?.size.width == 42)
+        #expect(command.targetBounds?.size.height == 28)
+        #expect(command.targetBounds?.space == .screen)
+    }
+
     @Test @MainActor
     func liveRunnerReturnsReviewPlanForDocumentFormFillWithoutExecutingInput() async throws {
         let catalog = LocalAppTaskCatalog(
@@ -831,6 +891,9 @@ struct LocalAppTaskTests {
         #expect(await backend.executedKeys() == ["justin bieber"])
         #expect(result.metadata["automation.backend"] == "appleScript")
         #expect(result.metadata["automation.action"] == "music.playMediaQuery")
+        #expect(result.metadata["action.elementClickCount"] == "0")
+        #expect(result.metadata["action.lastTarget"] == "none")
+        #expect(result.metadata["action.overlayPointer"] == "visualOnly")
         #expect(result.workflowProgress.state(for: .execute)?.status == .completed)
         #expect(result.workflowProgress.state(for: .verify)?.status == .completed)
     }
@@ -890,6 +953,32 @@ struct LocalAppTaskTests {
     @Test
     func screenshotUnderstandingIsOnlyUsedWhenAccessibilityIsInsufficient() {
         let definition = BuiltInLocalAppTaskDefinitions.weatherLookup
+        var boundedSearchMetadata = LocalAppObservationGeometry.targetBoundsMetadata(
+            WindowTargetBounds(x: 100, y: 120, width: 900, height: 700)
+        )
+        boundedSearchMetadata.merge(
+            LocalAppObservationGeometry.controlMetadata(
+                controlID: "search",
+                frame: HotLoopRect(x: 140, y: 180, width: 320, height: 44, space: .screen),
+                source: .accessibility,
+                label: "Search",
+                kind: .searchField,
+                confidence: 0.86
+            )
+        ) { current, _ in current }
+
+        #expect(LocalAppTaskObservationFallbackPolicy.shouldUseScreenshotUnderstanding(
+            definition: definition,
+            accessibilityObservation: LocalAppTaskObservation(
+                appIsRunning: true,
+                appIsFocused: true,
+                availableControls: ["search": true],
+                visibleText: ["city": "San Francisco"],
+                confidence: 0.9,
+                metadata: boundedSearchMetadata
+            ),
+            verificationKey: "city"
+        ) == false)
 
         #expect(LocalAppTaskObservationFallbackPolicy.shouldUseScreenshotUnderstanding(
             definition: definition,
@@ -901,7 +990,7 @@ struct LocalAppTaskTests {
                 confidence: 0.9
             ),
             verificationKey: "city"
-        ) == false)
+        ) == true)
 
         #expect(LocalAppTaskObservationFallbackPolicy.shouldUseScreenshotUnderstanding(
             definition: definition,
@@ -942,6 +1031,50 @@ struct LocalAppTaskTests {
             ),
             verificationKey: "city"
         ) == true)
+    }
+
+    @Test
+    func localUIUnderstandingObservationDeduplicatesModelControlIDs() {
+        let request = LocalUIUnderstandingRequest(
+            traceID: "trace-duplicate-controls",
+            targetID: "weather",
+            metadata: LocalAppObservationGeometry.targetBoundsMetadata(
+                WindowTargetBounds(x: 100, y: 120, width: 900, height: 700)
+            )
+        )
+        let result = LocalUIUnderstandingResult(
+            controls: [
+                LocalUIUnderstandingControl(
+                    id: "search-field",
+                    label: "Search",
+                    kind: .searchField,
+                    frame: HotLoopRect(x: 140, y: 180, width: 320, height: 44, space: .screen),
+                    confidence: 0.86,
+                    metadata: ["controlID": "search"]
+                ),
+                LocalUIUnderstandingControl(
+                    id: "search-button",
+                    label: "Search",
+                    kind: .button,
+                    frame: HotLoopRect(x: 480, y: 180, width: 80, height: 44, space: .screen),
+                    confidence: 0.72,
+                    metadata: ["controlID": "search"]
+                )
+            ],
+            confidence: 0.84
+        )
+
+        let observation = result.observation(for: request)
+
+        #expect(observation.availableControls["search"] == true)
+        #expect(observation.availableControls["search-field"] == true)
+        #expect(observation.availableControls["search-button"] == true)
+        #expect(observation.metadata["control.search.bounds.space"] == HotLoopCoordinateSpace.screen.rawValue)
+        let groundedMetadata = LocalAppObservationGeometry.groundedMetadata(
+            controlID: "search",
+            observation: observation
+        )
+        #expect(groundedMetadata["control.bounds.space"] == HotLoopCoordinateSpace.normalizedTarget.rawValue)
     }
 
     @Test @MainActor

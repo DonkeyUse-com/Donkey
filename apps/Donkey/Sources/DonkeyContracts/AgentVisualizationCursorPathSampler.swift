@@ -60,6 +60,7 @@ public enum AgentVisualizationCursorPathSampler {
         elapsed: TimeInterval,
         screenSize: CGSize
     ) -> AgentVisualizationCursorPathSample {
+        let screenFrame = CGRect(origin: .zero, size: screenSize)
         guard !request.steps.isEmpty else {
             return AgentVisualizationCursorPathSample(
                 position: point(request.origin, in: screenSize),
@@ -73,7 +74,7 @@ public enum AgentVisualizationCursorPathSampler {
         var remaining = elapsed
         var origin = point(request.origin, in: screenSize)
         for (index, step) in request.steps.enumerated() {
-            let target = point(step.target, in: screenSize)
+            let target = point(step.target, metadata: step.metadata, screenFrame: screenFrame)
             if remaining <= step.travelDuration {
                 let linearProgress = min(max(remaining / step.travelDuration, 0), 1)
                 let easedProgress = eased(linearProgress)
@@ -93,19 +94,18 @@ public enum AgentVisualizationCursorPathSampler {
 
             remaining -= step.travelDuration
             if remaining <= step.holdDuration {
-                let typeProgress = min(1, remaining / min(step.holdDuration, max(0.6, Double(step.label.count) * 0.035)))
                 let wobble = sin(remaining * 8) * 1.8
                 return AgentVisualizationCursorPathSample(
                     position: CGPoint(x: target.x + wobble, y: target.y),
                     angle: angle(from: origin, to: target),
-                    visibleLabel: typedText(step.label, progress: typeProgress),
+                    visibleLabel: step.label,
                     isHolding: true,
                     phase: .hold,
                     stepIndex: index,
                     stepID: step.id,
                     elapsedInPhase: max(0, remaining),
-                    linearProgress: typeProgress,
-                    easedProgress: typeProgress,
+                    linearProgress: min(1, remaining / step.holdDuration),
+                    easedProgress: min(1, remaining / step.holdDuration),
                     haloScale: 1 + 0.14 * sin(remaining * 3.2),
                     haloOpacity: 0.24 + 0.18 * cos(remaining * 3.2),
                     labelOpacity: min(1, remaining / 0.18)
@@ -118,7 +118,7 @@ public enum AgentVisualizationCursorPathSampler {
 
         let finalStep = request.steps[request.steps.count - 1]
         return AgentVisualizationCursorPathSample(
-            position: point(finalStep.target, in: screenSize),
+            position: point(finalStep.target, metadata: finalStep.metadata, screenFrame: screenFrame),
             angle: 0,
             visibleLabel: finalStep.label,
             isHolding: true,
@@ -136,6 +136,27 @@ public enum AgentVisualizationCursorPathSampler {
         CGPoint(
             x: min(max(normalizedPoint.x, 0.04), 0.96) * max(1, size.width),
             y: min(max(normalizedPoint.y, 0.06), 0.94) * max(1, size.height)
+        )
+    }
+
+    public static func point(
+        _ normalizedPoint: CGPoint,
+        metadata: [String: String],
+        screenFrame: CGRect
+    ) -> CGPoint {
+        guard metadata["cursor.targetSpace"] == "targetWindowNormalized",
+              let bounds = targetBounds(from: metadata)
+        else {
+            return point(normalizedPoint, in: screenFrame.size)
+        }
+
+        let localPoint = CGPoint(
+            x: CGFloat(bounds.x + Double(normalizedPoint.x) * bounds.width) - screenFrame.minX,
+            y: CGFloat(bounds.y + Double(normalizedPoint.y) * bounds.height)
+        )
+        return CGPoint(
+            x: min(max(localPoint.x, 0), max(1, screenFrame.size.width)),
+            y: min(max(localPoint.y, 0), max(1, screenFrame.size.height))
         )
     }
 
@@ -169,11 +190,20 @@ public enum AgentVisualizationCursorPathSampler {
         return 1 - pow(1 - t, 3)
     }
 
-    private static func typedText(_ text: String, progress: Double) -> String {
-        guard progress < 1 else { return text }
-
-        let count = max(1, Int(Double(text.count) * progress))
-        let endIndex = text.index(text.startIndex, offsetBy: min(count, text.count))
-        return String(text[..<endIndex])
+    private static func targetBounds(from metadata: [String: String]) -> WindowTargetBounds? {
+        guard let x = Double(metadata["target.bounds.x"] ?? ""),
+              let y = Double(metadata["target.bounds.y"] ?? ""),
+              let width = Double(metadata["target.bounds.width"] ?? ""),
+              let height = Double(metadata["target.bounds.height"] ?? "")
+        else {
+            return nil
+        }
+        let bounds = WindowTargetBounds(
+            x: x,
+            y: y,
+            width: width,
+            height: height
+        )
+        return bounds.hasPositiveArea ? bounds : nil
     }
 }

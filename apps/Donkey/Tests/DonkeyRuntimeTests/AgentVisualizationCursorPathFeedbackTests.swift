@@ -175,6 +175,37 @@ struct AgentVisualizationCursorPathFeedbackTests {
         }
     }
 
+    @Test
+    func targetWindowNormalizedCursorPointsMapToScreenLocalPixels() {
+        let step = PointerCoachCursorGuideStep(
+            id: "search",
+            label: "Search",
+            target: CGPoint(x: 0.25, y: 0.225),
+            metadata: [
+                "cursor.targetSpace": "targetWindowNormalized",
+                "target.bounds.x": "100",
+                "target.bounds.y": "200",
+                "target.bounds.width": "800",
+                "target.bounds.height": "600"
+            ]
+        )
+
+        let mapped = AgentVisualizationCursorPathSampler.point(
+            step.target,
+            metadata: step.metadata,
+            screenFrame: CGRect(x: 0, y: 0, width: 1200, height: 900)
+        )
+
+        expectPoint(mapped, x: 300, y: 335)
+
+        let secondaryScreenMapped = AgentVisualizationCursorPathSampler.point(
+            step.target,
+            metadata: step.metadata.merging(["target.bounds.x": "1100"]) { _, new in new },
+            screenFrame: CGRect(x: 1000, y: 0, width: 1200, height: 900)
+        )
+        expectPoint(secondaryScreenMapped, x: 300, y: 335)
+    }
+
     private func cursorRequest() -> PointerCoachCursorGuideRequest {
         PointerCoachCursorGuideRequest(
             id: "exact-cursor-path",

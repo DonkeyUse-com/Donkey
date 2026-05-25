@@ -528,6 +528,10 @@ struct AIHarnessAdapterTests {
         #expect(body["model"] == nil)
         #expect(body["store"] as? Bool == false)
         #expect(body["donkeyProvider"] == nil)
+        let parameters = try #require(body["parameters"] as? [String: Any])
+        let instructions = try #require(parameters["instructions"] as? String)
+        #expect(instructions.contains("local_app_interaction"))
+        #expect(instructions.contains("media playback"))
     }
 
     @Test

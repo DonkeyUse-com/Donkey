@@ -1223,6 +1223,7 @@ def agent_visualization_plan_prompt(
         [
             "Classify whether the user's request should be answered by visual-only agent action visualization.",
             "Use semantic intent, not command wording. Visual-only visualization is for teaching or demonstrating where the agent would observe, point, focus, type, submit, or verify inside an app.",
+            "If the user wants Donkey to perform an app action now, such as playing media, opening a site, writing text, searching, submitting, or editing, set shouldVisualize=false even if cursor steps could be imagined.",
             "If the request is an executable local task, app/file open request, arithmetic/chat answer, or missing-detail clarification, set shouldVisualize=false. Normal executable tasks emit their own visualization from runtime traces.",
             "If shouldVisualize=true, generate two to five cursor steps with short labels. Coordinates are normalized screen positions from 0 to 1.",
             "The visualization must explain and point only. It must not claim to move the real mouse, click, type, submit, or perform the user's task.",

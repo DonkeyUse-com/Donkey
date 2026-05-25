@@ -379,6 +379,7 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
             resolution: resolution,
             metadata: modelMetadata
         )
+        logActionTraces(for: result)
 
         let agentVisualizationPlan = LocalAppTaskAgentVisualizationBuilder.plan(
             for: result,
@@ -544,6 +545,30 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
         )
     }
 
+    private func logActionTraces(for result: LocalAppTaskLiveRunResult) {
+        guard PointerPromptLog.isEnabled else { return }
+
+        for trace in result.actionTraces {
+            let command = trace.command
+            let backend = trace.metadata["liveInputBackend"] ?? "unknown"
+            let inputMode = trace.metadata["inputMode"] ?? inputModeDescription(
+                backend: backend,
+                commandKind: command.kind
+            )
+            let workflowStepID = command.metadata["workflowStepID"] ?? ""
+            let controlID = command.metadata["controlID"] ?? ""
+            let target = actionTargetDescription(for: command)
+            let elementClick = isElementClick(command)
+            let appleScriptAction = trace.metadata["appleScript.action"] ?? command.metadata["appleScript.action"] ?? ""
+            let appleScriptOutput = trace.metadata["appleScript.output"] ?? ""
+            let accessibilityResult = trace.metadata["accessibility.result"] ?? ""
+
+            PointerPromptLog.commands.notice(
+                "local action traceID=\(result.traceID, privacy: .public) commandID=\(command.id, privacy: .public) workflowStepID=\(workflowStepID, privacy: .public) kind=\(command.kind.rawValue, privacy: .public) backend=\(backend, privacy: .public) inputMode=\(inputMode, privacy: .public) executed=\(String(trace.executed), privacy: .public) decision=\(decisionDescription(trace.decision), privacy: .public) elementClick=\(String(elementClick), privacy: .public) controlID=\(controlID, privacy: .public) target=\(target, privacy: .public) overlayPointer=visualOnly appleScriptAction=\(appleScriptAction, privacy: .public) appleScriptOutput=\(appleScriptOutput, privacy: .public) accessibilityResult=\(accessibilityResult, privacy: .public)"
+            )
+        }
+    }
+
     private func routingHint(for routing: AppHarnessRoutingResult) -> String {
         let router = routing.outcome.metadata["router"] ?? ""
         switch router {
@@ -570,6 +595,51 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
             return "Verification \(verificationStatus): \(verificationSummary)."
         }
         return "Local app workflow finished with status \(result.status.rawValue)."
+    }
+
+    private func inputModeDescription(
+        backend: String,
+        commandKind: ActionEngineCommandKind
+    ) -> String {
+        if backend.contains("apple-script") { return "appAutomation" }
+        if backend.contains("accessibility") { return "accessibilityElement" }
+        if backend.contains("keyboard") { return "keyboard" }
+        return commandKind.rawValue
+    }
+
+    private func actionTargetDescription(for command: ActionEngineCommand) -> String {
+        if let controlID = command.metadata["controlID"],
+           !controlID.isEmpty {
+            return "control:\(controlID)"
+        }
+
+        guard let bounds = command.targetBounds else {
+            return "none"
+        }
+        return String(
+            format: "bounds:x=%.3f,y=%.3f,w=%.3f,h=%.3f,space=%@",
+            bounds.origin.x,
+            bounds.origin.y,
+            bounds.size.width,
+            bounds.size.height,
+            bounds.space.rawValue
+        )
+    }
+
+    private func isElementClick(_ command: ActionEngineCommand) -> Bool {
+        (command.kind == .tap || command.kind == .mouse) &&
+            (command.targetBounds != nil || command.metadata["controlID"]?.isEmpty == false)
+    }
+
+    private func decisionDescription(_ decision: ActionEngineCommandDecision) -> String {
+        switch decision {
+        case .projectedDryRun:
+            return "projectedDryRun"
+        case .executedLive:
+            return "executedLive"
+        case .denied(let reason):
+            return "denied:\(reason)"
+        }
     }
 
     private static func shouldRespondWithoutLocalTask(_ resolution: LocalAppTaskCatalogResolution) -> Bool {

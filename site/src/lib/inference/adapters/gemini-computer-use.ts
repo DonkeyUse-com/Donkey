@@ -3,7 +3,7 @@ import {
   Environment,
   GoogleGenAI,
 } from "@google/genai";
-import type { JWTInput } from "google-auth-library";
+import { JWT, type JWTInput } from "google-auth-library";
 import type {
   Content,
   GenerateContentConfig,
@@ -40,6 +40,7 @@ const geminiProviderID = "gemini";
 const defaultVertexResponsesModel = "gemini-3.5-flash";
 const defaultComputerUseModel = "gemini-3-flash-preview";
 const vertexLocation = "global";
+const vertexAIScope = "https://www.googleapis.com/auth/cloud-platform";
 
 export const geminiBrowserInteractionToolType = "donkey_gemini_browser_interaction";
 
@@ -582,7 +583,7 @@ function geminiClientConfig(environment: AdapterEnvironment): {
   }
   if (googleCredentials) {
     options.googleAuthOptions = {
-      credentials: googleCredentials,
+      authClient: googleAuthClient(googleCredentials),
     };
   }
 
@@ -602,6 +603,15 @@ function googleCredentialsFromEnvironment(
   }
 
   return serviceAccountCredentials(rawCredentials);
+}
+
+function googleAuthClient(credentials: JWTInput) {
+  return new JWT({
+    email: credentials.client_email,
+    key: credentials.private_key,
+    keyId: credentials.private_key_id,
+    scopes: [vertexAIScope],
+  });
 }
 
 function serviceAccountCredentials(rawCredentials: string): JWTInput {

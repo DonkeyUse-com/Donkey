@@ -529,6 +529,9 @@ public struct LocalAppTaskLiveRunner: Sendable {
                         "latency.keyboardActionMS": Self.formatLatency(keyboardActionMS),
                         "latency.totalMS": Self.formatLatency(Self.uptimeMilliseconds() - runStartedAt)
                     ], uniquingKeysWith: { current, _ in current }).merging(
+                        Self.actionTraceMetadata(actionTraces),
+                        uniquingKeysWith: { current, _ in current }
+                    ).merging(
                         Self.workflowProgressMetadata(progress),
                         uniquingKeysWith: { current, _ in current }
                     )
@@ -536,6 +539,7 @@ public struct LocalAppTaskLiveRunner: Sendable {
             }
         }
         runMetadata["latency.keyboardActionMS"] = Self.formatLatency(keyboardActionMS)
+        runMetadata.merge(Self.actionTraceMetadata(actionTraces)) { current, _ in current }
         if usesAutomationBackend {
             runMetadata["automation.backend"] = automationCommands.first?.metadata["automationBackend"] ?? ""
             runMetadata["automation.action"] = automationCommands.first?.metadata["appleScript.action"] ?? ""
@@ -809,6 +813,69 @@ public struct LocalAppTaskLiveRunner: Sendable {
             }
         )
     }
+
+    private static func actionTraceMetadata(_ traces: [ActionEngineCommandTrace]) -> [String: String] {
+        guard !traces.isEmpty else { return [:] }
+
+        let lastTrace = traces[traces.count - 1]
+        let backends = Set(traces.compactMap { trace in
+            trace.metadata["liveInputBackend"]
+        }).sorted()
+        let elementClickCount = traces.filter { trace in
+            isElementClick(trace.command)
+        }.count
+        let targetedElementCount = traces.filter { trace in
+            trace.command.targetBounds != nil || trace.command.metadata["controlID"]?.isEmpty == false
+        }.count
+
+        return [
+            "action.traceCount": String(traces.count),
+            "action.executedCount": String(traces.filter(\.executed).count),
+            "action.backends": backends.joined(separator: ","),
+            "action.elementClickCount": String(elementClickCount),
+            "action.targetedElementCount": String(targetedElementCount),
+            "action.lastCommandID": lastTrace.command.id,
+            "action.lastCommandKind": lastTrace.command.kind.rawValue,
+            "action.lastDecision": decisionDescription(lastTrace.decision),
+            "action.lastBackend": lastTrace.metadata["liveInputBackend"] ?? "",
+            "action.lastTarget": actionTargetDescription(lastTrace.command),
+            "action.lastAppleScriptOutput": lastTrace.metadata["appleScript.output"] ?? "",
+            "action.lastAccessibilityResult": lastTrace.metadata["accessibility.result"] ?? "",
+            "action.overlayPointer": "visualOnly"
+        ]
+    }
+
+    private static func isElementClick(_ command: ActionEngineCommand) -> Bool {
+        (command.kind == .tap || command.kind == .mouse) &&
+            (command.targetBounds != nil || command.metadata["controlID"]?.isEmpty == false)
+    }
+
+    private static func actionTargetDescription(_ command: ActionEngineCommand) -> String {
+        if let controlID = command.metadata["controlID"],
+           !controlID.isEmpty {
+            return "control:\(controlID)"
+        }
+        guard let bounds = command.targetBounds else { return "none" }
+        return String(
+            format: "bounds:x=%.3f,y=%.3f,w=%.3f,h=%.3f,space=%@",
+            bounds.origin.x,
+            bounds.origin.y,
+            bounds.size.width,
+            bounds.size.height,
+            bounds.space.rawValue
+        )
+    }
+
+    private static func decisionDescription(_ decision: ActionEngineCommandDecision) -> String {
+        switch decision {
+        case .projectedDryRun:
+            return "projectedDryRun"
+        case .executedLive:
+            return "executedLive"
+        case .denied(let reason):
+            return "denied:\(reason)"
+        }
+    }
 }
 
 public struct MacLocalAppFocusGuard: ActionEngineFocusGuard {
@@ -915,18 +982,47 @@ public struct MacLocalAppTaskController: LocalAppTaskAppControlling {
             textValues[verificationKey] = visibleText
         }
 
+        var accessibilityMetadata = [
+            "observer": "mac-local-app-controller",
+            "accessibilityTrusted": String(AXIsProcessTrusted()),
+            "accessibilityControlDiscovery": String(accessibilityIndex != nil),
+            "accessibilityControlCount": accessibilityIndex?.metadata["controlCount"] ?? "0"
+        ].merging(accessibilityIndex?.metadata ?? [:]) { current, _ in current }
+        for step in definition.workflowSteps {
+            guard let controlID = step.metadata["controlID"],
+                  let control = accessibilityIndex?.firstControl(matching: controlID)
+            else {
+                continue
+            }
+            let frame = control.frame.map {
+                HotLoopRect(
+                    x: $0.x,
+                    y: $0.y,
+                    width: $0.width,
+                    height: $0.height,
+                    space: .screen
+                )
+            }
+            accessibilityMetadata.merge(
+                LocalAppObservationGeometry.controlMetadata(
+                    controlID: controlID,
+                    frame: frame,
+                    source: .accessibility,
+                    label: control.label,
+                    kind: control.kind,
+                    confidence: 0.86,
+                    extra: control.metadata
+                )
+            ) { current, _ in current }
+        }
+
         let accessibilityObservation = LocalAppTaskObservation(
             appIsRunning: runningApplication != nil,
             appIsFocused: isFocused,
             availableControls: controls,
             visibleText: textValues,
             confidence: accessibilityIndex == nil ? (visibleText == nil ? 0.4 : 0.75) : 0.86,
-            metadata: [
-                "observer": "mac-local-app-controller",
-                "accessibilityTrusted": String(AXIsProcessTrusted()),
-                "accessibilityControlDiscovery": String(accessibilityIndex != nil),
-                "accessibilityControlCount": accessibilityIndex?.metadata["controlCount"] ?? "0"
-            ]
+            metadata: accessibilityMetadata
         )
 
         guard shouldIncludeScreenshotUnderstanding(
@@ -1039,7 +1135,7 @@ public struct MacLocalAppTaskController: LocalAppTaskAppControlling {
                 "verificationTextKey": verificationKey,
                 "target.windowID": String(target.windowID),
                 "capture.method": screenshot.captureMethod.rawValue
-            ]
+            ].merging(LocalAppObservationGeometry.targetBoundsMetadata(target.bounds)) { current, _ in current }
         )
 
         do {
