@@ -3,8 +3,44 @@ import CoreGraphics
 import DonkeyContracts
 import Foundation
 
+struct MacKeyboardTextEntryExecution: Equatable, Sendable {
+    var executed: Bool
+    var inputMode: String
+    var metadata: [String: String]
+
+    init(
+        executed: Bool,
+        inputMode: String,
+        metadata: [String: String] = [:]
+    ) {
+        self.executed = executed
+        self.inputMode = inputMode
+        self.metadata = metadata
+    }
+}
+
 public struct MacKeyboardActionEngineInputBackend: ActionEngineInputBackend {
-    public init() {}
+    private let keyCommandPoster: @Sendable (String) -> Bool
+    private let textEntryExecutor: @Sendable (
+        String,
+        @escaping @Sendable (String) -> Bool
+    ) async -> MacKeyboardTextEntryExecution
+
+    public init() {
+        self.keyCommandPoster = Self.postKeyCommand
+        self.textEntryExecutor = Self.pasteText
+    }
+
+    init(
+        keyCommandPoster: @escaping @Sendable (String) -> Bool,
+        textEntryExecutor: @escaping @Sendable (
+            String,
+            @escaping @Sendable (String) -> Bool
+        ) async -> MacKeyboardTextEntryExecution
+    ) {
+        self.keyCommandPoster = keyCommandPoster
+        self.textEntryExecutor = textEntryExecutor
+    }
 
     public func execute(_ command: ActionEngineCommand) async -> ActionEngineInputBackendResult {
         guard command.kind == .key, let key = command.key else {
@@ -22,11 +58,14 @@ public struct MacKeyboardActionEngineInputBackend: ActionEngineInputBackend {
 
         let executed: Bool
         let inputMode: String
+        var inputMetadata: [String: String] = [:]
         if command.metadata["inputRole"] == "textEntry" {
-            executed = postText(key)
-            inputMode = "unicodeText"
+            let textResult = await textEntryExecutor(key, keyCommandPoster)
+            executed = textResult.executed
+            inputMode = textResult.inputMode
+            inputMetadata = textResult.metadata
         } else {
-            executed = postKeyCommand(key)
+            executed = keyCommandPoster(key)
             inputMode = "keyCommand"
         }
 
@@ -42,7 +81,7 @@ public struct MacKeyboardActionEngineInputBackend: ActionEngineInputBackend {
                 "inputMode": inputMode,
                 "elementClick": "false",
                 "key": key
-            ]
+            ].merging(inputMetadata) { current, _ in current }
         )
     }
 
@@ -58,26 +97,50 @@ public struct MacKeyboardActionEngineInputBackend: ActionEngineInputBackend {
         )
     }
 
-    private func postText(_ text: String) -> Bool {
-        guard !text.isEmpty,
-              let source = CGEventSource(stateID: .hidSystemState),
-              let event = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true)
-        else {
-            return false
-        }
-
-        let utf16 = Array(text.utf16)
-        utf16.withUnsafeBufferPointer { buffer in
-            event.keyboardSetUnicodeString(
-                stringLength: utf16.count,
-                unicodeString: buffer.baseAddress
+    private static func pasteText(
+        _ text: String,
+        postKeyCommand: @escaping @Sendable (String) -> Bool
+    ) async -> MacKeyboardTextEntryExecution {
+        guard !text.isEmpty else {
+            return MacKeyboardTextEntryExecution(
+                executed: false,
+                inputMode: "pasteboardText",
+                metadata: ["reason": "emptyText"]
             )
         }
-        event.post(tap: .cghidEventTap)
-        return true
+
+        let pasteboard = NSPasteboard.general
+        let snapshot = PasteboardSnapshot.capture(from: pasteboard)
+        pasteboard.clearContents()
+        guard pasteboard.setString(text, forType: .string) else {
+            snapshot.restore(to: pasteboard)
+            return MacKeyboardTextEntryExecution(
+                executed: false,
+                inputMode: "pasteboardText",
+                metadata: ["reason": "pasteboardWriteFailed"]
+            )
+        }
+        let textChangeCount = pasteboard.changeCount
+
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        let pasted = postKeyCommand("Command+V")
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        if pasteboard.changeCount == textChangeCount {
+            snapshot.restore(to: pasteboard)
+        }
+
+        return MacKeyboardTextEntryExecution(
+            executed: pasted,
+            inputMode: "pasteboardText",
+            metadata: [
+                "textEntry.method": "pasteboard",
+                "textEntry.shortcut": "Command+V",
+                "textEntry.characterCount": String(text.count)
+            ]
+        )
     }
 
-    private func postKeyCommand(_ command: String) -> Bool {
+    private static func postKeyCommand(_ command: String) -> Bool {
         let parts = command
             .split(separator: "+")
             .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -194,5 +257,43 @@ public struct MacKeyboardActionEngineInputBackend: ActionEngineInputBackend {
             wallClock: Date(),
             monotonicUptimeNanoseconds: UInt64(ProcessInfo.processInfo.systemUptime * 1_000_000_000)
         )
+    }
+}
+
+private struct PasteboardSnapshot {
+    var items: [Item]
+
+    struct Item {
+        var representations: [(type: String, data: Data)]
+    }
+
+    static func capture(from pasteboard: NSPasteboard) -> PasteboardSnapshot {
+        PasteboardSnapshot(
+            items: (pasteboard.pasteboardItems ?? []).map { item in
+                Item(
+                    representations: item.types.compactMap { type in
+                        guard let data = item.data(forType: type) else { return nil }
+                        return (type.rawValue, data)
+                    }
+                )
+            }
+        )
+    }
+
+    func restore(to pasteboard: NSPasteboard) {
+        pasteboard.clearContents()
+        let pasteboardItems = items.compactMap { item -> NSPasteboardItem? in
+            let pasteboardItem = NSPasteboardItem()
+            var wroteRepresentation = false
+            for representation in item.representations {
+                let type = NSPasteboard.PasteboardType(representation.type)
+                wroteRepresentation = pasteboardItem.setData(representation.data, forType: type)
+                    || wroteRepresentation
+            }
+            return wroteRepresentation ? pasteboardItem : nil
+        }
+        if !pasteboardItems.isEmpty {
+            pasteboard.writeObjects(pasteboardItems)
+        }
     }
 }
