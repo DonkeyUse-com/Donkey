@@ -147,7 +147,7 @@ final class MicrophoneWaveformMeter {
             let level = Self.normalizedLevel(from: buffer)
             let samples = Self.monoSamples(from: buffer)
 
-            Task { @MainActor in
+            Task { @MainActor [weak meter, samples, level] in
                 meter?.appendAudioSamples(samples)
                 meter?.append(level)
             }
