@@ -77,7 +77,7 @@ app.verifyCommand
 app.verifyVisibleText
 ```
 
-The model may choose tools, entities, target app, and confidence. Website navigation should target Safari or the user's browser and use `ui.focusAddressBar` with a URL query. Simple document creation, such as writing in Notes or putting tabular text into Numbers, should use `ui.newDocument` and `ui.setText`. Unsupported tool names fail model-output validation or block before execution and become clarification/review instead of input.
+The model may choose tools, entities, target app, and confidence. Website navigation should target Safari or the user's browser and use `ui.focusAddressBar` with a URL query. Simple document creation, such as writing in Notes or putting tabular text into Numbers, should use `ui.newDocument` and `ui.setText`. Media playback is not just app/query parsing: vague artist or genre requests must be planned into a concrete playable selection before execution, with `metadata.mediaSelection.*` explaining the chosen song, album, or playlist. Play-media model output without a concrete media-selection kind is rejected before execution. Unsupported tool names fail model-output validation or block before execution and become clarification/review instead of input.
 
 ## Runtime Validation
 

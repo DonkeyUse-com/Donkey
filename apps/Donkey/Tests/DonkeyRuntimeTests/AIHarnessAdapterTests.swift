@@ -391,6 +391,8 @@ struct AIHarnessAdapterTests {
         #expect((body["prompt"] as? String)?.contains("choose by capability and target app") == true)
         #expect((body["prompt"] as? String)?.contains("Do not include reasoning") == true)
         #expect((body["prompt"] as? String)?.contains("play/listen media requests") == true)
+        #expect((body["prompt"] as? String)?.contains("media-selection planning") == true)
+        #expect((body["prompt"] as? String)?.contains("mediaSelection.selectedTitle") == true)
         #expect((body["prompt"] as? String)?.contains("For website navigation") == true)
         #expect((body["prompt"] as? String)?.contains("ui.newDocument") == true)
         #expect((body["prompt"] as? String)?.contains("set_text_input_contract=inputEntityValueIsExactTextToEnter") == true)
@@ -472,7 +474,7 @@ struct AIHarnessAdapterTests {
                 result: LocalJSONSidecarResult(
                     status: .completed,
                     outputData: Data("""
-                    {"outputText":"{\\"taskType\\":\\"media_playback\\",\\"targetAppName\\":\\"Music\\",\\"entities\\":{\\"query\\":\\"cold play\\"},\\"normalizedEntities\\":{\\"query\\":\\"Cold Play\\"},\\"confidence\\":0.91,\\"needsConfirmation\\":false,\\"actionPlan\\":{\\"tools\\":[],\\"inputEntity\\":\\"\\",\\"controlID\\":\\"\\",\\"focusKey\\":\\"\\",\\"verification\\":\\"commandAttempted\\"},\\"metadata\\":{\\"source\\":\\"test\\"}}","metadata":{"local.provider":"donkey-local-llm-sidecar"}}
+                    {"outputText":"{\\"taskType\\":\\"media_playback\\",\\"targetAppName\\":\\"Music\\",\\"entities\\":{\\"query\\":\\"Viva La Vida Coldplay\\"},\\"normalizedEntities\\":{\\"query\\":\\"Viva La Vida Coldplay\\"},\\"confidence\\":0.91,\\"needsConfirmation\\":false,\\"actionPlan\\":{\\"tools\\":[],\\"inputEntity\\":\\"\\",\\"controlID\\":\\"\\",\\"focusKey\\":\\"\\",\\"verification\\":\\"commandAttempted\\"},\\"metadata\\":{\\"source\\":\\"test\\",\\"mediaSelection.kind\\":\\"representative_song\\",\\"mediaSelection.seed\\":\\"Coldplay\\",\\"mediaSelection.selectedTitle\\":\\"Viva La Vida\\",\\"mediaSelection.reason\\":\\"User asked for Coldplay, so choose a concrete song.\\"}}","metadata":{"local.provider":"donkey-local-llm-sidecar"}}
                     """.utf8),
                     latencyMS: 14,
                     metadata: ["sidecar.role": "taskIntent"]
@@ -490,7 +492,8 @@ struct AIHarnessAdapterTests {
 
         #expect(result.intent?.taskType == "media_playback")
         #expect(result.intent?.targetApp.appName == "Music")
-        #expect(result.intent?.normalizedEntities["query"] == "Cold Play")
+        #expect(result.intent?.normalizedEntities["query"] == "Viva La Vida Coldplay")
+        #expect(result.intent?.metadata["mediaSelection.selectedTitle"] == "Viva La Vida")
         #expect(result.intent?.metadata["parser"] == "local-llm-sidecar-v1")
         #expect(result.trace.provider == .localRuntime)
         #expect(result.trace.status == .completed)
@@ -500,7 +503,7 @@ struct AIHarnessAdapterTests {
     @Test
     func hostedTaskIntentAdapterUsesBackendResponsesProxy() async throws {
         let httpClient = FakeAIHTTPClient(
-            data: Data(#"{"output_text":"{\"taskType\":\"media_playback\",\"targetAppName\":\"Music\",\"entities\":{\"query\":\"cold play\"},\"normalizedEntities\":{\"query\":\"Cold Play\"},\"confidence\":0.91,\"needsConfirmation\":false,\"actionPlan\":{\"tools\":[],\"inputEntity\":\"\",\"controlID\":\"\",\"focusKey\":\"\",\"verification\":\"commandAttempted\"},\"metadata\":{\"source\":\"test\"}}"}"#.utf8),
+            data: Data(#"{"output_text":"{\"taskType\":\"media_playback\",\"targetAppName\":\"Music\",\"entities\":{\"query\":\"Viva La Vida Coldplay\"},\"normalizedEntities\":{\"query\":\"Viva La Vida Coldplay\"},\"confidence\":0.91,\"needsConfirmation\":false,\"actionPlan\":{\"tools\":[],\"inputEntity\":\"\",\"controlID\":\"\",\"focusKey\":\"\",\"verification\":\"commandAttempted\"},\"metadata\":{\"source\":\"test\",\"mediaSelection.kind\":\"representative_song\",\"mediaSelection.seed\":\"Coldplay\",\"mediaSelection.selectedTitle\":\"Viva La Vida\",\"mediaSelection.reason\":\"User asked for Coldplay, so choose a concrete song.\"}}"}"#.utf8),
             statusCode: 200
         )
         let adapter = HostedTaskIntentParsingAdapter(
@@ -536,6 +539,8 @@ struct AIHarnessAdapterTests {
         #expect(instructions.contains("local_app_interaction"))
         #expect(instructions.contains("media playback"))
         #expect(instructions.contains("play/listen media requests"))
+        #expect(instructions.contains("media-selection planning"))
+        #expect(instructions.contains("mediaSelection.selectedTitle"))
         #expect(instructions.contains("metadata.assistantResponse"))
     }
 
@@ -650,6 +655,44 @@ struct AIHarnessAdapterTests {
     }
 
     @Test
+    func taskIntentDecoderPreservesMediaSelectionForVagueArtistRequest() async throws {
+        let adapter = ProcessBackedLocalLLMTaskIntentAdapter(
+            router: AIModelRouter(registry: .defaultHybridPlanner),
+            sidecarRunner: FakeSidecarRunner(
+                result: LocalJSONSidecarResult(
+                    status: .completed,
+                    outputData: try localLLMSidecarOutputData(
+                        outputText: """
+                        {"taskType":"local_app_interaction","targetAppName":"Music","entities":{"appName":"Music","goal":"play media","query":"Viva La Vida Coldplay"},"normalizedEntities":{"appName":"Music","goal":"play media","query":"Viva La Vida Coldplay"},"confidence":0.91,"needsConfirmation":false,"actionPlan":{"tools":["app.openOrFocus","app.observe","ui.focusSearch","ui.setText","ui.pressReturn","app.verifyCommand"],"inputEntity":"query","controlID":"search","focusKey":"Command+F","verification":"commandAttempted"},"metadata":{"appFinder.selectedCapabilityID":"play_media","mediaSelection.kind":"representative_song","mediaSelection.seed":"Coldplay","mediaSelection.selectedTitle":"Viva La Vida","mediaSelection.reason":"User asked for some Coldplay, so choose a concrete song instead of an artist-only search."}}
+                        """,
+                        metadata: ["local.provider": "donkey-local-llm-sidecar"]
+                    ),
+                    latencyMS: 14,
+                    metadata: ["sidecar.role": "taskIntent"]
+                )
+            )
+        )
+
+        let result = await adapter.parseTaskIntent(
+            TaskIntentAdapterRequest(
+                command: "play some coldplay",
+                taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
+                contextSnippets: ["Music application com.apple.Music"],
+                sourceTraceID: "trace-media-selection"
+            )
+        )
+
+        #expect(result.intent?.taskType == "local_app_interaction")
+        #expect(result.intent?.targetApp.appName == "Music")
+        #expect(result.intent?.normalizedEntities["query"] == "Viva La Vida Coldplay")
+        #expect(result.intent?.metadata["mediaSelection.kind"] == "representative_song")
+        #expect(result.intent?.metadata["mediaSelection.seed"] == "Coldplay")
+        #expect(result.intent?.metadata["mediaSelection.selectedTitle"] == "Viva La Vida")
+        #expect(result.intent?.metadata["appFinder.selectedCapabilityID"] == "play_media")
+        #expect(result.trace.status == .completed)
+    }
+
+    @Test
     func taskIntentDecoderGroundsGenericInteractionInAppFinderCatalog() async throws {
         let appFinderCatalog = StaticLocalAppAvailabilityProvider(
             installedBundleIdentifiers: ["com.apple.Music"]
@@ -661,7 +704,7 @@ struct AIHarnessAdapterTests {
                     status: .completed,
                     outputData: try localLLMSidecarOutputData(
                         outputText: """
-                        {"taskType":"local_app_interaction","targetAppName":"Music","entities":{"appName":"Music","goal":"play media","query":"justin bieber"},"normalizedEntities":{"appName":"Music","goal":"play media","query":"Justin Bieber"},"confidence":0.91,"needsConfirmation":false,"actionPlan":{"tools":["app.openOrFocus","app.observe","ui.focusSearch","ui.setText","ui.pressReturn","app.verifyCommand"],"inputEntity":"query","controlID":"search","focusKey":"Command+F","verification":"commandAttempted"},"metadata":{"appFinder.selectedAppID":"com.apple.Music","appFinder.selectedCapabilityID":"play_media","appFinder.controlProfile":"search_then_enter"}}
+                        {"taskType":"local_app_interaction","targetAppName":"Music","entities":{"appName":"Music","goal":"play media","query":"Baby Justin Bieber"},"normalizedEntities":{"appName":"Music","goal":"play media","query":"Baby Justin Bieber"},"confidence":0.91,"needsConfirmation":false,"actionPlan":{"tools":["app.openOrFocus","app.observe","ui.focusSearch","ui.setText","ui.pressReturn","app.verifyCommand"],"inputEntity":"query","controlID":"search","focusKey":"Command+F","verification":"commandAttempted"},"metadata":{"appFinder.selectedAppID":"com.apple.Music","appFinder.selectedCapabilityID":"play_media","appFinder.controlProfile":"search_then_enter","mediaSelection.kind":"representative_song","mediaSelection.seed":"Justin Bieber","mediaSelection.selectedTitle":"Baby","mediaSelection.reason":"User asked for some Justin Bieber, so choose a concrete song."}}
                         """,
                         metadata: ["local.provider": "donkey-local-llm-sidecar"]
                     ),
@@ -683,9 +726,47 @@ struct AIHarnessAdapterTests {
         #expect(result.intent?.taskType == "local_app_interaction")
         #expect(result.intent?.targetApp.appName == "Music")
         #expect(result.intent?.targetApp.bundleIdentifier == "com.apple.Music")
+        #expect(result.intent?.normalizedEntities["query"] == "Baby Justin Bieber")
         #expect(result.intent?.metadata["appFinder.validated"] == "true")
         #expect(result.intent?.metadata["appFinder.selectedCapabilityID"] == "play_media")
+        #expect(result.intent?.metadata["mediaSelection.selectedTitle"] == "Baby")
         #expect(result.trace.status == .completed)
+    }
+
+    @Test
+    func taskIntentDecoderRejectsPlayMediaWithoutConcreteSelection() async throws {
+        let appFinderCatalog = StaticLocalAppAvailabilityProvider(
+            installedBundleIdentifiers: ["com.apple.Music"]
+        ).appFinderCatalogEntries()
+        let adapter = ProcessBackedLocalLLMTaskIntentAdapter(
+            router: AIModelRouter(registry: .defaultHybridPlanner),
+            sidecarRunner: FakeSidecarRunner(
+                result: LocalJSONSidecarResult(
+                    status: .completed,
+                    outputData: try localLLMSidecarOutputData(
+                        outputText: """
+                        {"taskType":"local_app_interaction","targetAppName":"Music","entities":{"appName":"Music","goal":"play media","query":"Coldplay"},"normalizedEntities":{"appName":"Music","goal":"play media","query":"Coldplay"},"confidence":0.91,"needsConfirmation":false,"actionPlan":{"tools":["app.openOrFocus","app.observe","ui.focusSearch","ui.setText","ui.pressReturn","app.verifyCommand"],"inputEntity":"query","controlID":"search","focusKey":"Command+F","verification":"commandAttempted"},"metadata":{"appFinder.selectedAppID":"com.apple.Music","appFinder.selectedCapabilityID":"play_media","appFinder.controlProfile":"search_then_enter"}}
+                        """,
+                        metadata: ["local.provider": "donkey-local-llm-sidecar"]
+                    ),
+                    latencyMS: 14,
+                    metadata: ["sidecar.role": "taskIntent"]
+                )
+            )
+        )
+
+        let result = await adapter.parseTaskIntent(
+            TaskIntentAdapterRequest(
+                command: "play some coldplay",
+                taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
+                appFinderCatalog: appFinderCatalog,
+                sourceTraceID: "trace-play-media-requires-selection"
+            )
+        )
+
+        #expect(result.intent == nil)
+        #expect(result.trace.status == .invalidOutput)
+        #expect(result.trace.validationStatus == "invalid")
     }
 
     @Test

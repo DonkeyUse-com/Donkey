@@ -673,6 +673,8 @@ public struct LocalGenerateTaskIntentAdapter: TaskIntentParsingAdapter {
             "If Command is an executable local task with one ordinary missing detail, set needsConfirmation=true and include missingEntity in metadata.",
             "If Command is executable, choose by capability and target app, not exact wording. Use only the provided task definitions; do not invent task types, unsupported entities, or actions.",
             "For play/listen media requests, treat the turn as executable when a supported play_media capability or media_playback task is available; choose Music or another supported media app, set query to the requested artist/song/album, and do not downgrade it to conversation.",
+            "For every media playback request, include metadata.mediaSelection.kind. For explicit playable requests use explicit_song, explicit_album, or explicit_playlist. For vague artist-level media requests such as 'play some <artist>', do media-selection planning before returning JSON: pick one concrete playable song or album by that artist using model knowledge, set query to '<selected title> <artist>', and include metadata.mediaSelection.kind=representative_song or representative_album, metadata.mediaSelection.seed=<artist>, metadata.mediaSelection.selectedTitle=<title>, and metadata.mediaSelection.reason. Do not use an artist-only query unless the user explicitly asks to open the artist page, play an artist radio/station, or browse the artist.",
+            "If visible search results are provided in context for a media request, choose the highest-confidence playable Song row whose artist matches the requested seed; skip Artist, Playlist, category, and different-artist rows.",
             "If no capability fits, choose conversation with taskType \"none\" and a helpful metadata.assistantResponse rather than a failed local-action message.",
             "For dynamic local-item capabilities, app/file/folder names may come from the request, relevant local cache, or default-app inference; the catalog will verify availability before execution.",
             "For write/create document requests: if the requested content is malformed or not meaningful enough to type, choose conversation; do not fabricate a document payload just to make the task executable.",
@@ -691,8 +693,9 @@ public struct LocalGenerateTaskIntentAdapter: TaskIntentParsingAdapter {
             "For local_app_interaction, set actionPlan.inputEntity to query when ui.setText should type the query, and set actionPlan.controlID/focusKey for the UI control strategy.",
             "actionPlan must be one nested object containing tools, inputEntity, controlID, focusKey, and verification. Do not put inputEntity, controlID, focusKey, or verification at the top level.",
             "The examples below show output structure only. Replace every example entity value with values inferred from Command and local cache; do not copy example query text unless the user asked for that exact text.",
-            "Media playback output shape when media_playback is provided: taskType=media_playback, targetAppName=Music, entities.query=<artist/song/album to play>, normalizedEntities.query=<artist/song/album to play>.",
-            "Media playback output shape for generic local_app_interaction: targetAppName=Music, entities.appName=Music, entities.goal=play media, entities.query=<artist/song/album to play>, actionPlan.tools=[app.openOrFocus, app.observe, ui.focusSearch, ui.setText, ui.pressReturn, app.verifyCommand], inputEntity=query, controlID=search, focusKey=Command+F, metadata.appFinder.selectedCapabilityID=play_media when selected from the app finder catalog.",
+            "Media playback output shape when media_playback is provided: taskType=media_playback, targetAppName=Music, entities.query=<concrete playable title plus artist>, normalizedEntities.query=<concrete playable title plus artist>, metadata.mediaSelection.* when the user gave only an artist/genre/seed.",
+            "Media playback output shape for generic local_app_interaction: targetAppName=Music, entities.appName=Music, entities.goal=play media, entities.query=<concrete playable title plus artist>, actionPlan.tools=[app.openOrFocus, app.observe, ui.focusSearch, ui.setText, ui.pressReturn, app.verifyCommand], inputEntity=query, controlID=search, focusKey=Command+F, metadata.appFinder.selectedCapabilityID=play_media when selected from the app finder catalog, metadata.mediaSelection.* when the user gave only an artist/genre/seed.",
+            "Example vague artist request output shape: {\"taskType\":\"local_app_interaction\",\"targetAppName\":\"Music\",\"entities\":{\"appName\":\"Music\",\"goal\":\"play media\",\"query\":\"Viva La Vida Coldplay\"},\"normalizedEntities\":{\"appName\":\"Music\",\"goal\":\"play media\",\"query\":\"Viva La Vida Coldplay\"},\"confidence\":0.9,\"needsConfirmation\":false,\"actionPlan\":{\"tools\":[\"app.openOrFocus\",\"app.observe\",\"ui.focusSearch\",\"ui.setText\",\"ui.pressReturn\",\"app.verifyCommand\"],\"inputEntity\":\"query\",\"controlID\":\"search\",\"focusKey\":\"Command+F\",\"verification\":\"commandAttempted\"},\"metadata\":{\"appFinder.selectedCapabilityID\":\"play_media\",\"mediaSelection.kind\":\"representative_song\",\"mediaSelection.seed\":\"Coldplay\",\"mediaSelection.selectedTitle\":\"Viva La Vida\",\"mediaSelection.reason\":\"User asked for some Coldplay, so choose a concrete well-known song instead of an artist-only search.\"}}",
             "Example website output shape: {\"taskType\":\"local_app_interaction\",\"targetAppName\":\"Safari\",\"entities\":{\"appName\":\"Safari\",\"goal\":\"open requested website\",\"query\":\"https://example.org\"},\"normalizedEntities\":{\"appName\":\"Safari\",\"goal\":\"open requested website\",\"query\":\"https://example.org\"},\"confidence\":0.9,\"needsConfirmation\":false,\"actionPlan\":{\"tools\":[\"app.openOrFocus\",\"app.observe\",\"ui.focusAddressBar\",\"ui.setText\",\"ui.pressReturn\",\"app.verifyCommand\"],\"inputEntity\":\"query\",\"controlID\":\"addressBar\",\"focusKey\":\"Command+L\",\"verification\":\"commandAttempted\"},\"metadata\":{}}",
             "Writing output shape: targetAppName=Notes, entities.appName=Notes, entities.goal=write requested text, entities.query=<the actual final text to type>, actionPlan.tools=[app.openOrFocus, app.observe, ui.newDocument, ui.setText, app.verifyCommand], inputEntity=query, controlID=editor.",
             "Table output shape: targetAppName=Numbers, entities.appName=Numbers, entities.goal=create requested table, entities.query=<tab-separated rows for the requested table>, actionPlan.tools=[app.openOrFocus, app.observe, ui.newDocument, ui.setText, app.verifyCommand], inputEntity=query, controlID=editor.",
@@ -964,12 +967,14 @@ public struct HostedTaskIntentParsingAdapter: TaskIntentParsingAdapter {
         "For supported actions, choose only a provided taskType and target app. Fill entities and normalizedEntities with the concrete values needed by required entity rules.",
         "Use the generic local_app_interaction task type for executable local app requests that need a model-planned app workflow and do not have a more specific provided task type.",
         "For play/listen media requests, treat the turn as executable when a supported play_media capability or media_playback task is available; choose Music or another supported media app, set query to the requested artist/song/album, and do not downgrade it to conversation.",
+        "For every media playback request, include metadata.mediaSelection.kind. For explicit playable requests use explicit_song, explicit_album, or explicit_playlist. For vague artist-level media requests such as 'play some <artist>', do media-selection planning before returning JSON: pick one concrete playable song or album by that artist using model knowledge, set query to '<selected title> <artist>', and include metadata.mediaSelection.kind=representative_song or representative_album, metadata.mediaSelection.seed=<artist>, metadata.mediaSelection.selectedTitle=<title>, and metadata.mediaSelection.reason. Do not use an artist-only query unless the user explicitly asks to open the artist page, play an artist radio/station, or browse the artist.",
+        "If visible search results are provided in context for a media request, choose the highest-confidence playable Song row whose artist matches the requested seed; skip Artist, Playlist, category, and different-artist rows.",
         "When App finder catalog JSON is non-empty and you use local_app_interaction, choose the target app only from a catalog entry with supportStatus supported and a matching capability. Set metadata.appFinder.selectedAppID to the exact appID, metadata.appFinder.selectedCapabilityID to the capability id, and metadata.appFinder.controlProfile to one declared control profile. Never select candidate, unsupported, or denied entries for execution.",
         "For local_app_interaction, select the most likely local app, set targetAppName and entities.appName to the human app name, set entities.goal, and when text must be entered set entities.query plus normalizedEntities.query.",
         "For local_app_interaction, fill actionPlan.tools with allowed tools only: app.openOrFocus, app.observe, ui.newDocument, ui.focusSearch, ui.focusAddressBar, ui.focusTextEntry, ui.setText, ui.pressReturn, app.verifyCommand, app.verifyVisibleText.",
         "When ui.setText is present, entities.query and normalizedEntities.query must be non-empty, actionPlan.inputEntity should usually be query, and actionPlan.controlID/focusKey should describe the guarded UI strategy.",
-        "For media playback when media_playback is provided, use taskType=media_playback, targetAppName=Music, entities.query=<artist/song/album to play>, normalizedEntities.query=<artist/song/album to play>.",
-        "For media playback through generic local_app_interaction, targetAppName=Music, entities.appName=Music, entities.goal=play media, entities.query=<artist/song/album to play>, actionPlan.tools=[app.openOrFocus, app.observe, ui.focusSearch, ui.setText, ui.pressReturn, app.verifyCommand] with inputEntity=query, controlID=search, focusKey=Command+F, and metadata.appFinder.selectedCapabilityID=play_media when selected from the app finder catalog.",
+        "For media playback when media_playback is provided, use taskType=media_playback, targetAppName=Music, entities.query=<concrete playable title plus artist>, normalizedEntities.query=<concrete playable title plus artist>, and metadata.mediaSelection.* when the user gave only an artist/genre/seed.",
+        "For media playback through generic local_app_interaction, targetAppName=Music, entities.appName=Music, entities.goal=play media, entities.query=<concrete playable title plus artist>, actionPlan.tools=[app.openOrFocus, app.observe, ui.focusSearch, ui.setText, ui.pressReturn, app.verifyCommand] with inputEntity=query, controlID=search, focusKey=Command+F, metadata.appFinder.selectedCapabilityID=play_media when selected from the app finder catalog, and metadata.mediaSelection.* when the user gave only an artist/genre/seed.",
         "For website navigation, choose Safari or the user's browser, set query to the URL, and use ui.focusAddressBar, ui.setText, ui.pressReturn, app.verifyCommand.",
         "For writing in Notes, choose Notes, make query the complete text to type, and use ui.newDocument, ui.setText, app.verifyCommand.",
         "For spreadsheet or table creation, choose Numbers, put compact tab-separated table content in query, and use ui.newDocument, ui.setText, app.verifyCommand.",
@@ -1365,6 +1370,14 @@ private enum TaskIntentWireCodec {
             metadata["appFinder.validated"] = "true"
         }
 
+        guard mediaSelectionIsValidIfRequired(
+            definition: definition,
+            metadata: metadata,
+            normalizedEntities: normalizedEntities
+        ) else {
+            return nil
+        }
+
         let missingRequiredEntity = definition.entityRules.first { rule in
             rule.required && normalizedEntities[rule.name] == nil
         }
@@ -1698,6 +1711,46 @@ private enum TaskIntentWireCodec {
         }
 
         return nil
+    }
+
+    private static func mediaSelectionIsValidIfRequired(
+        definition: LocalAppTaskDefinition,
+        metadata: [String: String],
+        normalizedEntities: [String: String]
+    ) -> Bool {
+        let capabilityID = metadata["appFinder.selectedCapabilityID"]
+            ?? metadata["selectedCapabilityID"]
+            ?? ""
+        let requiresMediaSelection = capabilityID == "play_media"
+            || definition.metadata["verificationMode"] == "playbackCommandAttempted"
+        guard requiresMediaSelection else { return true }
+
+        guard let kind = nonEmpty(metadata["mediaSelection.kind"])?.lowercased() else {
+            return false
+        }
+        let blockedKinds: Set<String> = [
+            "artist",
+            "artist_only",
+            "artist_page",
+            "browse_artist"
+        ]
+        guard !blockedKinds.contains(kind) else { return false }
+
+        let queryEntity = definition.verificationEntityName ?? "query"
+        guard let query = nonEmpty(normalizedEntities[queryEntity] ?? normalizedEntities["query"]) else {
+            return false
+        }
+
+        if let seed = nonEmpty(metadata["mediaSelection.seed"]),
+           LocalAppTaskIntentParser.normalizedPhrase(query) == LocalAppTaskIntentParser.normalizedPhrase(seed) {
+            return false
+        }
+
+        if kind.contains("representative") {
+            return nonEmpty(metadata["mediaSelection.selectedTitle"]) != nil
+        }
+
+        return true
     }
 
     private static func documentConversationReason(
