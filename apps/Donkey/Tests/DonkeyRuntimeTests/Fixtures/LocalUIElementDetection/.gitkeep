@@ -1,0 +1,1 @@
+Keep local UI element detection fixture directories available for tests without committing private screenshots.

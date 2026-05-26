@@ -45,6 +45,32 @@ struct DebugUIInspectionTests {
         #expect(config.cadenceSeconds == 1.0)
         #expect(config.screenScope == .main)
         #expect(config.minConfidence == 0.25)
+        #expect(config.activeWindowOnly == false)
+        #expect(config.targetBundleIdentifiers.isEmpty)
+        #expect(config.targetAppNames.isEmpty)
+    }
+
+    @Test
+    func configLoadsTargetFilters() throws {
+        let url = temporaryDirectory()
+            .appendingPathComponent("targeted-dev-overlay.json", isDirectory: false)
+        try Data(
+            """
+            {
+              "enabled": true,
+              "activeWindowOnly": true,
+              "targetBundleIdentifiers": ["com.apple.Music", " com.apple.Music "],
+              "targetAppNames": ["Music"]
+            }
+            """.utf8
+        ).write(to: url, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let config = DebugUIOverlayConfiguration.load(fileURL: url)
+
+        #expect(config.targetBundleIdentifiers == ["com.apple.Music"])
+        #expect(config.targetAppNames == ["Music"])
+        #expect(config.activeWindowOnly == true)
     }
 
     @Test
@@ -157,6 +183,20 @@ struct DebugUIInspectionTests {
     }
 
     @Test
+    func trackerFreezesTinyBoundingBoxJitter() {
+        var tracker = DebugUIElementTracker()
+        _ = tracker.update(with: DebugUIInspectionFrame(elements: [
+            element(id: "button-1", label: "Save", x: 10, y: 20)
+        ]))
+
+        let updated = tracker.update(with: DebugUIInspectionFrame(elements: [
+            element(id: "button-1", label: "Save", x: 11.4, y: 20.8)
+        ]))
+
+        #expect(updated.elements.first?.bbox == DebugUIBoundingBox(x: 10, y: 20, width: 80, height: 30))
+    }
+
+    @Test
     func geometryConvertsScreenshotPixelsToAppKitPoints() {
         let frame = DebugUIOverlayGeometry.appKitFrame(
             for: DebugUIBoundingBox(x: 200, y: 100, width: 400, height: 200),
@@ -266,11 +306,14 @@ struct DebugUIInspectionTests {
 
         #expect(capturer.capturedWindowIDs == [11])
         #expect(results.map(\.snapshot.screenID) == [3])
-        #expect(results.first?.frame.elements.count == 1)
-        let element = results.first?.frame.elements.first
-        #expect(element?.id == "window-11")
-        #expect(element?.label == "Notes")
-        #expect(element?.bbox == DebugUIBoundingBox(x: 100, y: 200, width: 500, height: 300))
+        #expect(results.first?.frame.elements.map(\.id) == ["window-11", "ax-11-ax-1.1"])
+        let window = results.first?.frame.elements.first
+        #expect(window?.label == "Notes")
+        #expect(window?.bbox == DebugUIBoundingBox(x: 100, y: 200, width: 500, height: 300))
+        let button = results.first?.frame.elements.last
+        #expect(button?.type == .button)
+        #expect(button?.label == "Save")
+        #expect(button?.bbox == DebugUIBoundingBox(x: 120, y: 230, width: 80, height: 30))
     }
 
     @Test
@@ -303,7 +346,227 @@ struct DebugUIInspectionTests {
         let results = try service.inspect(scope: .main, minConfidence: 0.25)
 
         #expect(capturer.capturedWindowIDs.isEmpty)
-        #expect(results.first?.frame.elements.isEmpty == true)
+        #expect(results.isEmpty)
+    }
+
+    @Test
+    func accessibilityInspectionCanTargetMusicOnly() throws {
+        let screen = DebugUIScreenMetadata(
+            screenID: 1,
+            appKitFrame: HotLoopRect(x: 0, y: 0, width: 1000, height: 800, space: .screen),
+            captureFrame: WindowTargetBounds(x: 0, y: 0, width: 1000, height: 800)
+        )
+        let capturer = DebugUIFakeAccessibilityCapturer(
+            treesByWindowID: [
+                1: MacAccessibilitySnapshotTreeBuilder.build(
+                    root: RawMacAccessibilitySnapshotNode(
+                        role: "AXWindow",
+                        title: "Music",
+                        frame: WindowTargetBounds(x: 0, y: 0, width: 500, height: 400),
+                        children: [
+                            RawMacAccessibilitySnapshotNode(
+                                role: "AXButton",
+                                title: "Play",
+                                frame: WindowTargetBounds(x: 40, y: 60, width: 80, height: 34),
+                                isEnabled: true,
+                                actions: ["AXPress"]
+                            )
+                        ]
+                    ),
+                    limits: MacAccessibilitySnapshotLimits(maxDepth: 6)
+                ),
+                2: MacAccessibilitySnapshotTreeBuilder.build(
+                    root: RawMacAccessibilitySnapshotNode(
+                        role: "AXWindow",
+                        title: "Notes",
+                        frame: WindowTargetBounds(x: 500, y: 0, width: 500, height: 400),
+                        children: [
+                            RawMacAccessibilitySnapshotNode(
+                                role: "AXButton",
+                                title: "New Note",
+                                frame: WindowTargetBounds(x: 520, y: 60, width: 100, height: 34),
+                                isEnabled: true,
+                                actions: ["AXPress"]
+                            )
+                        ]
+                    ),
+                    limits: MacAccessibilitySnapshotLimits(maxDepth: 6)
+                )
+            ]
+        )
+        let service = DebugUIAccessibilityInspectionService(
+            windowResolver: MacWindowResolver(
+                provider: DebugUIFixtureWindowProvider(
+                    windows: [
+                        MacWindowProviderWindow(
+                            windowID: 1,
+                            processID: 100,
+                            appName: "Music",
+                            bundleIdentifier: "com.apple.Music",
+                            bounds: WindowTargetBounds(x: 0, y: 0, width: 500, height: 400)
+                        ),
+                        MacWindowProviderWindow(
+                            windowID: 2,
+                            processID: 200,
+                            appName: "Notes",
+                            bundleIdentifier: "com.apple.Notes",
+                            bounds: WindowTargetBounds(x: 500, y: 0, width: 500, height: 400)
+                        )
+                    ],
+                    frontmostProcessID: 100
+                )
+            ),
+            capturer: capturer,
+            screenProvider: DebugUIFixtureScreenProvider(screens: [screen]),
+            currentProcessID: 999
+        )
+
+        let results = try service.inspect(
+            scope: .main,
+            minConfidence: 0.25,
+            targetBundleIdentifiers: ["com.apple.Music"],
+            targetAppNames: ["Music"]
+        )
+
+        #expect(capturer.capturedWindowIDs == [1])
+        #expect(results.first?.frame.elements.map(\.label).contains("Music") == true)
+        #expect(results.first?.frame.elements.map(\.label).contains("Play") == true)
+        #expect(results.first?.frame.elements.map(\.label).contains("Notes") == false)
+        #expect(results.first?.frame.elements.map(\.label).contains("New Note") == false)
+    }
+
+    @Test
+    func accessibilityInspectionRequiresFocusedMusicWhenRequested() throws {
+        let screen = DebugUIScreenMetadata(
+            screenID: 1,
+            appKitFrame: HotLoopRect(x: 0, y: 0, width: 1000, height: 800, space: .screen),
+            captureFrame: WindowTargetBounds(x: 0, y: 0, width: 1000, height: 800)
+        )
+        let capturer = DebugUIFakeAccessibilityCapturer(
+            treesByWindowID: [
+                1: MacAccessibilitySnapshotTreeBuilder.build(
+                    root: RawMacAccessibilitySnapshotNode(
+                        role: "AXWindow",
+                        title: "Music",
+                        frame: WindowTargetBounds(x: 0, y: 0, width: 500, height: 400),
+                        children: [
+                            RawMacAccessibilitySnapshotNode(
+                                role: "AXButton",
+                                title: "Play",
+                                frame: WindowTargetBounds(x: 40, y: 60, width: 80, height: 34),
+                                isEnabled: true,
+                                actions: ["AXPress"]
+                            )
+                        ]
+                    ),
+                    limits: MacAccessibilitySnapshotLimits(maxDepth: 6)
+                )
+            ]
+        )
+        let service = DebugUIAccessibilityInspectionService(
+            windowResolver: MacWindowResolver(
+                provider: DebugUIFixtureWindowProvider(
+                    windows: [
+                        MacWindowProviderWindow(
+                            windowID: 1,
+                            processID: 100,
+                            appName: "Music",
+                            bundleIdentifier: "com.apple.Music",
+                            bounds: WindowTargetBounds(x: 0, y: 0, width: 500, height: 400)
+                        ),
+                        MacWindowProviderWindow(
+                            windowID: 2,
+                            processID: 200,
+                            appName: "Notes",
+                            bundleIdentifier: "com.apple.Notes",
+                            bounds: WindowTargetBounds(x: 500, y: 0, width: 500, height: 400)
+                        )
+                    ],
+                    frontmostProcessID: 200,
+                    focusedWindowID: 2
+                )
+            ),
+            capturer: capturer,
+            screenProvider: DebugUIFixtureScreenProvider(screens: [screen]),
+            currentProcessID: 999
+        )
+
+        let results = try service.inspect(
+            scope: .main,
+            minConfidence: 0.25,
+            frontmostOnly: true,
+            focusedOnly: true,
+            targetBundleIdentifiers: ["com.apple.Music"],
+            targetAppNames: ["Music"]
+        )
+
+        #expect(results.isEmpty)
+        #expect(capturer.capturedWindowIDs.isEmpty)
+    }
+
+    @Test
+    func accessibilityInspectionScalesAXBoxesToDownsampledScreenshotPixels() throws {
+        let screen = DebugUIScreenMetadata(
+            screenID: 1,
+            appKitFrame: HotLoopRect(x: 0, y: 0, width: 1000, height: 800, space: .screen),
+            captureFrame: WindowTargetBounds(x: 0, y: 0, width: 1000, height: 800)
+        )
+        let capturer = DebugUIFakeAccessibilityCapturer(
+            tree: MacAccessibilitySnapshotTreeBuilder.build(
+                root: RawMacAccessibilitySnapshotNode(
+                    role: "AXWindow",
+                    title: "Music",
+                    frame: WindowTargetBounds(x: 100, y: 200, width: 500, height: 300),
+                    children: [
+                        RawMacAccessibilitySnapshotNode(
+                            role: "AXButton",
+                            title: "Play",
+                            frame: WindowTargetBounds(x: 120, y: 240, width: 80, height: 32),
+                            isEnabled: true,
+                            actions: ["AXPress"]
+                        )
+                    ]
+                ),
+                limits: MacAccessibilitySnapshotLimits(maxDepth: 6)
+            )
+        )
+        let service = DebugUIAccessibilityInspectionService(
+            windowResolver: MacWindowResolver(
+                provider: DebugUIFixtureWindowProvider(
+                    windows: [
+                        MacWindowProviderWindow(
+                            windowID: 1,
+                            processID: 100,
+                            appName: "Music",
+                            bundleIdentifier: "com.apple.Music",
+                            bounds: WindowTargetBounds(x: 100, y: 200, width: 500, height: 300)
+                        )
+                    ],
+                    frontmostProcessID: 100
+                )
+            ),
+            capturer: capturer,
+            screenProvider: DebugUIFixtureScreenProvider(screens: [screen]),
+            screenCapturer: DebugUIFixtureScreenCapturer(
+                snapshots: [
+                    DebugUIScreenCaptureSnapshot(
+                        screenID: 1,
+                        screenFrame: screen.appKitFrame,
+                        pixelSize: HotLoopSize(width: 500, height: 400, space: .screen),
+                        pngData: Data(),
+                        fingerprint: "downsampled"
+                    )
+                ]
+            ),
+            currentProcessID: 999
+        )
+
+        let results = try service.inspect(scope: .main, minConfidence: 0.25)
+        let window = try #require(results.first?.frame.elements.first { $0.id == "window-1" })
+        let play = try #require(results.first?.frame.elements.first { $0.label == "Play" })
+
+        #expect(window.bbox == DebugUIBoundingBox(x: 50, y: 100, width: 250, height: 150))
+        #expect(play.bbox == DebugUIBoundingBox(x: 60, y: 120, width: 40, height: 16))
     }
 
     @Test
@@ -379,8 +642,8 @@ struct DebugUIInspectionTests {
         let results = try service.inspect(scope: .main, minConfidence: 0.25)
 
         #expect(capturer.capturedWindowIDs == [1, 2])
-        #expect(results.first?.frame.elements.map(\.id) == ["window-1"])
-        #expect(results.first?.frame.elements.map(\.label) == ["Front"])
+        #expect(results.first?.frame.elements.map(\.id) == ["window-1", "ax-1-ax-1.1"])
+        #expect(results.first?.frame.elements.map(\.label) == ["Front", "Visible"])
     }
 
     @Test
@@ -444,7 +707,7 @@ struct DebugUIInspectionTests {
     }
 
     @Test
-    func accessibilityInspectionIgnoresChildElementsWhenDrawingWindowFramesOnly() throws {
+    func accessibilityInspectionFiltersLargeTextAreasButKeepsUsableInputs() throws {
         let screen = DebugUIScreenMetadata(
             screenID: 1,
             appKitFrame: HotLoopRect(x: 0, y: 0, width: 1000, height: 800, space: .screen),
@@ -496,7 +759,9 @@ struct DebugUIInspectionTests {
         let results = try service.inspect(scope: .main, minConfidence: 0.25)
 
         #expect(capturer.capturedWindowIDs == [1])
-        #expect(results.first?.frame.elements.map(\.id) == ["window-1"])
+        #expect(results.first?.frame.elements.map(\.id) == ["window-1", "ax-1-ax-1.2"])
+        #expect(results.first?.frame.elements.last?.type == .input)
+        #expect(results.first?.frame.elements.last?.label == "Search")
         #expect(results.first?.frame.elements.first?.bbox == DebugUIBoundingBox(
             x: 0,
             y: 0,
@@ -506,7 +771,7 @@ struct DebugUIInspectionTests {
     }
 
     @Test
-    func accessibilityInspectionDrawsMusicWindowFrameOnly() throws {
+    func accessibilityInspectionDrawsMusicWindowAndClickableCardTile() throws {
         let screen = DebugUIScreenMetadata(
             screenID: 1,
             appKitFrame: HotLoopRect(x: 0, y: 0, width: 1800, height: 1400, space: .screen),
@@ -552,16 +817,25 @@ struct DebugUIInspectionTests {
 
         let results = try service.inspect(scope: .main, minConfidence: 0.25)
 
+        #expect(results.first?.frame.elements.map(\.id) == ["window-1", "ax-1-ax-1.1"])
         #expect(results.first?.frame.elements.first?.bbox == DebugUIBoundingBox(
             x: 50,
             y: 253,
             width: 1530,
             height: 930
         ))
+        #expect(results.first?.frame.elements.last?.type == .button)
+        #expect(results.first?.frame.elements.last?.label == "K-Pop Hits")
+        #expect(results.first?.frame.elements.last?.bbox == DebugUIBoundingBox(
+            x: 436,
+            y: 370,
+            width: 160,
+            height: 240
+        ))
     }
 
     @Test
-    func accessibilityInspectionDrawsMovedMusicWindowFrameOnly() throws {
+    func accessibilityInspectionDrawsMovedMusicWindowAndClickableCardTile() throws {
         let screen = DebugUIScreenMetadata(
             screenID: 1,
             appKitFrame: HotLoopRect(x: 0, y: 0, width: 1800, height: 1400, space: .screen),
@@ -607,12 +881,84 @@ struct DebugUIInspectionTests {
 
         let results = try service.inspect(scope: .main, minConfidence: 0.25)
 
+        #expect(results.first?.frame.elements.map(\.id) == ["ax-1-ax-1.1", "window-1"])
+        #expect(results.first?.frame.elements.first?.type == .button)
+        #expect(results.first?.frame.elements.first?.label == "K-Pop Hits")
         #expect(results.first?.frame.elements.first?.bbox == DebugUIBoundingBox(
+            x: 436,
+            y: 370,
+            width: 160,
+            height: 240
+        ))
+        #expect(results.first?.frame.elements.last?.bbox == DebugUIBoundingBox(
             x: 80,
             y: 400,
             width: 1530,
             height: 930
         ))
+    }
+
+    @Test
+    func accessibilityInspectionDrawsWholeSidebarRowsFromDescendantText() throws {
+        let screen = DebugUIScreenMetadata(
+            screenID: 1,
+            appKitFrame: HotLoopRect(x: 0, y: 0, width: 800, height: 700, space: .screen),
+            captureFrame: WindowTargetBounds(x: 0, y: 0, width: 800, height: 700)
+        )
+        let capturer = DebugUIFakeAccessibilityCapturer(
+            tree: MacAccessibilitySnapshotTreeBuilder.build(
+                root: RawMacAccessibilitySnapshotNode(
+                    role: "AXWindow",
+                    title: "Notes",
+                    frame: WindowTargetBounds(x: 0, y: 0, width: 800, height: 700),
+                    children: [
+                        RawMacAccessibilitySnapshotNode(
+                            role: "AXRow",
+                            frame: WindowTargetBounds(x: 10, y: 240, width: 190, height: 52),
+                            isEnabled: true,
+                            actions: ["AXPress"],
+                            children: [
+                                RawMacAccessibilitySnapshotNode(
+                                    role: "AXStaticText",
+                                    valueSummary: "Improve UI element detection",
+                                    frame: WindowTargetBounds(x: 32, y: 252, width: 140, height: 18)
+                                ),
+                                RawMacAccessibilitySnapshotNode(
+                                    role: "AXStaticText",
+                                    valueSummary: "10:07 AM",
+                                    frame: WindowTargetBounds(x: 32, y: 272, width: 70, height: 16)
+                                )
+                            ]
+                        )
+                    ]
+                ),
+                limits: MacAccessibilitySnapshotLimits(maxDepth: 6)
+            )
+        )
+        let service = DebugUIAccessibilityInspectionService(
+            windowResolver: MacWindowResolver(
+                provider: DebugUIFixtureWindowProvider(
+                    windows: [
+                        MacWindowProviderWindow(
+                            windowID: 7,
+                            processID: 100,
+                            appName: "Notes",
+                            bounds: WindowTargetBounds(x: 0, y: 0, width: 800, height: 700)
+                        )
+                    ],
+                    frontmostProcessID: 100
+                )
+            ),
+            capturer: capturer,
+            screenProvider: DebugUIFixtureScreenProvider(screens: [screen]),
+            currentProcessID: 999
+        )
+
+        let results = try service.inspect(scope: .main, minConfidence: 0.25)
+        let row = try #require(results.first?.frame.elements.first { $0.type == .listItem })
+
+        #expect(row.label == "Improve UI element detection 10:07 AM")
+        #expect(row.bbox == DebugUIBoundingBox(x: 10, y: 240, width: 190, height: 52))
     }
 
     private func element(
@@ -679,6 +1025,21 @@ private struct DebugUIFixtureScreenProvider: DebugUIScreenMetadataProviding {
             return screens.prefix(1).map { $0 }
         case .all:
             return screens
+        }
+    }
+}
+
+private struct DebugUIFixtureScreenCapturer: DebugUIScreenCapturing {
+    var snapshots: [DebugUIScreenCaptureSnapshot]
+
+    func captureScreens(
+        scope: DebugUIInspectionScreenScope
+    ) throws -> [DebugUIScreenCaptureSnapshot] {
+        switch scope {
+        case .main:
+            return snapshots.prefix(1).map { $0 }
+        case .all:
+            return snapshots
         }
     }
 }

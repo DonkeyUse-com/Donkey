@@ -8,7 +8,9 @@ public enum LocalAppControlKind: String, Codable, Equatable, Sendable {
     case textField
     case searchField
     case checkbox
+    case link
     case menuItem
+    case listItem
     case group
     case unknown
 }
@@ -135,20 +137,22 @@ public struct LocalAppAccessibilityControlDiscovery: Sendable {
         }
 
         let kind = controlKind(for: node)
-        if kind != .unknown, let label {
+        let controlLabel = labelForControl(node, kind: kind)
+        if kind != .unknown, let controlLabel {
             controls.append(
                 LocalAppDiscoveredControl(
                     id: node.nodeID,
                     kind: kind,
                     role: node.role,
-                    label: label,
+                    label: controlLabel,
                     valueSummary: node.valueSummary,
                     frame: node.frame,
                     isEnabled: node.isEnabled ?? true,
                     actions: node.actions,
                     metadata: [
                         "accessibility.nodeID": node.nodeID,
-                        "controlID": inferredControlID(label: label, kind: kind)
+                        "controlKind": kind.rawValue,
+                        "controlID": inferredControlID(label: controlLabel, kind: kind)
                     ]
                 )
             )
@@ -160,16 +164,60 @@ public struct LocalAppAccessibilityControlDiscovery: Sendable {
     }
 
     private func bestLabel(for node: MacAccessibilitySnapshotNode) -> String? {
-        [node.label, node.title, node.valueSummary, node.role]
+        [node.label, node.title, node.valueSummary]
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first { !$0.isEmpty }
+    }
+
+    private func labelForControl(
+        _ node: MacAccessibilitySnapshotNode,
+        kind: LocalAppControlKind
+    ) -> String? {
+        if let label = bestLabel(for: node) {
+            return label
+        }
+        if kind == .listItem {
+            return descendantText(for: node) ?? "list item"
+        }
+        return nil
+    }
+
+    private func descendantText(for node: MacAccessibilitySnapshotNode) -> String? {
+        var labels: [String] = []
+        collectDescendantLabels(node, labels: &labels)
+        let joined = labels
+            .prefix(6)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return joined.isEmpty ? nil : joined
+    }
+
+    private func collectDescendantLabels(
+        _ node: MacAccessibilitySnapshotNode,
+        labels: inout [String]
+    ) {
+        for child in node.children {
+            if let label = bestLabel(for: child) {
+                labels.append(label)
+            }
+            collectDescendantLabels(child, labels: &labels)
+        }
     }
 
     private func controlKind(for node: MacAccessibilitySnapshotNode) -> LocalAppControlKind {
         let role = node.role ?? ""
         if role == "AXButton" { return .button }
+        if role == "AXMenuButton" { return .button }
         if role == "AXCheckBox" { return .checkbox }
+        if role == "AXRadioButton" { return .checkbox }
+        if role == "AXLink" { return .link }
         if role == "AXMenuItem" { return .menuItem }
+        if role == "AXRow" || role == "AXOutlineRow" { return .listItem }
+        if role == "AXCell",
+           node.frame?.hasPositiveArea == true,
+           descendantText(for: node) != nil {
+            return .listItem
+        }
         if role == "AXSearchField" { return .searchField }
         if role == "AXTextField" || role == "AXTextArea" || role == "AXComboBox" {
             return .textField
@@ -256,7 +304,7 @@ public struct LocalAppAccessibilityActionPlanner: Sendable {
                 guard let controlID = step.metadata["controlID"],
                       let control = index.firstControl(
                         matching: controlID,
-                        acceptedKinds: [.button, .menuItem, .checkbox]
+                        acceptedKinds: [.button, .link, .menuItem, .listItem, .checkbox]
                       )
                 else {
                     return nil

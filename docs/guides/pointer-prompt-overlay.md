@@ -32,14 +32,22 @@ quick local-app actions:
   `~/Library/Application Support/Donkey/dev-overlay.json`. Production builds do
   not bundle the repo config and only honor the Application Support path. When
   no config exists, the config is invalid, or `"enabled": false`, the debug
-  overlay is fully disabled. When enabled, it captures screenshots, asks the
-  hosted read-only inspection route for strict JSON element metadata, and draws
-  click-through boxes beneath Donkey's own prompt/status/spawn UI.
+  overlay is fully disabled. When enabled with `"provider": "accessibility"`,
+  it uses the local UI element detection service: invisible Accessibility reads
+  are merged with native screenshot OCR, shape/layout, color/icon, and optional
+  hover-probe evidence, then drawn as click-through boxes with source badges
+  beneath Donkey's own prompt/status/spawn UI. The local Accessibility provider
+  only inspects safe visible windows on the selected screen. Optional target
+  filters such as `"targetBundleIdentifiers"` and `"targetAppNames"` can narrow
+  the overlay to matching apps, and `"activeWindowOnly": true` can suppress
+  rendering unless the matching app owns the focused frontmost window. Hosted
+  `openai` and `gemini` providers still use the read-only inspection route and
+  strict JSON element metadata.
 
 ```json
 {
   "enabled": true,
-  "provider": "openai",
+  "provider": "accessibility",
   "cadenceSeconds": 1.0,
   "screenScope": "main",
   "minConfidence": 0.25
@@ -69,9 +77,11 @@ quick local-app actions:
 - The developer UI inspection overlay is separate from agent visualization. It
   is a transparent, non-activating, click-through, keyboard-pass-through AppKit
   panel at a lower window level than Donkey's interactive UI. It renders
-  CALayer rectangles and labels from model-returned JSON only; provider action
-  calls such as click, type, scroll, drag, navigation, `computer_call`, or
-  `function_call` are rejected instead of executed.
+  CALayer rectangles and labels from local detector output or model-returned
+  JSON only; provider action calls such as click, type, scroll, drag,
+  navigation, `computer_call`, or `function_call` are rejected instead of
+  executed. CV-only and hover-only detections are visualization/read-only
+  evidence and must not become live input authority.
 - Task actions in the notch, including follow-up submission and pause/resume, must cross the model/controller command boundary with the selected task ID.
 - Pointer prompt command handling should emit actionable `com.donkey.app` route/result logs for submitted commands, routing decisions, intent resolution, local action traces, unsupported requests, unavailable apps, and final task status. Action trace logs should state the backend, input mode, whether an element click happened, the control or bounds target, and that the overlay pointer is visual-only.
 

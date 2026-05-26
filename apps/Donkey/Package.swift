@@ -82,6 +82,9 @@ let package = Package(
                 "DonkeyRuntime",
                 "DonkeyUI"
             ],
+            resources: [
+                .copy("Fixtures")
+            ],
             swiftSettings: [
                 .unsafeFlags([
                     "-F",

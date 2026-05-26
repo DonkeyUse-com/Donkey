@@ -304,8 +304,14 @@ bug, even if the script happens to work on one machine.
 
 Observation prefers Accessibility and app/window metadata. Bounded screenshots
 are fallback observation context only; they do not emit direct input actions.
-Captured screenshots, Accessibility snapshots, and manual capture artifacts are
-trace evidence, not a general live vision loop.
+The local UI element detection service keeps this boundary explicit: it merges
+invisible Accessibility candidates with native screenshot signals such as OCR,
+shape/layout grouping, color/icon hints, and optional hover-probe evidence, then
+marks each element as overlay-only, read-only evidence, cursor-visualization
+evidence, or guarded-action eligible. CV-only and hover-only elements can guide
+debug overlays or visualization, but they do not authorize live clicks or text
+entry. Captured screenshots, Accessibility snapshots, and manual capture
+artifacts are trace evidence, not a general live vision loop.
 Verification and screenshot fallback behavior should be derived from task
 metadata and runtime item metadata, not one-off branches for individual apps.
 
@@ -330,11 +336,15 @@ tool-output feedback.
 The developer UI inspection overlay is not an action workflow. It is enabled by
 the repo-tracked `apps/Donkey/dev-overlay.json` during debug runs or by a local
 `dev-overlay.json` file under Donkey's Application Support directory. Production
-builds do not bundle the repo config. The overlay sends screenshots to the
-hosted read-only inspection route only while a config explicitly enables it, and
-accepts strict JSON element metadata only. If a provider returns a
-computer/function action for this route, the client rejects the frame and
-performs no interaction.
+builds do not bundle the repo config. The `accessibility` provider runs the
+local AX-primary UI element detection service and renders merged source badges.
+The local provider only inspects safe visible windows on the selected screen;
+optional target filters can narrow it to matching apps, and
+`"activeWindowOnly": true` can keep it blank unless a matching app owns the
+focused frontmost window. Hosted providers send screenshots to the read-only
+inspection route only while a config explicitly enables them, and accept strict
+JSON element metadata only. If a provider returns a computer/function action for
+this route, the client rejects the frame and performs no interaction.
 
 ## State And Observability
 

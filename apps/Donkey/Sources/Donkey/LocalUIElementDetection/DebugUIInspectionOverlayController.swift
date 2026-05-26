@@ -108,7 +108,7 @@ private final class DebugUIInspectionSurface {
         }
 
         CATransaction.begin()
-        CATransaction.setAnimationDuration(0.18)
+        CATransaction.setDisableActions(true)
         for element in frame.elements {
             let layers = elementLayers[element.id] ?? makeLayers(for: element)
             elementLayers[element.id] = layers
@@ -186,10 +186,38 @@ private final class DebugUIInspectionSurface {
 
     private func labelText(for element: DebugUIElement) -> String {
         let label = element.label.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !label.isEmpty {
-            return label
+        let baseLabel: String
+        if label.isEmpty {
+            baseLabel = element.type.rawValue.replacingOccurrences(of: "_", with: " ")
+        } else {
+            baseLabel = label
         }
-        return element.type.rawValue.replacingOccurrences(of: "_", with: " ")
+
+        guard let sources = element.metadata["localUIElement.sources"],
+              !sources.isEmpty
+        else {
+            return baseLabel
+        }
+        let badge = sources
+            .split(separator: ",")
+            .map { sourceBadge(for: String($0)) }
+            .joined(separator: "+")
+        return "[\(badge)] \(baseLabel)"
+    }
+
+    private func sourceBadge(for source: String) -> String {
+        switch source {
+        case "accessibility": return "AX"
+        case "connectedComponent": return "CC"
+        case "hoverProbe": return "HOVER"
+        case "template": return "TPL"
+        case "shape": return "SHAPE"
+        case "color": return "COLOR"
+        case "layout": return "LAYOUT"
+        case "ocr": return "OCR"
+        default:
+            return source.uppercased()
+        }
     }
 
     private func labelFrameSize(for text: String, boxFrame: CGRect) -> CGSize {

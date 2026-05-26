@@ -112,6 +112,7 @@ public struct DebugUIElement: Codable, Equatable, Sendable, Identifiable {
     public var bbox: DebugUIBoundingBox
     public var confidence: Double
     public var visualStyle: DebugUIOverlayStyle
+    public var metadata: [String: String]
 
     public init(
         id: String,
@@ -120,7 +121,8 @@ public struct DebugUIElement: Codable, Equatable, Sendable, Identifiable {
         description: String = "",
         bbox: DebugUIBoundingBox,
         confidence: Double,
-        visualStyle: DebugUIOverlayStyle? = nil
+        visualStyle: DebugUIOverlayStyle? = nil,
+        metadata: [String: String] = [:]
     ) {
         self.id = id
         self.type = type
@@ -129,6 +131,7 @@ public struct DebugUIElement: Codable, Equatable, Sendable, Identifiable {
         self.bbox = bbox
         self.confidence = min(max(confidence, 0), 1)
         self.visualStyle = visualStyle ?? DebugUIOverlayStyle.style(for: type)
+        self.metadata = metadata
     }
 
     public enum CodingKeys: String, CodingKey {
@@ -139,6 +142,7 @@ public struct DebugUIElement: Codable, Equatable, Sendable, Identifiable {
         case bbox
         case confidence
         case visualStyle = "visual_style"
+        case metadata
     }
 
     public init(from decoder: Decoder) throws {
@@ -151,7 +155,8 @@ public struct DebugUIElement: Codable, Equatable, Sendable, Identifiable {
             description: try container.decodeIfPresent(String.self, forKey: .description) ?? "",
             bbox: try container.decode(DebugUIBoundingBox.self, forKey: .bbox),
             confidence: try container.decodeIfPresent(Double.self, forKey: .confidence) ?? 0,
-            visualStyle: try container.decodeIfPresent(DebugUIOverlayStyle.self, forKey: .visualStyle)
+            visualStyle: try container.decodeIfPresent(DebugUIOverlayStyle.self, forKey: .visualStyle),
+            metadata: try container.decodeIfPresent([String: String].self, forKey: .metadata) ?? [:]
         )
     }
 
@@ -163,7 +168,8 @@ public struct DebugUIElement: Codable, Equatable, Sendable, Identifiable {
             description: description,
             bbox: bbox,
             confidence: confidence,
-            visualStyle: visualStyle
+            visualStyle: visualStyle,
+            metadata: metadata
         )
     }
 }

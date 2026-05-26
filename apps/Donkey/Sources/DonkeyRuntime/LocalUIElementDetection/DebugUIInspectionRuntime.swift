@@ -12,19 +12,28 @@ public struct DebugUIOverlayConfiguration: Equatable, Sendable {
     public var cadenceSeconds: TimeInterval
     public var screenScope: DebugUIInspectionScreenScope
     public var minConfidence: Double
+    public var activeWindowOnly: Bool
+    public var targetBundleIdentifiers: [String]
+    public var targetAppNames: [String]
 
     public init(
         enabled: Bool = false,
         provider: DebugUIInspectionProvider = .accessibility,
         cadenceSeconds: TimeInterval = 1.0,
         screenScope: DebugUIInspectionScreenScope = .main,
-        minConfidence: Double = 0.25
+        minConfidence: Double = 0.25,
+        activeWindowOnly: Bool = false,
+        targetBundleIdentifiers: [String] = [],
+        targetAppNames: [String] = []
     ) {
         self.enabled = enabled
         self.provider = provider
         self.cadenceSeconds = min(max(cadenceSeconds, 0.25), 10.0)
         self.screenScope = screenScope
         self.minConfidence = min(max(minConfidence, 0), 1)
+        self.activeWindowOnly = activeWindowOnly
+        self.targetBundleIdentifiers = Self.normalizedList(targetBundleIdentifiers)
+        self.targetAppNames = Self.normalizedList(targetAppNames)
     }
 
     public static let disabled = DebugUIOverlayConfiguration(enabled: false)
@@ -71,8 +80,22 @@ public struct DebugUIOverlayConfiguration: Equatable, Sendable {
             provider: raw.provider.flatMap(DebugUIInspectionProvider.init(rawValue:)) ?? .accessibility,
             cadenceSeconds: raw.cadenceSeconds ?? 1.0,
             screenScope: raw.screenScope.flatMap(DebugUIInspectionScreenScope.init(rawValue:)) ?? .main,
-            minConfidence: raw.minConfidence ?? 0.25
+            minConfidence: raw.minConfidence ?? 0.25,
+            activeWindowOnly: raw.activeWindowOnly ?? false,
+            targetBundleIdentifiers: raw.targetBundleIdentifiers ?? [],
+            targetAppNames: raw.targetAppNames ?? []
         )
+    }
+
+    private static func normalizedList(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values.compactMap { value in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let key = trimmed.lowercased()
+            guard seen.insert(key).inserted else { return nil }
+            return trimmed
+        }
     }
 
     public static func candidateConfigURLs(
@@ -133,6 +156,9 @@ private struct RawDebugUIOverlayConfiguration: Codable {
     var cadenceSeconds: TimeInterval?
     var screenScope: String?
     var minConfidence: Double?
+    var activeWindowOnly: Bool?
+    var targetBundleIdentifiers: [String]?
+    var targetAppNames: [String]?
 }
 
 public struct DebugUIElementTracker: Equatable, Sendable {
@@ -145,9 +171,9 @@ public struct DebugUIElementTracker: Equatable, Sendable {
     public mutating func update(with frame: DebugUIInspectionFrame) -> DebugUIInspectionFrame {
         var usedPreviousIDs = Set<String>()
         let tracked = frame.elements.map { incoming -> DebugUIElement in
-            if previousElements.contains(where: { $0.id == incoming.id }) {
+            if let previous = previousElements.first(where: { $0.id == incoming.id }) {
                 usedPreviousIDs.insert(incoming.id)
-                return incoming
+                return stableElement(incoming, matchedTo: previous)
             }
 
             guard let match = bestSemanticMatch(
@@ -158,11 +184,43 @@ public struct DebugUIElementTracker: Equatable, Sendable {
             }
 
             usedPreviousIDs.insert(match.id)
-            return incoming.replacingID(match.id)
+            return stableElement(incoming.replacingID(match.id), matchedTo: match)
         }
 
         previousElements = tracked
         return DebugUIInspectionFrame(elements: tracked)
+    }
+
+    private func stableElement(
+        _ incoming: DebugUIElement,
+        matchedTo previous: DebugUIElement
+    ) -> DebugUIElement {
+        guard shouldReusePreviousBounds(incoming.bbox, previous.bbox) else {
+            return incoming
+        }
+        return DebugUIElement(
+            id: incoming.id,
+            type: incoming.type,
+            label: incoming.label,
+            description: incoming.description,
+            bbox: previous.bbox,
+            confidence: incoming.confidence,
+            visualStyle: incoming.visualStyle,
+            metadata: incoming.metadata
+        )
+    }
+
+    private func shouldReusePreviousBounds(
+        _ incoming: DebugUIBoundingBox,
+        _ previous: DebugUIBoundingBox
+    ) -> Bool {
+        let maximumDelta = max(
+            abs(incoming.x - previous.x),
+            abs(incoming.y - previous.y),
+            abs(incoming.width - previous.width),
+            abs(incoming.height - previous.height)
+        )
+        return maximumDelta <= 2.0 && matchScore(previous, incoming) >= 0.82
     }
 
     private func bestSemanticMatch(
@@ -306,13 +364,16 @@ public struct DebugUIScreenCaptureService: Sendable {
         switch scope {
         case .main:
             guard let screen = NSScreen.main ?? NSScreen.screens.first else {
-                throw DebugUIScreenCaptureError.noScreenAvailable
+                return try Self.fallbackDisplayIDs(scope: scope).map(capture)
             }
             screens = [screen]
         case .all:
             screens = NSScreen.screens
         }
 
+        if screens.isEmpty {
+            return try Self.fallbackDisplayIDs(scope: scope).map(capture)
+        }
         return try screens.map(capture)
     }
 
@@ -356,12 +417,64 @@ public struct DebugUIScreenCaptureService: Sendable {
         )
     }
 
+    private func capture(displayID: CGDirectDisplayID) throws -> DebugUIScreenCaptureSnapshot {
+        guard let image = CGDisplayCreateImage(displayID) else {
+            throw DebugUIScreenCaptureError.captureFailed(displayID: displayID)
+        }
+        let inspectionImage = Self.inspectionImage(from: image)
+        guard !Self.isLikelyBlank(inspectionImage) else {
+            throw DebugUIScreenCaptureError.blankCapture(displayID: displayID)
+        }
+        guard let pngData = Self.pngData(from: inspectionImage) else {
+            throw DebugUIScreenCaptureError.pngEncodingFailed(displayID: displayID)
+        }
+
+        let bounds = CGDisplayBounds(displayID)
+        return DebugUIScreenCaptureSnapshot(
+            screenID: displayID,
+            screenFrame: HotLoopRect(
+                x: bounds.origin.x,
+                y: bounds.origin.y,
+                width: bounds.width,
+                height: bounds.height,
+                space: .screen
+            ),
+            pixelSize: HotLoopSize(
+                width: Double(inspectionImage.width),
+                height: Double(inspectionImage.height),
+                space: .screen
+            ),
+            pngData: pngData,
+            fingerprint: Self.fingerprint(for: pngData)
+        )
+    }
+
     private static func displayID(for screen: NSScreen) throws -> UInt32 {
         let key = NSDeviceDescriptionKey("NSScreenNumber")
         guard let value = screen.deviceDescription[key] as? NSNumber else {
             throw DebugUIScreenCaptureError.missingDisplayIdentifier
         }
         return value.uint32Value
+    }
+
+    private static func fallbackDisplayIDs(scope: DebugUIInspectionScreenScope) throws -> [CGDirectDisplayID] {
+        switch scope {
+        case .main:
+            let displayID = CGMainDisplayID()
+            guard displayID != 0 else {
+                throw DebugUIScreenCaptureError.noScreenAvailable
+            }
+            return [displayID]
+        case .all:
+            var count: UInt32 = 0
+            CGGetActiveDisplayList(0, nil, &count)
+            guard count > 0 else {
+                throw DebugUIScreenCaptureError.noScreenAvailable
+            }
+            var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+            CGGetActiveDisplayList(count, &displays, &count)
+            return Array(displays.prefix(Int(count))).filter { $0 != 0 }
+        }
     }
 
     private static func pngData(from image: CGImage) -> Data? {
@@ -459,3 +572,11 @@ public struct DebugUIScreenCaptureService: Sendable {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }
+
+protocol DebugUIScreenCapturing: Sendable {
+    func captureScreens(
+        scope: DebugUIInspectionScreenScope
+    ) throws -> [DebugUIScreenCaptureSnapshot]
+}
+
+extension DebugUIScreenCaptureService: DebugUIScreenCapturing {}

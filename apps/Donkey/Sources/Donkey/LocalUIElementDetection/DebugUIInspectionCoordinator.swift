@@ -89,11 +89,14 @@ final class DebugUIInspectionCoordinator {
         let scopeChanged = newConfig.screenScope != currentConfig.screenScope
         let providerChanged = newConfig.provider != currentConfig.provider
         let confidenceChanged = newConfig.minConfidence != currentConfig.minConfidence
+        let activeWindowChanged = newConfig.activeWindowOnly != currentConfig.activeWindowOnly
+        let targetFilterChanged = newConfig.targetBundleIdentifiers != currentConfig.targetBundleIdentifiers
+            || newConfig.targetAppNames != currentConfig.targetAppNames
         currentConfig = newConfig
 
-        if force || enablementChanged || scopeChanged || providerChanged || confidenceChanged {
+        if force || enablementChanged || scopeChanged || providerChanged || confidenceChanged || activeWindowChanged || targetFilterChanged {
             DebugUIInspectionLog.overlay.info(
-                "debug inspection config enabled=\(String(newConfig.enabled), privacy: .public) provider=\(newConfig.provider.rawValue, privacy: .public) cadence=\(newConfig.cadenceSeconds, privacy: .public) scope=\(newConfig.screenScope.rawValue, privacy: .public) minConfidence=\(newConfig.minConfidence, privacy: .public)"
+                "debug inspection config enabled=\(String(newConfig.enabled), privacy: .public) provider=\(newConfig.provider.rawValue, privacy: .public) cadence=\(newConfig.cadenceSeconds, privacy: .public) scope=\(newConfig.screenScope.rawValue, privacy: .public) minConfidence=\(newConfig.minConfidence, privacy: .public) activeWindowOnly=\(String(newConfig.activeWindowOnly), privacy: .public) targetBundles=\(newConfig.targetBundleIdentifiers.joined(separator: ","), privacy: .public) targetApps=\(newConfig.targetAppNames.joined(separator: ","), privacy: .public)"
             )
         }
 
@@ -108,7 +111,7 @@ final class DebugUIInspectionCoordinator {
             RunLoop.main.add(newTimer, forMode: .common)
         }
 
-        if enablementChanged || scopeChanged || providerChanged || confidenceChanged {
+        if enablementChanged || scopeChanged || providerChanged || confidenceChanged || activeWindowChanged || targetFilterChanged {
             lastFingerprints.removeAll()
             trackers.removeAll()
             lastRenderedFrames.removeAll()
@@ -197,7 +200,11 @@ final class DebugUIInspectionCoordinator {
     private func analyzeAccessibilityScreens(force: Bool) throws {
         let results = try accessibilityInspectionService.inspect(
             scope: currentConfig.screenScope,
-            minConfidence: currentConfig.minConfidence
+            minConfidence: currentConfig.minConfidence,
+            frontmostOnly: currentConfig.activeWindowOnly,
+            focusedOnly: currentConfig.activeWindowOnly,
+            targetBundleIdentifiers: currentConfig.targetBundleIdentifiers,
+            targetAppNames: currentConfig.targetAppNames
         )
         DebugUIInspectionLog.overlay.debug(
             "debug inspection accessibility screens=\(results.count, privacy: .public) force=\(String(force), privacy: .public)"
@@ -206,6 +213,7 @@ final class DebugUIInspectionCoordinator {
         let activeScreenIDs = Set(results.map(\.snapshot.screenID))
         overlayController.closeScreens(except: activeScreenIDs)
         lastRenderedFrames = lastRenderedFrames.filter { activeScreenIDs.contains($0.key) }
+        lastFingerprints = lastFingerprints.filter { activeScreenIDs.contains($0.key) }
 
         for result in results {
             let snapshot = result.snapshot

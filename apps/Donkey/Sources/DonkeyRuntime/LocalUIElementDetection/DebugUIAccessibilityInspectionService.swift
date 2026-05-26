@@ -38,13 +38,19 @@ public struct DebugUIAccessibilityInspectionService: Sendable {
     private let capturer: any MacAccessibilitySnapshotCapturing
     private let controlDiscovery: LocalAppAccessibilityControlDiscovery
     private let screenProvider: any DebugUIScreenMetadataProviding
+    private let screenCapturer: any DebugUIScreenCapturing
+    private let elementDetectionService: LocalUIElementDetectionService
     private let currentProcessID: Int32
 
     public init() {
         self.init(
             windowResolver: MacWindowResolver(),
-            capturer: ApplicationServicesMacAccessibilitySnapshotCapturer(),
+            capturer: ApplicationServicesMacAccessibilitySnapshotCapturer(
+                maximumTraversalNanoseconds: 700_000_000
+            ),
             screenProvider: AppKitDebugUIScreenMetadataProvider(),
+            screenCapturer: DebugUIScreenCaptureService(),
+            elementDetectionService: LocalUIElementDetectionService(),
             currentProcessID: ProcessInfo.processInfo.processIdentifier
         )
     }
@@ -54,33 +60,277 @@ public struct DebugUIAccessibilityInspectionService: Sendable {
         capturer: any MacAccessibilitySnapshotCapturing,
         controlDiscovery: LocalAppAccessibilityControlDiscovery = LocalAppAccessibilityControlDiscovery(),
         screenProvider: any DebugUIScreenMetadataProviding,
+        screenCapturer: any DebugUIScreenCapturing = EmptyDebugUIScreenCapturer(),
+        elementDetectionService: LocalUIElementDetectionService = LocalUIElementDetectionService(),
         currentProcessID: Int32
     ) {
         self.windowResolver = windowResolver
         self.capturer = capturer
         self.controlDiscovery = controlDiscovery
         self.screenProvider = screenProvider
+        self.screenCapturer = screenCapturer
+        self.elementDetectionService = elementDetectionService
         self.currentProcessID = currentProcessID
     }
 
     public func inspect(
         scope: DebugUIInspectionScreenScope,
-        minConfidence: Double
+        minConfidence: Double,
+        frontmostOnly: Bool = false,
+        focusedOnly: Bool = false,
+        targetBundleIdentifiers: [String] = [],
+        targetAppNames: [String] = []
     ) throws -> [DebugUIAccessibilityInspectionResult] {
         let screens = try screenProvider.screens(scope: scope)
         guard !screens.isEmpty else {
             throw DebugUIAccessibilityInspectionError.noScreenAvailable
         }
 
-        let targets = visibleInspectableTargets(on: screens)
+        let targets = visibleInspectableTargets(
+            on: screens,
+            frontmostOnly: frontmostOnly,
+            focusedOnly: focusedOnly,
+            targetBundleIdentifiers: targetBundleIdentifiers,
+            targetAppNames: targetAppNames
+        )
         guard capturer.trustStatus() == .trusted else {
             throw DebugUIAccessibilityInspectionError.accessibilityNotTrusted
         }
-        return windowFrameResults(
+        guard !targets.isEmpty else {
+            return []
+        }
+
+        return localElementDetectionResults(
             screens: screens,
             targets: targets,
             minConfidence: minConfidence
         )
+    }
+
+    private func localElementDetectionResults(
+        screens: [DebugUIScreenMetadata],
+        targets: [MacWindowTargetCandidate],
+        minConfidence: Double
+    ) -> [DebugUIAccessibilityInspectionResult] {
+        let screenshotsByScreenID = (try? screenCapturer.captureScreens(scope: screens.count > 1 ? .all : .main))
+            .map { Dictionary(uniqueKeysWithValues: $0.map { ($0.screenID, $0) }) } ?? [:]
+        let candidatesByScreenID = accessibilityCandidatesByScreen(
+            screens: screens,
+            targets: targets
+        )
+
+        return screens.map { screen in
+            let fallbackSnapshot = DebugUIScreenCaptureSnapshot(
+                screenID: screen.screenID,
+                screenFrame: screen.appKitFrame,
+                pixelSize: HotLoopSize(
+                    width: screen.captureFrame.width,
+                    height: screen.captureFrame.height,
+                    space: .screen
+                ),
+                pngData: Data(),
+                fingerprint: Self.fingerprint(
+                    for: screen,
+                    elements: []
+                )
+            )
+            let snapshot = screenshotsByScreenID[screen.screenID] ?? fallbackSnapshot
+            let accessibilityCandidates = Self.scaleCandidates(
+                candidatesByScreenID[screen.screenID] ?? [],
+                from: screen.captureFrame,
+                to: snapshot.pixelSize
+            )
+            let targetWindowBounds = Self.targetWindowBounds(in: accessibilityCandidates)
+            let trace = elementDetectionService.detect(
+                LocalUIElementDetectionRequest(
+                    traceID: "debug-ui-local-\(screen.screenID)-\(snapshot.fingerprint)",
+                    screenshotPNGData: snapshot.pngData.isEmpty ? nil : snapshot.pngData,
+                    pixelSize: snapshot.pixelSize,
+                    accessibilityCandidates: accessibilityCandidates,
+                    minConfidence: minConfidence,
+                    metadata: [
+                        "screen.id": String(screen.screenID),
+                        "screen.scope": screens.count > 1 ? "all" : "main",
+                        "provider": DebugUIInspectionProvider.accessibility.rawValue
+                    ]
+                )
+            )
+            let frame = elementDetectionService.debugInspectionFrame(
+                from: trace.clippedToTargetWindows(targetWindowBounds)
+            )
+                .validated(minConfidence: minConfidence)
+            let fingerprint = Self.fingerprint(for: screen, elements: frame.elements)
+            let outputSnapshot = DebugUIScreenCaptureSnapshot(
+                screenID: snapshot.screenID,
+                screenFrame: snapshot.screenFrame,
+                pixelSize: snapshot.pixelSize,
+                pngData: snapshot.pngData,
+                fingerprint: "\(snapshot.fingerprint)-\(fingerprint)"
+            )
+            return DebugUIAccessibilityInspectionResult(snapshot: outputSnapshot, frame: frame)
+        }
+    }
+
+    private func accessibilityCandidatesByScreen(
+        screens: [DebugUIScreenMetadata],
+        targets: [MacWindowTargetCandidate]
+    ) -> [UInt32: [LocalUIElementCandidate]] {
+        var candidatesByScreenID = Dictionary(
+            uniqueKeysWithValues: screens.map { ($0.screenID, [LocalUIElementCandidate]()) }
+        )
+        let limits = MacAccessibilitySnapshotLimits(
+            maxDepth: 6,
+            maxChildrenPerNode: 90,
+            maxTotalNodes: 1_200,
+            maxTextLength: 120
+        )
+        var occludingWindowBounds: [WindowTargetBounds] = []
+        var visibleWindowIndex = 0
+
+        for target in targets {
+            guard let tree = try? capturer.captureTree(target: target, limits: limits) else {
+                occludingWindowBounds.append(target.bounds)
+                continue
+            }
+            let snapshot = MacAccessibilitySnapshot(
+                target: target,
+                limits: limits,
+                root: tree.root,
+                totalNodeCount: tree.totalNodeCount,
+                isTreeTruncated: tree.isTreeTruncated
+            )
+            let windowBounds = snapshot.root.frame ?? target.bounds
+            defer { occludingWindowBounds.append(windowBounds) }
+
+            guard Self.isVisible(windowBounds, occludingWindowBounds: occludingWindowBounds) else {
+                continue
+            }
+
+            for screen in screens where Self.intersects(windowBounds, screen.captureFrame) {
+                if let candidate = windowCandidate(
+                    target: target,
+                    windowBounds: windowBounds,
+                    screen: screen,
+                    visibleWindowIndex: visibleWindowIndex
+                ) {
+                    candidatesByScreenID[screen.screenID, default: []].append(candidate)
+                }
+            }
+            visibleWindowIndex += 1
+
+            let controls = controlDiscovery.discover(in: snapshot).controls
+            for control in controls {
+                guard let candidate = accessibilityCandidate(
+                    for: control,
+                    target: target,
+                    windowBounds: windowBounds,
+                    screens: screens,
+                    occludingWindowBounds: occludingWindowBounds
+                ) else {
+                    continue
+                }
+                candidatesByScreenID[candidate.screenID, default: []].append(candidate.candidate)
+            }
+        }
+
+        return candidatesByScreenID
+    }
+
+    private func windowCandidate(
+        target: MacWindowTargetCandidate,
+        windowBounds: WindowTargetBounds,
+        screen: DebugUIScreenMetadata,
+        visibleWindowIndex: Int
+    ) -> LocalUIElementCandidate? {
+        guard let bbox = DebugUIAccessibilityGeometry.boundingBox(
+            for: windowBounds,
+            screenFrame: screen.captureFrame
+        ) else {
+            return nil
+        }
+
+        let label = Self.windowLabel(for: target)
+        return LocalUIElementCandidate(
+            id: "window-\(target.windowID)",
+            source: .accessibility,
+            signalKind: .accessibilityRole,
+            typeHint: .draggable,
+            label: label,
+            role: "AXWindow",
+            bounds: HotLoopRect(
+                x: bbox.x,
+                y: bbox.y,
+                width: bbox.width,
+                height: bbox.height,
+                space: .screen
+            ),
+            confidence: 1,
+            metadata: [
+                "target.windowID": String(target.windowID),
+                "target.appName": target.appName ?? "",
+                "target.title": target.title ?? "",
+                "windowFrameStyle.index": String(visibleWindowIndex),
+                "classification.reason": "accessibilityWindowFrame"
+            ]
+        )
+    }
+
+    private static func targetWindowBounds(
+        in candidates: [LocalUIElementCandidate]
+    ) -> [WindowTargetBounds] {
+        candidates.compactMap { candidate in
+            guard candidate.source == .accessibility,
+                  candidate.typeHint == .draggable
+            else {
+                return nil
+            }
+            return WindowTargetBounds(
+                x: candidate.bounds.origin.x,
+                y: candidate.bounds.origin.y,
+                width: candidate.bounds.size.width,
+                height: candidate.bounds.size.height
+            )
+        }
+    }
+
+    private static func scaleCandidates(
+        _ candidates: [LocalUIElementCandidate],
+        from captureFrame: WindowTargetBounds,
+        to pixelSize: HotLoopSize
+    ) -> [LocalUIElementCandidate] {
+        guard captureFrame.width > 0,
+              captureFrame.height > 0,
+              pixelSize.width > 0,
+              pixelSize.height > 0
+        else {
+            return candidates
+        }
+
+        let scaleX = pixelSize.width / captureFrame.width
+        let scaleY = pixelSize.height / captureFrame.height
+        guard abs(scaleX - 1) > 0.0001 || abs(scaleY - 1) > 0.0001 else {
+            return candidates
+        }
+
+        return candidates.map { candidate in
+            var scaled = candidate
+            scaled.bounds = HotLoopRect(
+                x: candidate.bounds.origin.x * scaleX,
+                y: candidate.bounds.origin.y * scaleY,
+                width: candidate.bounds.size.width * scaleX,
+                height: candidate.bounds.size.height * scaleY,
+                space: pixelSize.space
+            )
+            scaled.metadata = candidate.metadata.merging([
+                "coordinate.scaleX": String(format: "%.6f", scaleX),
+                "coordinate.scaleY": String(format: "%.6f", scaleY),
+                "coordinate.source.width": String(captureFrame.width),
+                "coordinate.source.height": String(captureFrame.height),
+                "coordinate.target.width": String(pixelSize.width),
+                "coordinate.target.height": String(pixelSize.height)
+            ]) { current, _ in current }
+            return scaled
+        }
     }
 
     private func accessibilityElementResults(
@@ -227,12 +477,25 @@ public struct DebugUIAccessibilityInspectionService: Sendable {
     }
 
     private func visibleInspectableTargets(
-        on screens: [DebugUIScreenMetadata]
+        on screens: [DebugUIScreenMetadata],
+        frontmostOnly: Bool = false,
+        focusedOnly: Bool = false,
+        targetBundleIdentifiers: [String] = [],
+        targetAppNames: [String] = []
     ) -> [MacWindowTargetCandidate] {
-        windowResolver.enumerateCandidates()
+        let bundleFilters = Set(targetBundleIdentifiers.map(Self.normalizedTargetFilter))
+        let appNameFilters = Set(targetAppNames.map(Self.normalizedTargetFilter))
+        return windowResolver.enumerateCandidates()
             .filter { target in
                 target.isVisible
                     && target.isOnScreen
+                    && (!frontmostOnly || target.isFrontmost)
+                    && (!focusedOnly || target.isFocused)
+                    && Self.matchesTargetFilter(
+                        target,
+                        bundleFilters: bundleFilters,
+                        appNameFilters: appNameFilters
+                    )
                     && target.safetyAssessment.status == .allowed
                     && !target.isIPhoneMirroring
                     && target.processID != currentProcessID
@@ -240,6 +503,29 @@ public struct DebugUIAccessibilityInspectionService: Sendable {
                         Self.intersects(target.bounds, screen.captureFrame)
                     }
             }
+    }
+
+    private static func matchesTargetFilter(
+        _ target: MacWindowTargetCandidate,
+        bundleFilters: Set<String>,
+        appNameFilters: Set<String>
+    ) -> Bool {
+        guard !bundleFilters.isEmpty || !appNameFilters.isEmpty else {
+            return true
+        }
+        if let bundleIdentifier = target.bundleIdentifier,
+           bundleFilters.contains(normalizedTargetFilter(bundleIdentifier)) {
+            return true
+        }
+        if let appName = target.appName,
+           appNameFilters.contains(normalizedTargetFilter(appName)) {
+            return true
+        }
+        return false
+    }
+
+    private static func normalizedTargetFilter(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     private func debugElement(
@@ -301,13 +587,83 @@ public struct DebugUIAccessibilityInspectionService: Sendable {
             return .input
         case .checkbox:
             return .checkbox
+        case .link:
+            return .link
         case .menuItem:
             return .menuItem
+        case .listItem:
+            return .listItem
         case .group:
             return control.actions.contains("AXPress") ? .button : nil
         case .unknown:
             return nil
         }
+    }
+
+    private func accessibilityCandidate(
+        for control: LocalAppDiscoveredControl,
+        target: MacWindowTargetCandidate,
+        windowBounds: WindowTargetBounds,
+        screens: [DebugUIScreenMetadata],
+        occludingWindowBounds: [WindowTargetBounds]
+    ) -> (screenID: UInt32, candidate: LocalUIElementCandidate)? {
+        guard control.isEnabled,
+              let rawBounds = control.frame,
+              let type = Self.elementType(for: control)
+        else {
+            return nil
+        }
+
+        guard let bounds = DebugUIAccessibilityGeometry.normalizedBounds(
+            for: rawBounds,
+            targetBounds: windowBounds,
+            rootBounds: windowBounds
+        ),
+            let screen = screens.first(where: { Self.intersects(bounds, $0.captureFrame) }),
+              let bbox = DebugUIAccessibilityGeometry.boundingBox(
+                for: bounds,
+                screenFrame: screen.captureFrame
+              )
+        else {
+            return nil
+        }
+
+        guard Self.isVisible(bounds, occludingWindowBounds: occludingWindowBounds),
+              Self.shouldRender(control: control, type: type, bbox: bbox, screen: screen)
+        else {
+            return nil
+        }
+
+        let label = Self.label(for: control, type: type)
+        return (
+            screen.screenID,
+            LocalUIElementCandidate(
+                id: "ax-\(target.windowID)-\(control.id)",
+                source: .accessibility,
+                signalKind: .accessibilityRole,
+                typeHint: type,
+                label: label,
+                role: control.role,
+                bounds: HotLoopRect(
+                    x: bbox.x,
+                    y: bbox.y,
+                    width: bbox.width,
+                    height: bbox.height,
+                    space: .screen
+                ),
+                confidence: 1,
+                actions: control.actions,
+                metadata: [
+                    "target.windowID": String(target.windowID),
+                    "target.appName": target.appName ?? "",
+                    "target.title": target.title ?? "",
+                    "accessibility.nodeID": control.id,
+                    "accessibility.role": control.role ?? "",
+                    "accessibility.actions": control.actions.joined(separator: ","),
+                    "classification.reason": "accessibilityControlDiscovery"
+                ].merging(control.metadata) { current, _ in current }
+            )
+        )
     }
 
     private static func isWindowControl(_ control: LocalAppDiscoveredControl) -> Bool {
@@ -318,8 +674,11 @@ public struct DebugUIAccessibilityInspectionService: Sendable {
     private static func isToolbarControl(_ control: LocalAppDiscoveredControl) -> Bool {
         guard control.kind == .button else { return false }
         let role = control.role ?? ""
-        let label = control.label.trimmingCharacters(in: .whitespacesAndNewlines)
-        return role == "AXButton" && label.count <= 24
+        guard role == "AXButton" else { return false }
+        guard let frame = control.frame else {
+            return control.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return frame.width <= 72 && frame.height <= 56
     }
 
     private static func label(
@@ -630,13 +989,16 @@ private struct AppKitDebugUIScreenMetadataProvider: DebugUIScreenMetadataProvidi
         switch scope {
         case .main:
             guard let screen = NSScreen.main ?? NSScreen.screens.first else {
-                throw DebugUIAccessibilityInspectionError.noScreenAvailable
+                return try Self.fallbackDisplayIDs(scope: scope).map(Self.metadata(for:))
             }
             screens = [screen]
         case .all:
             screens = NSScreen.screens
         }
 
+        if screens.isEmpty {
+            return try Self.fallbackDisplayIDs(scope: scope).map(Self.metadata(for:))
+        }
         return try screens.map(Self.metadata(for:))
     }
 
@@ -669,5 +1031,183 @@ private struct AppKitDebugUIScreenMetadataProvider: DebugUIScreenMetadataProvidi
             throw DebugUIAccessibilityInspectionError.missingDisplayIdentifier
         }
         return value.uint32Value
+    }
+
+    private static func metadata(for displayID: CGDirectDisplayID) -> DebugUIScreenMetadata {
+        let captureFrame = CGDisplayBounds(displayID)
+        let bounds = WindowTargetBounds(
+            x: captureFrame.origin.x,
+            y: captureFrame.origin.y,
+            width: captureFrame.width,
+            height: captureFrame.height
+        )
+        return DebugUIScreenMetadata(
+            screenID: displayID,
+            appKitFrame: HotLoopRect(
+                x: bounds.x,
+                y: bounds.y,
+                width: bounds.width,
+                height: bounds.height,
+                space: .screen
+            ),
+            captureFrame: bounds
+        )
+    }
+
+    private static func fallbackDisplayIDs(scope: DebugUIInspectionScreenScope) throws -> [CGDirectDisplayID] {
+        switch scope {
+        case .main:
+            let displayID = CGMainDisplayID()
+            guard displayID != 0 else {
+                throw DebugUIAccessibilityInspectionError.noScreenAvailable
+            }
+            return [displayID]
+        case .all:
+            var count: UInt32 = 0
+            CGGetActiveDisplayList(0, nil, &count)
+            guard count > 0 else {
+                throw DebugUIAccessibilityInspectionError.noScreenAvailable
+            }
+            var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+            CGGetActiveDisplayList(count, &displays, &count)
+            return Array(displays.prefix(Int(count))).filter { $0 != 0 }
+        }
+    }
+}
+
+private struct EmptyDebugUIScreenCapturer: DebugUIScreenCapturing {
+    func captureScreens(
+        scope: DebugUIInspectionScreenScope
+    ) throws -> [DebugUIScreenCaptureSnapshot] {
+        []
+    }
+}
+
+private extension LocalUIElementDetectionTrace {
+    func clippedToTargetWindows(
+        _ targetWindowBounds: [WindowTargetBounds]
+    ) -> LocalUIElementDetectionTrace {
+        guard !targetWindowBounds.isEmpty else {
+            return self
+        }
+        let hasAccessibilityControls = elements.contains { element in
+            element.sources.contains(.accessibility) && element.type != .draggable
+        }
+        var copy = self
+        copy.elements = elements.compactMap { element in
+            guard let window = Self.bestWindow(for: element, in: targetWindowBounds),
+                  let clippedBounds = Self.intersection(element.bounds, window)
+            else {
+                return nil
+            }
+            guard clippedBounds.size.width >= 4, clippedBounds.size.height >= 4 else {
+                return nil
+            }
+
+            if !element.sources.contains(.accessibility),
+               element.sources.contains(.layout),
+               !Self.contains(window, element.bounds, tolerance: 8) {
+                return nil
+            }
+            if hasAccessibilityControls,
+               !element.sources.contains(.accessibility),
+               !element.sources.contains(.template),
+               !element.sources.contains(.hoverProbe),
+               element.confidence < 0.75 {
+                return nil
+            }
+
+            var clipped = element
+            clipped.bounds = clippedBounds
+            if !Self.nearlyEqual(clippedBounds, element.bounds) {
+                clipped.metadata = clipped.metadata.merging([
+                    "debugUIElement.clippedToTargetWindow": "true"
+                ]) { current, _ in current }
+            }
+            return clipped
+        }
+        return copy
+    }
+
+    static func bestWindow(
+        for element: LocalUIElement,
+        in windows: [WindowTargetBounds]
+    ) -> WindowTargetBounds? {
+        windows
+            .compactMap { window -> (window: WindowTargetBounds, overlap: Double)? in
+                guard let intersection = intersection(element.bounds, window) else {
+                    return nil
+                }
+                let overlap = intersection.size.width * intersection.size.height
+                return overlap > 0 ? (window, overlap) : nil
+            }
+            .max { lhs, rhs in lhs.overlap < rhs.overlap }?
+            .window
+    }
+
+    static func intersection(
+        _ elementBounds: HotLoopRect,
+        _ windowBounds: WindowTargetBounds
+    ) -> HotLoopRect? {
+        let minX = max(elementBounds.origin.x, windowBounds.x)
+        let minY = max(elementBounds.origin.y, windowBounds.y)
+        let maxX = min(
+            elementBounds.origin.x + elementBounds.size.width,
+            windowBounds.x + windowBounds.width
+        )
+        let maxY = min(
+            elementBounds.origin.y + elementBounds.size.height,
+            windowBounds.y + windowBounds.height
+        )
+        let width = maxX - minX
+        let height = maxY - minY
+        guard width > 0, height > 0 else {
+            return nil
+        }
+        return HotLoopRect(
+            x: minX,
+            y: minY,
+            width: width,
+            height: height,
+            space: elementBounds.space
+        )
+    }
+
+    static func nearlyEqual(
+        _ lhs: HotLoopRect,
+        _ rhs: HotLoopRect
+    ) -> Bool {
+        lhs.space == rhs.space
+            && abs(lhs.origin.x - rhs.origin.x) <= 0.001
+            && abs(lhs.origin.y - rhs.origin.y) <= 0.001
+            && abs(lhs.size.width - rhs.size.width) <= 0.001
+            && abs(lhs.size.height - rhs.size.height) <= 0.001
+    }
+
+    static func contains(
+        _ windowBounds: WindowTargetBounds,
+        _ elementBounds: HotLoopRect,
+        tolerance: Double
+    ) -> Bool {
+        let minX = windowBounds.x - tolerance
+        let minY = windowBounds.y - tolerance
+        let maxX = windowBounds.x + windowBounds.width + tolerance
+        let maxY = windowBounds.y + windowBounds.height + tolerance
+        return elementBounds.origin.x >= minX
+            && elementBounds.origin.y >= minY
+            && elementBounds.origin.x + elementBounds.size.width <= maxX
+            && elementBounds.origin.y + elementBounds.size.height <= maxY
+    }
+
+    static func substantialOverlap(
+        _ elementBounds: HotLoopRect,
+        _ windowBounds: WindowTargetBounds
+    ) -> Bool {
+        guard let intersection = intersection(elementBounds, windowBounds) else {
+            return false
+        }
+        let overlap = intersection.size.width * intersection.size.height
+        let area = elementBounds.size.width * elementBounds.size.height
+        return area > 0 && overlap / area >= 0.72
     }
 }
