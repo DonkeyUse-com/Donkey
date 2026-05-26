@@ -60,27 +60,6 @@ const browserOnlyFunctionExclusions = [
   "drag_and_drop",
 ];
 
-const debugUIInspectionFunctionExclusions = [
-  "click",
-  "click_at",
-  "double_click",
-  "drag",
-  "drag_and_drop",
-  "go_back",
-  "go_forward",
-  "hover",
-  "hover_at",
-  "key_combination",
-  "navigate",
-  "open_web_browser",
-  "scroll",
-  "scroll_document",
-  "search",
-  "type",
-  "type_text",
-  "type_text_at",
-];
-
 export function createGeminiComputerUseProvider(
   environment: AdapterEnvironment = process.env,
   clientFactory: GeminiClientFactory = (options) => new GoogleGenAI(options),
@@ -236,17 +215,14 @@ function geminiGenerateContentParameters(
 function geminiTools(registeredTools: string[], rawTools: JsonValue | undefined): Tool[] {
   const tools: Tool[] = [];
   const hasBrowser = registeredTools.includes(geminiBrowserInteractionToolType);
-  const hasDebugInspection = registeredTools.includes(debugUIInspectionToolType);
 
-  if (hasBrowser || hasDebugInspection) {
+  if (hasBrowser) {
     tools.push({
       computerUse: {
         environment: Environment.ENVIRONMENT_BROWSER,
         excludedPredefinedFunctions: excludedPredefinedFunctions(
           rawTools,
-          hasDebugInspection
-            ? debugUIInspectionFunctionExclusions
-            : browserOnlyFunctionExclusions,
+          browserOnlyFunctionExclusions,
         ),
       },
     });
@@ -462,8 +438,12 @@ function responseFormatFromBody(body: JsonObject): { json: boolean; schema?: Jso
 }
 
 function defaultResponseModel(body: JsonObject, registeredTools: string[]) {
-  if (registeredTools.length > 0) {
+  if (registeredTools.includes(geminiBrowserInteractionToolType)) {
     return defaultComputerUseModel;
+  }
+
+  if (registeredTools.includes(debugUIInspectionToolType)) {
+    return defaultDecisionResponsesModel;
   }
 
   if (isFastDecisionRequest(body)) {

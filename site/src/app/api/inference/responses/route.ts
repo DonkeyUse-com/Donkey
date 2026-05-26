@@ -7,10 +7,12 @@ import {
   requireInferenceCredits,
 } from "@/lib/credits/inference";
 import { createProviderRegistry } from "@/lib/inference/router";
+import { isJsonObject, toJsonValue } from "@/lib/inference/json";
 import {
   requireInferenceClientId,
   validationErrorResponse,
 } from "@/lib/inference/responses";
+import type { JsonObject, JsonValue } from "@/lib/inference/providers";
 import { responseCreateRequestSchema } from "@/lib/inference/schemas";
 import { withDonkeyAuth } from "@/lib/donkey-api-auth";
 
@@ -41,8 +43,22 @@ export const POST = withDonkeyAuth(async (request) => {
     return credits.response;
   }
 
+  const debugInspection = isDebugUIInspectionRequest(parsed.data.body);
+  const debugInspectionStartedAt = performance.now();
+  if (debugInspection) {
+    console.info(
+      [
+        "[debug-ui-inspection] start",
+        `at=${new Date().toISOString()}`,
+        `provider=${parsed.data.donkeyProvider ?? "default"}`,
+        `requestedModel=${requestedModel}`,
+      ].join(" "),
+    );
+  }
+
   const registry = createProviderRegistry();
   const provider = registry.responsesProvider(parsed.data);
+  const providerStartedAt = performance.now();
   const result = await provider.createResponse?.(parsed.data);
   if (!result) {
     return NextResponse.json(
@@ -50,6 +66,21 @@ export const POST = withDonkeyAuth(async (request) => {
         error: "Responses unavailable",
       },
       { status: 503 },
+    );
+  }
+
+  if (debugInspection) {
+    const providerEndedAt = performance.now();
+    console.info(
+      [
+        "[debug-ui-inspection] end",
+        `at=${new Date().toISOString()}`,
+        `provider=${result.provider}`,
+        `model=${result.model}`,
+        `providerMs=${Math.round(providerEndedAt - providerStartedAt)}`,
+        `totalMs=${Math.round(providerEndedAt - debugInspectionStartedAt)}`,
+        debugInspectionResultSummary(result.body),
+      ].join(" "),
     );
   }
 
@@ -72,3 +103,46 @@ export const POST = withDonkeyAuth(async (request) => {
     },
   });
 });
+
+function isDebugUIInspectionRequest(body: JsonObject) {
+  if (!Array.isArray(body.tools)) {
+    return false;
+  }
+
+  return body.tools.some((tool) => {
+    return isJsonObject(tool) && tool.type === "donkey_debug_ui_inspection";
+  });
+}
+
+function debugInspectionResultSummary(body: JsonValue) {
+  const object: JsonObject = isJsonObject(body) ? body : {};
+  const outputText = typeof object.output_text === "string" ? object.output_text : "";
+  const elementCount =
+    elementCountFromFrame(object) ??
+    elementCountFromOutputText(outputText);
+
+  return [
+    `outputTextChars=${outputText.length}`,
+    `elements=${elementCount ?? "unknown"}`,
+  ].join(" ");
+}
+
+function elementCountFromOutputText(outputText: string) {
+  if (!outputText.trim()) {
+    return null;
+  }
+
+  try {
+    return elementCountFromFrame(toJsonValue(JSON.parse(outputText)));
+  } catch {
+    return null;
+  }
+}
+
+function elementCountFromFrame(value: JsonValue) {
+  if (!isJsonObject(value) || !Array.isArray(value.elements)) {
+    return null;
+  }
+
+  return value.elements.length;
+}

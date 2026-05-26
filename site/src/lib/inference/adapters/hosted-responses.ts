@@ -25,6 +25,8 @@ const openAIBaseURL = "https://api.openai.com/v1";
 const openAIMacDesktopInteractionToolType = "donkey_openai_mac_desktop_interaction";
 const debugUIInspectionToolType = "donkey_debug_ui_inspection";
 const defaultOpenAIComputerUseModel = "gpt-5.5";
+const defaultOpenAIDebugInspectionModel = "gpt-5.4";
+const unsupportedOpenAIComputerUseParameters = ["temperature", "top_p", "topP"];
 
 export function createHostedResponsesProvider(
   environment: AdapterEnvironment = process.env,
@@ -43,7 +45,10 @@ export function createHostedResponsesProvider(
       return [];
     }
 
-    return [staticModel(defaultOpenAIComputerUseModel)];
+    return [
+      staticModel(defaultOpenAIComputerUseModel),
+      staticModel(defaultOpenAIDebugInspectionModel),
+    ];
   }
 
   async function createResponse(
@@ -75,14 +80,15 @@ export function createHostedResponsesProvider(
     });
 
     try {
-      const body = requestBody(request.body, defaultOpenAIComputerUseModel);
+      const model = defaultOpenAIModel(request.body);
+      const body = requestBody(request.body, model);
       const response = await client.responses.create(
         body as unknown as ResponseCreateParamsNonStreaming,
       );
       const value = toJsonValue(response);
       return {
         provider: openAIProviderID,
-        model: defaultOpenAIComputerUseModel,
+        model,
         body: value,
         usage: usageFromResponse(value),
         metadata: {
@@ -105,6 +111,13 @@ export function createHostedResponsesProvider(
     listModels,
     createResponse,
   };
+}
+
+function defaultOpenAIModel(body: JsonObject) {
+  if (hasDebugUIInspectionTool(body) && !hasOpenAIMacDesktopTool(body)) {
+    return defaultOpenAIDebugInspectionModel;
+  }
+  return defaultOpenAIComputerUseModel;
 }
 
 function requestBody(body: JsonObject, model: string): JsonObject {
@@ -135,6 +148,9 @@ function normalizeOpenAIComputerUseBody(body: JsonObject): JsonObject {
     ),
     ...(toolChoice === undefined ? {} : { tool_choice: toolChoice }),
   };
+  for (const parameter of unsupportedOpenAIComputerUseParameters) {
+    delete normalized[parameter];
+  }
   if (Array.isArray(tools)) {
     const normalizedTools = tools
       .map(openAIComputerToolReference)
