@@ -108,7 +108,7 @@ export function AuthScreen({ mode }: Props) {
           <h1
             style={{
               fontSize: isDesktop ? 92 : 52,
-              fontWeight: 900,
+              fontWeight: 600,
               letterSpacing: 0,
               lineHeight: 0.9,
               margin: 0,
@@ -152,7 +152,7 @@ export function AuthScreen({ mode }: Props) {
               <h2
                 style={{
                   fontSize: isDesktop ? 42 : 34,
-                  fontWeight: 900,
+                  fontWeight: 600,
                   lineHeight: 1,
                   margin: "0 0 14px",
                 }}
@@ -199,14 +199,14 @@ export function AuthScreen({ mode }: Props) {
                 By continuing, you agree to the{" "}
                 <a
                   href="/terms"
-                  style={{ color: BLACK, fontWeight: 800 }}
+                  style={{ color: BLACK, fontWeight: 600 }}
                 >
                   Terms of Use
                 </a>{" "}
                 and{" "}
                 <a
                   href="/privacy"
-                  style={{ color: BLACK, fontWeight: 800 }}
+                  style={{ color: BLACK, fontWeight: 600 }}
                 >
                   Privacy Policy
                 </a>
@@ -218,7 +218,7 @@ export function AuthScreen({ mode }: Props) {
                   style={{
                     color: "#4a403d",
                     fontSize: 13,
-                    fontWeight: 700,
+                    fontWeight: 600,
                     lineHeight: 1.4,
                     marginTop: 14,
                   }}

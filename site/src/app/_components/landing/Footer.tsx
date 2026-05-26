@@ -38,7 +38,7 @@ export function Footer() {
             flexWrap: "wrap",
           }}
         >
-          <span style={{ fontWeight: 900, fontSize: isDesktop ? 48 : 40 }}>
+          <span style={{ fontWeight: 600, fontSize: isDesktop ? 48 : 40 }}>
             donkey
           </span>
           {socialLinks.map((link) => {
@@ -79,7 +79,7 @@ export function Footer() {
           }}
         >
           <div>
-            <div style={{ fontWeight: 800, color: BLACK, marginBottom: 4 }}>
+            <div style={{ fontWeight: 600, color: BLACK, marginBottom: 4 }}>
               david@donkeyuse.com
             </div>
             <div>2026 Donkey, Inc. Made for Macs.</div>
@@ -95,7 +95,7 @@ export function Footer() {
               href="/privacy"
               style={{
                 color: BLACK,
-                fontWeight: 800,
+                fontWeight: 600,
                 textDecoration: "none",
               }}
             >
@@ -105,7 +105,7 @@ export function Footer() {
               href="/terms"
               style={{
                 color: BLACK,
-                fontWeight: 800,
+                fontWeight: 600,
                 textDecoration: "none",
               }}
             >

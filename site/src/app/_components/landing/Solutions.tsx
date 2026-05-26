@@ -46,7 +46,7 @@ export function Solutions() {
               <div style={tagPill}>{card.tag}</div>
               <h3
                 style={{
-                  fontWeight: 900,
+                  fontWeight: 600,
                   fontSize: isDesktop ? 32 : 28,
                   lineHeight: 1.05,
                   margin: "0 0 16px",

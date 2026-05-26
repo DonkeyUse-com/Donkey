@@ -93,7 +93,7 @@ export function InstallInstructions() {
             style={{
               color: "#fff",
               fontSize: "clamp(28px, 3vw, 38px)",
-              fontWeight: 800,
+              fontWeight: 600,
               letterSpacing: 0,
               lineHeight: 1.08,
               margin: 0,
@@ -163,7 +163,7 @@ function InstallStepCard({ step }: InstallStepCardProps) {
           style={{
             color: "#96928c",
             fontSize: 15,
-            fontWeight: 700,
+            fontWeight: 600,
             lineHeight: 1.2,
             marginBottom: 18,
           }}
@@ -174,7 +174,7 @@ function InstallStepCard({ step }: InstallStepCardProps) {
           style={{
             color: "#fff",
             fontSize: "clamp(28px, 3vw, 36px)",
-            fontWeight: 800,
+            fontWeight: 600,
             lineHeight: 1,
             margin: "0 0 17px",
           }}

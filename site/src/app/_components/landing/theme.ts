@@ -21,7 +21,7 @@ export const tagPill: CSSProperties = {
   background: BLACK,
   color: "#fff",
   fontSize: 11,
-  fontWeight: 800,
+  fontWeight: 600,
   letterSpacing: "0.08em",
   padding: "6px 12px",
   borderRadius: 6,

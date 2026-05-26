@@ -58,7 +58,7 @@ export function FinalCTA() {
           <div
             style={{
               fontSize: 12,
-              fontWeight: 800,
+              fontWeight: 600,
               letterSpacing: "0.12em",
               textTransform: "uppercase",
               color: "rgba(255,255,255,0.6)",
@@ -69,7 +69,7 @@ export function FinalCTA() {
           </div>
           <h2
             style={{
-              fontWeight: 900,
+              fontWeight: 600,
               fontSize: "clamp(40px, 7vw, 80px)",
               lineHeight: 0.95,
               margin: "0 0 16px",

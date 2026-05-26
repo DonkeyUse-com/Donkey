@@ -43,7 +43,7 @@ export function TrustedBy() {
           <span
             style={{
               fontSize: 12,
-              fontWeight: 800,
+              fontWeight: 600,
               letterSpacing: "0.12em",
               textTransform: "uppercase",
               whiteSpace: "nowrap",
@@ -55,7 +55,7 @@ export function TrustedBy() {
           >
             Open source
           </span>
-          <span style={{ fontSize: isDesktop ? 16 : 15, fontWeight: 700 }}>
+          <span style={{ fontSize: isDesktop ? 16 : 15, fontWeight: 600 }}>
             Donkey is built in the open.
           </span>
         </div>
@@ -65,7 +65,7 @@ export function TrustedBy() {
             alignItems: "center",
             gap: 6,
             fontSize: 14,
-            fontWeight: 800,
+            fontWeight: 600,
           }}
         >
           View on GitHub <ArrowRight size={14} />

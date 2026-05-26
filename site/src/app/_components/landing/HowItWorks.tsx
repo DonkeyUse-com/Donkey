@@ -56,7 +56,7 @@ export function HowItWorks() {
               <div style={{ flex: 1 }}>
                 <h3
                   style={{
-                    fontWeight: 900,
+                    fontWeight: 600,
                     fontSize: 26,
                     lineHeight: 1.15,
                     margin: "0 0 8px",
@@ -82,7 +82,7 @@ export function HowItWorks() {
                     border: `2px solid ${BLACK}`,
                     padding: "4px 14px",
                     fontSize: 11,
-                    fontWeight: 800,
+                    fontWeight: 600,
                     letterSpacing: "0.08em",
                     textTransform: "uppercase",
                     background: "rgba(255,255,255,0.5)",

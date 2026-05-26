@@ -44,7 +44,7 @@ export function Agents() {
             <div style={tagPill}>AI agents - The main act</div>
             <h3
               style={{
-                fontWeight: 900,
+                fontWeight: 600,
                 fontSize: isDesktop ? 42 : 32,
                 lineHeight: 1.05,
                 margin: "0 0 32px",
@@ -83,7 +83,7 @@ export function Agents() {
                       <div
                         style={{
                           fontSize: 11,
-                          fontWeight: 800,
+                          fontWeight: 600,
                           letterSpacing: "0.1em",
                           textTransform: "uppercase",
                           color: "#666",
@@ -94,7 +94,7 @@ export function Agents() {
                       </div>
                       <h4
                         style={{
-                          fontWeight: 900,
+                          fontWeight: 600,
                           fontSize: 22,
                           lineHeight: 1.15,
                           margin: "0 0 12px",

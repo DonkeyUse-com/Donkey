@@ -62,7 +62,7 @@ export function MacAuthRedirector({ state }: Props) {
           width={72}
         />
 
-        <h1 className="mt-[22px] text-[42px] leading-[1.05] font-extrabold tracking-normal">
+        <h1 className="mt-[22px] text-[42px] leading-[1.05] font-semibold tracking-normal">
           {headingForStatus(status)}
         </h1>
 
@@ -72,7 +72,7 @@ export function MacAuthRedirector({ state }: Props) {
 
         {status === "failed" ? (
           <button
-            className="mt-[14px] inline-flex h-12 cursor-pointer items-center justify-center gap-2.5 rounded-xl border-0 bg-[#f7f4ee] px-[22px] text-base font-extrabold text-[#222]"
+            className="mt-[14px] inline-flex h-12 cursor-pointer items-center justify-center gap-2.5 rounded-xl border-0 bg-[#f7f4ee] px-[22px] text-base font-semibold text-[#222]"
             onClick={retry}
             type="button"
           >

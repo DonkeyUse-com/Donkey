@@ -116,7 +116,7 @@ function macHandoffPage(
 
     h1 {
       font-size: clamp(36px, 7vw, 48px);
-      font-weight: 800;
+      font-weight: 600;
       letter-spacing: 0;
       line-height: 1.04;
       margin: 18px 0 0;
@@ -137,7 +137,7 @@ function macHandoffPage(
       color: #f7f4ee;
       display: inline-flex;
       font-size: 15px;
-      font-weight: 750;
+      font-weight: 600;
       height: 44px;
       justify-content: center;
       margin-top: 12px;

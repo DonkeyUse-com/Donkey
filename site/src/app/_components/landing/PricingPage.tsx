@@ -45,7 +45,7 @@ export function PricingPage() {
         <h1
           style={{
             fontSize: isDesktop ? 112 : 52,
-            fontWeight: 900,
+            fontWeight: 600,
             letterSpacing: 0,
             lineHeight: 0.9,
             margin: 0,
@@ -132,7 +132,7 @@ export function PricingPage() {
                 style={{
                   color: "rgba(255,255,255,0.55)",
                   fontSize: 12,
-                  fontWeight: 800,
+                  fontWeight: 600,
                   letterSpacing: "0.12em",
                   marginBottom: 18,
                   textTransform: "uppercase",

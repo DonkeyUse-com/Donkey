@@ -152,7 +152,7 @@ export function OpenSource() {
                   alignItems: "center",
                   justifyContent: "center",
                   fontSize: 12,
-                  fontWeight: 900,
+                  fontWeight: 600,
                 }}
               >
                 {reason.icon}
@@ -160,7 +160,7 @@ export function OpenSource() {
               <div style={{ flex: 1 }}>
                 <h3
                   style={{
-                    fontWeight: 900,
+                    fontWeight: 600,
                     fontSize: 22,
                     lineHeight: 1.15,
                     margin: "0 0 8px",

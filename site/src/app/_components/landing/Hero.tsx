@@ -20,7 +20,7 @@ export function Hero() {
     >
       <h1
         style={{
-          fontWeight: 900,
+          fontWeight: 600,
           letterSpacing: "-0.03em",
           lineHeight: 0.88,
           fontSize: "clamp(56px, 12vw, 168px)",

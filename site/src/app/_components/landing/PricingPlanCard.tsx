@@ -80,13 +80,13 @@ export function PricingPlanCard({ plan }: Props) {
       tapePosition={plan.tapePosition}
     >
       <div style={{ padding: isDesktop ? 36 : 28 }}>
-        <div style={{ fontWeight: 900, fontSize: 22, marginBottom: 18 }}>
+        <div style={{ fontWeight: 600, fontSize: 22, marginBottom: 18 }}>
           {plan.name}
         </div>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
           <span
             style={{
-              fontWeight: 900,
+              fontWeight: 600,
               fontSize: isDesktop ? 54 : 42,
               lineHeight: 0.95,
             }}
@@ -97,7 +97,7 @@ export function PricingPlanCard({ plan }: Props) {
         <div
           style={{
             fontSize: 13,
-            fontWeight: 800,
+            fontWeight: 600,
             color: plan.color === "coral" ? "#201715" : "#444",
             marginBottom: 24,
             marginTop: 10,
@@ -130,7 +130,7 @@ export function PricingPlanCard({ plan }: Props) {
                 display: "flex",
                 gap: 10,
                 fontSize: 14,
-                fontWeight: 750,
+                fontWeight: 600,
               }}
             >
               <span
@@ -158,7 +158,7 @@ export function PricingPlanCard({ plan }: Props) {
             style={{
               color: "#4a403d",
               fontSize: 13,
-              fontWeight: 700,
+              fontWeight: 600,
               lineHeight: 1.4,
               marginTop: 14,
             }}

@@ -109,7 +109,7 @@ export function VsThePast() {
               }}
             >
               <div style={{ padding: isDesktop ? "24px" : "16px 12px" }}>
-                <div style={{ fontWeight: 900, fontSize: isDesktop ? 20 : 15 }}>
+                <div style={{ fontWeight: 600, fontSize: isDesktop ? 20 : 15 }}>
                   What you need
                 </div>
               </div>
@@ -125,7 +125,7 @@ export function VsThePast() {
                 >
                   <div
                     style={{
-                      fontWeight: 900,
+                      fontWeight: 600,
                       fontSize: comparisonHeaderFontSize,
                       lineHeight: 1.1,
                     }}
@@ -147,7 +147,7 @@ export function VsThePast() {
                 <div
                   style={{
                     padding: isDesktop ? "20px 24px" : "14px 12px",
-                    fontWeight: 800,
+                    fontWeight: 600,
                     fontSize: isDesktop ? 15 : 13,
                   }}
                 >

@@ -125,7 +125,7 @@ export function PillButton({
     justifyContent: "center",
     gap: 8,
     borderRadius: 999,
-    fontWeight: 700,
+    fontWeight: 600,
     cursor: disabled ? "not-allowed" : "pointer",
     minHeight: size === "lg" ? 56 : 40,
     opacity: disabled ? 0.65 : 1,
@@ -171,7 +171,7 @@ export function SectionLabel({ children, number }: SectionLabelProps) {
         alignItems: "center",
         gap: 8,
         fontSize: 13,
-        fontWeight: 800,
+        fontWeight: 600,
         letterSpacing: "0.12em",
         textTransform: "uppercase",
         marginBottom: 24,
@@ -200,7 +200,7 @@ export function NumberBadge({ color, n }: NumberBadgeProps) {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        fontWeight: 900,
+        fontWeight: 600,
         fontSize: 22,
         flexShrink: 0,
       }}
@@ -224,7 +224,7 @@ export function Headline({ children, size = "xl" }: HeadlineProps) {
   return (
     <h2
       style={{
-        fontWeight: 900,
+        fontWeight: 600,
         lineHeight: 0.95,
         fontSize: sizes[size],
         margin: 0,

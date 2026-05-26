@@ -8,6 +8,8 @@ import { DONKEY_DOWNLOAD_URL } from "@/app/_components/landing/data";
 import { useMediaQuery } from "@/app/_components/landing/useMediaQuery";
 import { BLACK } from "@/app/_components/landing/theme";
 
+const NAV_ICON_SIZE = 59;
+
 type Props = {
   ctaHref?: string;
   ctaLabel?: string;
@@ -46,9 +48,9 @@ export function TopNav({
       >
         <div
           style={{
-            width: 47,
-            height: 47,
-            borderRadius: 8,
+            width: NAV_ICON_SIZE,
+            height: NAV_ICON_SIZE,
+            borderRadius: 10,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -58,9 +60,9 @@ export function TopNav({
           <Image
             src="/donkey-site-mark.webp"
             alt=""
-            width={47}
-            height={47}
-            sizes="47px"
+            width={NAV_ICON_SIZE}
+            height={NAV_ICON_SIZE}
+            sizes={`${NAV_ICON_SIZE}px`}
             style={{
               display: "block",
               width: "100%",
@@ -69,7 +71,7 @@ export function TopNav({
             }}
           />
         </div>
-        <span style={{ fontWeight: 900, fontSize: 24 }}>donkey</span>
+        <span style={{ fontWeight: 600, fontSize: 24 }}>donkey</span>
       </a>
       <PillButton href={ctaHref} variant="dark" size="sm">
         {ctaLabel} <ArrowRight size={14} />

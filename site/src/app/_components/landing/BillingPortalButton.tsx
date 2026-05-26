@@ -54,7 +54,7 @@ export function BillingPortalButton() {
           style={{
             color: "rgba(255,255,255,0.7)",
             fontSize: 13,
-            fontWeight: 700,
+            fontWeight: 600,
             lineHeight: 1.4,
             marginTop: 12,
           }}
