@@ -14,16 +14,12 @@ public struct LocalUIElementDetectionService: LocalUIElementDetecting {
         let startedAt = ProcessInfo.processInfo.systemUptime
         let nativeResult = nativeVisualDetector.candidates(
             fromPNGData: request.screenshotPNGData,
-            pixelSize: request.pixelSize
-        )
-        let rowCandidates = rowLayoutCandidates(
-            from: nativeResult.candidates,
+            imagePath: request.screenshotImagePath,
             pixelSize: request.pixelSize
         )
         let candidates = request.accessibilityCandidates
             + request.hoverProbeCandidates
             + nativeResult.candidates
-            + rowCandidates
 
         let mergeStartedAt = ProcessInfo.processInfo.systemUptime
         let merged = merge(
@@ -62,8 +58,88 @@ public struct LocalUIElementDetectionService: LocalUIElementDetecting {
         from trace: LocalUIElementDetectionTrace
     ) -> DebugUIInspectionFrame {
         DebugUIInspectionFrame(
-            elements: trace.elements.map(Self.debugElement)
+            elements: trace.elements
+                .filter(Self.shouldRenderInDebugOverlay)
+                .map(Self.debugElement)
         )
+    }
+
+    private static func shouldRenderInDebugOverlay(_ element: LocalUIElement) -> Bool {
+        if isDebugOverlayFeedbackLabel(element.label) {
+            return false
+        }
+        if element.type == .draggable {
+            return false
+        }
+
+        if let role = debugOverlayRole(for: element) {
+            if isStaticDebugOverlayLabel(element.label, role: role) {
+                return false
+            }
+            return true
+        }
+        if element.sources.contains(.accessibility) {
+            return isInspectableAccessibilityElement(element)
+        }
+        if element.sources.contains(.hoverProbe) {
+            return true
+        }
+        return false
+    }
+
+    private static func debugOverlayRole(for element: LocalUIElement) -> String? {
+        element.metadata.first { key, _ in
+            key == "debug.overlayRole" || key.hasSuffix(".debug.overlayRole")
+        }?.value
+    }
+
+    private static func isDebugOverlayFeedbackLabel(_ value: String) -> Bool {
+        let normalized = value.uppercased()
+        let tokens = normalized
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+        if tokens.first == "LAYOUT"
+            || tokens.first == "AX" {
+            return true
+        }
+        return normalized.contains("LAYOUT+")
+            || normalized.contains("+LAYOUT")
+            || normalized.contains("AX]")
+    }
+
+    private static func isStaticDebugOverlayLabel(_ value: String, role: String) -> Bool {
+        let normalized = cleanDebugOverlayLabel(value)
+            .lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return false }
+
+        if role == "sidebarRow" {
+            return ["pinned", "projects", "chats"].contains(normalized)
+        }
+        if role == "panelRow" {
+            return ["environment", "sources", "no sources yet"].contains(normalized)
+        }
+        return false
+    }
+
+    private static func isInspectableAccessibilityElement(_ element: LocalUIElement) -> Bool {
+        let width = element.bounds.size.width
+        let height = element.bounds.size.height
+
+        switch element.type {
+        case .draggable, .other:
+            return false
+        case .checkbox, .toggle, .toolbarIcon, .windowControl:
+            return width <= 160 && height <= 96
+        case .menuItem, .tab, .dropdown, .slider:
+            return width <= 260 && height <= 80
+        case .button, .link:
+            return width <= 420 && height <= 100
+        case .sidebarItem, .listItem:
+            return width <= 460 && height <= 120
+        case .input:
+            return width <= 920 && height <= 180
+        }
     }
 
     public func localUIUnderstandingResult(
@@ -113,7 +189,7 @@ public struct LocalUIElementDetectionService: LocalUIElementDetecting {
         DebugUIElement(
             id: element.id,
             type: element.type,
-            label: element.label,
+            label: debugOverlayLabel(for: element),
             description: [
                 element.type.rawValue,
                 element.sources.map(\.rawValue).joined(separator: "+"),
@@ -126,12 +202,146 @@ public struct LocalUIElementDetectionService: LocalUIElementDetecting {
                 height: element.bounds.size.height
             ),
             confidence: element.confidence,
+            visualStyle: debugOverlayStyle(for: element),
             metadata: element.metadata.merging([
                 "localUIElement.sources": element.sources.map(\.rawValue).joined(separator: ","),
                 "localUIElement.reasonCodes": element.reasonCodes.joined(separator: ","),
                 "localUIElement.actionEligibility": element.actionEligibility.rawValue
             ]) { current, _ in current }
         )
+    }
+
+    private static func debugOverlayLabel(for element: LocalUIElement) -> String {
+        let role = debugOverlayRole(for: element)
+        let label = cleanDebugOverlayLabel(element.label)
+        let lowercasedLabel = label.lowercased()
+
+        switch role {
+        case "panel":
+            return "environment panel"
+        case "bottomInput", "messageInput":
+            return "message input"
+        case "bottomInputAccessory":
+            if lowercasedLabel.contains("auto-review") {
+                return "auto-review selector"
+            }
+            if lowercasedLabel.contains("5.5") || lowercasedLabel.contains("high") {
+                return "model selector"
+            }
+            if lowercasedLabel.contains("submit") {
+                return "send button"
+            }
+            if lowercasedLabel.contains("add") {
+                return "add button"
+            }
+            if lowercasedLabel.contains("voice") {
+                return "voice input button"
+            }
+            return "composer control"
+        case "actionButton":
+            if lowercasedLabel.contains("review") {
+                return "review changes button"
+            }
+            return label.isEmpty ? "action button" : label
+        case "chatTitle":
+            return "chat title"
+        case "fileLink":
+            return "file link"
+        case "userBubble":
+            return "user bubble"
+        case "commandRow":
+            return "run command row"
+        case "panelRow", "sidebarRow", "menuBarItem":
+            break
+        default:
+            break
+        }
+
+        if !label.isEmpty,
+           !isGenericLabel(label, type: element.type),
+           label != "panel row",
+           label != "sidebar item",
+           label != "menu item" {
+            return label
+        }
+
+        switch element.type {
+        case .input:
+            return "text input"
+        case .button:
+            return "button"
+        case .toolbarIcon:
+            return "toolbar icon"
+        case .windowControl:
+            return "window control"
+        case .menuItem:
+            return "menu item"
+        case .sidebarItem:
+            return "sidebar item"
+        case .listItem:
+            return "clickable row"
+        case .dropdown:
+            return "selector"
+        case .checkbox:
+            return "checkbox"
+        case .toggle:
+            return "toggle"
+        case .link:
+            return "link"
+        case .tab:
+            return "tab"
+        case .slider:
+            return "slider"
+        case .draggable, .other:
+            return ""
+        }
+    }
+
+    private static func cleanDebugOverlayLabel(_ value: String) -> String {
+        var label = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        label = stripLeadingNoise(from: label)
+        let noisyPrefixes = ["O ", "Q ", "00 ", "0 "]
+        var changed = true
+        while changed {
+            changed = false
+            for prefix in noisyPrefixes where label.hasPrefix(prefix) {
+                label.removeFirst(prefix.count)
+                label = label.trimmingCharacters(in: .whitespacesAndNewlines)
+                label = stripLeadingNoise(from: label)
+                changed = true
+            }
+        }
+        return label
+    }
+
+    private static func stripLeadingNoise(from value: String) -> String {
+        var label = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        while let first = label.first,
+              !first.isLetter,
+              !first.isNumber {
+            label.removeFirst()
+            label = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return label
+    }
+
+    private static func debugOverlayStyle(for element: LocalUIElement) -> DebugUIOverlayStyle {
+        switch debugOverlayRole(for: element) {
+        case "menuBarItem":
+            return DebugUIOverlayStyle(overlayColor: "#06B6D4", borderColor: "#22D3EE")
+        case "sidebarRow":
+            return DebugUIOverlayStyle(overlayColor: "#0EA5E9", borderColor: "#38BDF8")
+        case "panel", "panelRow":
+            return DebugUIOverlayStyle(overlayColor: "#D946EF", borderColor: "#F0ABFC")
+        case "bottomInput", "messageInput", "bottomInputAccessory":
+            return DebugUIOverlayStyle(overlayColor: "#22C55E", borderColor: "#86EFAC")
+        case "actionButton", "chatTitle":
+            return DebugUIOverlayStyle(overlayColor: "#EAB308", borderColor: "#FDE047")
+        case "fileLink", "userBubble", "commandRow":
+            return DebugUIOverlayStyle(overlayColor: "#A855F7", borderColor: "#D8B4FE")
+        default:
+            return DebugUIOverlayStyle.style(for: element.type)
+        }
     }
 
     private func merge(
@@ -225,22 +435,8 @@ public struct LocalUIElementDetectionService: LocalUIElementDetecting {
            let typeHint = ax.typeHint {
             return typeHint
         }
-        if let template = group.first(where: { $0.source == .template }),
-           let typeHint = template.typeHint {
-            return typeHint
-        }
         if let explicit = group.first(where: { $0.typeHint != nil })?.typeHint {
             return explicit
-        }
-
-        let textCandidate = group.first { $0.source == .ocr }
-        let shapeCandidate = group.first { $0.source == .shape }
-        if textCandidate != nil, let shapeCandidate {
-            let aspect = shapeCandidate.bounds.size.width / max(1, shapeCandidate.bounds.size.height)
-            return aspect > 3.6 ? .input : .button
-        }
-        if group.contains(where: { $0.source == .connectedComponent }) {
-            return .toolbarIcon
         }
         return .other
     }
@@ -254,14 +450,14 @@ public struct LocalUIElementDetectionService: LocalUIElementDetecting {
            !Self.isGenericLabel(axLabel, type: type) {
             return axLabel
         }
-        if let insideText = bestLabel(group: group.filter { $0.source == .ocr }) {
-            return insideText
+        if let layoutLabel = bestLabel(group: group.filter({ candidate in
+            candidate.source == .layout && Self.debugOverlayRole(for: candidate) != nil
+        })),
+           !Self.isGenericLabel(layoutLabel, type: type) {
+            return layoutLabel
         }
         if let axLabel {
             return axLabel
-        }
-        if let templateLabel = bestLabel(group: group.filter { $0.source == .template }) {
-            return templateLabel
         }
         if let hinted = bestLabel(group: group) {
             return hinted
@@ -279,8 +475,10 @@ public struct LocalUIElementDetectionService: LocalUIElementDetecting {
         if let accessibility = group.first(where: { $0.source == .accessibility }) {
             return accessibility.bounds
         }
-        if let shape = group.first(where: { $0.source == .shape }) {
-            return shape.bounds
+        if let layout = group.first(where: { candidate in
+            candidate.source == .layout && Self.debugOverlayRole(for: candidate) != nil
+        }) {
+            return layout.bounds
         }
         return group.sorted(by: Self.candidateSort).first?.bounds
             ?? HotLoopRect(x: 0, y: 0, width: 1, height: 1, space: .screen)
@@ -311,9 +509,6 @@ public struct LocalUIElementDetectionService: LocalUIElementDetecting {
         var reasons = Set(group.map { "\($0.source.rawValue).\($0.signalKind.rawValue)" })
         if group.contains(where: { $0.source == .accessibility }) {
             reasons.insert("axWinsSemantics")
-        }
-        if group.contains(where: { $0.source == .ocr }), !label.isEmpty {
-            reasons.insert("ocrContributesLabel")
         }
         if group.count > 1 {
             reasons.insert("mergedOverlappingCandidates")
@@ -347,7 +542,7 @@ public struct LocalUIElementDetectionService: LocalUIElementDetecting {
             grouping: candidates,
             by: { $0.source.rawValue }
         ).mapValues(\.count)
-        let cvOnlyCount = elements.filter { element in
+        let nonAccessibilityCount = elements.filter { element in
             !element.sources.contains(.accessibility)
         }.count
         return LocalUIElementDetectionMetrics(
@@ -356,7 +551,7 @@ public struct LocalUIElementDetectionService: LocalUIElementDetecting {
             elementCount: elements.count,
             suppressedCount: suppressed.count,
             duplicateCount: suppressed.filter { $0.reason == "mergedDuplicate" }.count,
-            cvOnlyElementCount: cvOnlyCount,
+            nonAccessibilityElementCount: nonAccessibilityCount,
             minConfidence: minConfidence,
             latencyMS: latencyMS
         )
@@ -366,6 +561,27 @@ public struct LocalUIElementDetectionService: LocalUIElementDetecting {
         _ lhs: LocalUIElementCandidate,
         _ rhs: LocalUIElementCandidate
     ) -> Bool {
+        if isBottomInputSurface(lhs), isBottomInputAccessory(rhs) {
+            return false
+        }
+        if isBottomInputSurface(rhs), isBottomInputAccessory(lhs) {
+            return false
+        }
+        if isBottomInputAccessory(lhs), isBottomInputAccessory(rhs),
+           lhs.source == .layout, rhs.source == .layout {
+            return false
+        }
+        if isBottomInputAccessory(lhs),
+           let role = debugOverlayRole(for: rhs),
+           role != "bottomInputAccessory" {
+            return false
+        }
+        if isBottomInputAccessory(rhs),
+           let role = debugOverlayRole(for: lhs),
+           role != "bottomInputAccessory" {
+            return false
+        }
+
         if isStructuralContainer(lhs) != isStructuralContainer(rhs) {
             return false
         }
@@ -375,10 +591,22 @@ public struct LocalUIElementDetectionService: LocalUIElementDetecting {
         if contains(lhs.bounds, rhs.bounds) || contains(rhs.bounds, lhs.bounds) {
             return true
         }
-        if lhs.source == .ocr || rhs.source == .ocr {
-            return center(lhs.bounds, inside: rhs.bounds) || center(rhs.bounds, inside: lhs.bounds)
-        }
         return false
+    }
+
+    private static func debugOverlayRole(for candidate: LocalUIElementCandidate) -> String? {
+        candidate.metadata.first { key, _ in
+            key == "debug.overlayRole" || key.hasSuffix(".debug.overlayRole")
+        }?.value
+    }
+
+    private static func isBottomInputSurface(_ candidate: LocalUIElementCandidate) -> Bool {
+        let role = debugOverlayRole(for: candidate)
+        return role == "bottomInput" || role == "messageInput"
+    }
+
+    private static func isBottomInputAccessory(_ candidate: LocalUIElementCandidate) -> Bool {
+        debugOverlayRole(for: candidate) == "bottomInputAccessory"
     }
 
     private static func isStructuralContainer(_ candidate: LocalUIElementCandidate) -> Bool {
@@ -411,70 +639,6 @@ public struct LocalUIElementDetectionService: LocalUIElementDetecting {
         }
     }
 
-    private func rowLayoutCandidates(
-        from candidates: [LocalUIElementCandidate],
-        pixelSize: HotLoopSize
-    ) -> [LocalUIElementCandidate] {
-        let textCandidates = candidates
-            .filter { $0.source == .ocr && $0.bounds.size.height >= 8 }
-            .sorted { lhs, rhs in
-                if lhs.bounds.origin.y != rhs.bounds.origin.y {
-                    return lhs.bounds.origin.y < rhs.bounds.origin.y
-                }
-                return lhs.bounds.origin.x < rhs.bounds.origin.x
-            }
-        guard textCandidates.count >= 3,
-              pixelSize.width > 0,
-              pixelSize.height > 0
-        else {
-            return []
-        }
-
-        let medianHeight = Self.median(textCandidates.map(\.bounds.size.height))
-        let rowHeight = min(max(medianHeight * 2.35, 28), 58)
-        let leftEdge = max(0, (textCandidates.map(\.bounds.origin.x).min() ?? 0) - 18)
-        let rightTextEdge = textCandidates
-            .map { $0.bounds.origin.x + $0.bounds.size.width }
-            .max() ?? pixelSize.width
-        let rightEdge = min(pixelSize.width, max(rightTextEdge + 28, pixelSize.width - 34))
-        let width = max(1, rightEdge - leftEdge)
-
-        var rows: [LocalUIElementCandidate] = []
-        for (index, text) in textCandidates.enumerated() {
-            let centerY = text.bounds.origin.y + text.bounds.size.height / 2
-            if rows.contains(where: { existing in
-                abs((existing.bounds.origin.y + existing.bounds.size.height / 2) - centerY) < rowHeight * 0.45
-            }) {
-                continue
-            }
-
-            let y = min(max(centerY - rowHeight / 2, 0), max(0, pixelSize.height - rowHeight))
-            rows.append(
-                LocalUIElementCandidate(
-                    id: "layout-row-\(index)-\(Self.slug(text.label ?? "row"))",
-                    source: .layout,
-                    signalKind: .rowGrouping,
-                    typeHint: .listItem,
-                    label: text.label,
-                    bounds: HotLoopRect(
-                        x: leftEdge,
-                        y: y,
-                        width: width,
-                        height: rowHeight,
-                        space: pixelSize.space
-                    ),
-                    confidence: 0.58,
-                    metadata: [
-                        "detector": "local-row-layout",
-                        "classification.reason": "ocrRepeatedVerticalListRhythm",
-                        "row.height": String(format: "%.1f", rowHeight)
-                    ]
-                )
-            )
-        }
-        return rows
-    }
-
     private static func intersectionOverUnion(_ lhs: HotLoopRect, _ rhs: HotLoopRect) -> Double {
         let overlap = intersectionArea(lhs, rhs)
         let union = lhs.size.width * lhs.size.height + rhs.size.width * rhs.size.height - overlap
@@ -496,28 +660,8 @@ public struct LocalUIElementDetectionService: LocalUIElementDetecting {
         return intersectionArea(outer, inner) / innerArea >= 0.78
     }
 
-    private static func center(_ rect: HotLoopRect, inside other: HotLoopRect) -> Bool {
-        guard rect.space == other.space else { return false }
-        let centerX = rect.origin.x + rect.size.width / 2
-        let centerY = rect.origin.y + rect.size.height / 2
-        return centerX >= other.origin.x
-            && centerX <= other.origin.x + other.size.width
-            && centerY >= other.origin.y
-            && centerY <= other.origin.y + other.size.height
-    }
-
     private static func controlID(for element: LocalUIElement) -> String {
         slug(element.label.isEmpty ? element.id : element.label)
-    }
-
-    private static func median(_ values: [Double]) -> Double {
-        guard !values.isEmpty else { return 0 }
-        let sorted = values.sorted()
-        let middle = sorted.count / 2
-        if sorted.count % 2 == 0 {
-            return (sorted[middle - 1] + sorted[middle]) / 2
-        }
-        return sorted[middle]
     }
 
     private static func localAppKind(for element: LocalUIElement) -> LocalAppControlKind {
@@ -545,7 +689,7 @@ public struct LocalUIElementDetectionService: LocalUIElementDetecting {
             "localUIElement.elementCount": String(metrics.elementCount),
             "localUIElement.suppressedCount": String(metrics.suppressedCount),
             "localUIElement.duplicateCount": String(metrics.duplicateCount),
-            "localUIElement.cvOnlyElementCount": String(metrics.cvOnlyElementCount),
+            "localUIElement.nonAccessibilityElementCount": String(metrics.nonAccessibilityElementCount),
             "localUIElement.minConfidence": String(metrics.minConfidence)
         ]
         for (source, count) in metrics.sourceCounts {

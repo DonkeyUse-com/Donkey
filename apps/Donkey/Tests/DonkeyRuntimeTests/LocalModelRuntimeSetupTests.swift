@@ -26,21 +26,21 @@ struct LocalModelRuntimeSetupTests {
         }
         let executableURL = try makeExecutable(
             root: download,
-            relativePath: "bin/donkey-yolo-segmenter"
+            relativePath: "bin/donkey-screenshot-segmentation-stub"
         )
         let manager = try runtimeManager(baseDirectory: root)
 
         let installation = try manager.registerDownloadedRuntime(
-            runtimeID: .yoloSegmenter,
+            runtimeID: .screenshotSegmentationStub,
             downloadedDirectory: download
         )
-        let status = try manager.status(for: .yoloSegmenter)
+        let status = try manager.status(for: .screenshotSegmentationStub)
         let environment = try manager.configuredEnvironment()
 
         #expect(installation.executablePath == executableURL.path)
         #expect(status.state == .installed)
         #expect(status.installation?.downloadedDirectoryPath == download.path)
-        #expect(environment["DONKEY_YOLO_SEGMENTER"] == executableURL.path)
+        #expect(environment["DONKEY_SCREENSHOT_SEGMENTATION_STUB"] == executableURL.path)
     }
 
     @Test
@@ -215,14 +215,14 @@ struct LocalModelRuntimeSetupTests {
         let executableData = Data("#!/bin/sh\necho ok\n".utf8)
         let privateKey = Curve25519.Signing.PrivateKey()
         var manifest = LocalModelRuntimePackageManifest(
-            runtimeID: .yoloSegmenter,
+            runtimeID: .screenshotSegmentationStub,
             runtimeVersion: "1.0.0",
-            modelID: "ultralytics/yolo26n-seg",
-            executableRelativePath: "bin/donkey-yolo-segmenter",
+            modelID: "stubbed-screenshot-segmentation",
+            executableRelativePath: "bin/donkey-screenshot-segmentation-stub",
             files: [
                 LocalModelRuntimePackageFile(
-                    relativePath: "bin/donkey-yolo-segmenter",
-                    downloadURL: URL(string: "https://example.test/yolo/bin")!,
+                    relativePath: "bin/donkey-screenshot-segmentation-stub",
+                    downloadURL: URL(string: "https://example.test/segmentation-stub/bin")!,
                     sha256: LocalModelRuntimeSetupManager.sha256Hex(executableData),
                     isExecutable: true
                 )
@@ -240,7 +240,7 @@ struct LocalModelRuntimeSetupTests {
             _ = try await manager.downloadAndInstall(
                 manifest: manifest,
                 downloader: FakeRuntimeDownloader(files: [
-                    URL(string: "https://example.test/yolo/bin")!: executableData
+                    URL(string: "https://example.test/segmentation-stub/bin")!: executableData
                 ])
             )
         }
@@ -262,7 +262,7 @@ struct LocalModelRuntimeSetupTests {
             _ = try await trustedManager.downloadAndInstall(
                 manifest: tampered,
                 downloader: FakeRuntimeDownloader(files: [
-                    URL(string: "https://example.test/yolo/bin")!: executableData
+                    URL(string: "https://example.test/segmentation-stub/bin")!: executableData
                 ])
             )
         }
@@ -275,14 +275,14 @@ struct LocalModelRuntimeSetupTests {
         let data = Data("#!/bin/sh\necho ok\n".utf8)
         let manager = try runtimeManager(baseDirectory: root)
         let unsigned = LocalModelRuntimePackageManifest(
-            runtimeID: .yoloSegmenter,
+            runtimeID: .screenshotSegmentationStub,
             runtimeVersion: "1.0.0",
-            modelID: "ultralytics/yolo26n-seg",
-            executableRelativePath: "bin/donkey-yolo-segmenter",
+            modelID: "stubbed-screenshot-segmentation",
+            executableRelativePath: "bin/donkey-screenshot-segmentation-stub",
             files: [
                 LocalModelRuntimePackageFile(
-                    relativePath: "bin/donkey-yolo-segmenter",
-                    downloadURL: URL(string: "https://example.test/yolo/bin")!,
+                    relativePath: "bin/donkey-screenshot-segmentation-stub",
+                    downloadURL: URL(string: "https://example.test/segmentation-stub/bin")!,
                     sha256: LocalModelRuntimeSetupManager.sha256Hex(data),
                     isExecutable: true
                 )
@@ -292,19 +292,19 @@ struct LocalModelRuntimeSetupTests {
         await #expect(throws: LocalModelRuntimeSetupError.manifestMissingSignature) {
             _ = try await manager.downloadAndInstall(
                 manifest: unsigned,
-                downloader: FakeRuntimeDownloader(files: [URL(string: "https://example.test/yolo/bin")!: data])
+                downloader: FakeRuntimeDownloader(files: [URL(string: "https://example.test/segmentation-stub/bin")!: data])
             )
         }
 
         let signedWithBadHash = LocalModelRuntimePackageManifest(
-            runtimeID: .yoloSegmenter,
+            runtimeID: .screenshotSegmentationStub,
             runtimeVersion: "1.0.0",
-            modelID: "ultralytics/yolo26n-seg",
-            executableRelativePath: "bin/donkey-yolo-segmenter",
+            modelID: "stubbed-screenshot-segmentation",
+            executableRelativePath: "bin/donkey-screenshot-segmentation-stub",
             files: [
                 LocalModelRuntimePackageFile(
-                    relativePath: "bin/donkey-yolo-segmenter",
-                    downloadURL: URL(string: "https://example.test/yolo/bin")!,
+                    relativePath: "bin/donkey-screenshot-segmentation-stub",
+                    downloadURL: URL(string: "https://example.test/segmentation-stub/bin")!,
                     sha256: "bad",
                     isExecutable: true
                 )
@@ -313,10 +313,10 @@ struct LocalModelRuntimeSetupTests {
             signingKeyID: "test-key"
         )
 
-        await #expect(throws: LocalModelRuntimeSetupError.manifestFileHashMismatch(relativePath: "bin/donkey-yolo-segmenter")) {
+        await #expect(throws: LocalModelRuntimeSetupError.manifestFileHashMismatch(relativePath: "bin/donkey-screenshot-segmentation-stub")) {
             _ = try await manager.downloadAndInstall(
                 manifest: signedWithBadHash,
-                downloader: FakeRuntimeDownloader(files: [URL(string: "https://example.test/yolo/bin")!: data])
+                downloader: FakeRuntimeDownloader(files: [URL(string: "https://example.test/segmentation-stub/bin")!: data])
             )
         }
     }
@@ -425,23 +425,23 @@ struct LocalModelRuntimeSetupTests {
     @Test
     func removeRuntimeClearsRegistryAndManagedFiles() throws {
         let root = temporaryDirectory()
-        let download = root.appendingPathComponent("Packages/yolo-segmenter/1.0.0", isDirectory: true)
+        let download = root.appendingPathComponent("Packages/screenshot-segmentation-stub/1.0.0", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let executable = try makeExecutable(
             root: download,
-            relativePath: "bin/donkey-yolo-segmenter"
+            relativePath: "bin/donkey-screenshot-segmentation-stub"
         )
         let manager = try runtimeManager(baseDirectory: root)
         try manager.registerExecutable(
-            runtimeID: .yoloSegmenter,
+            runtimeID: .screenshotSegmentationStub,
             executableURL: executable,
             downloadedDirectory: download,
             runtimeVersion: "1.0.0",
-            modelID: "ultralytics/yolo26n-seg"
+            modelID: "stubbed-screenshot-segmentation"
         )
 
-        let removed = try manager.removeRuntime(runtimeID: .yoloSegmenter)
-        let status = try manager.status(for: .yoloSegmenter)
+        let removed = try manager.removeRuntime(runtimeID: .screenshotSegmentationStub)
+        let status = try manager.status(for: .screenshotSegmentationStub)
 
         #expect(removed)
         #expect(status.state == .notInstalled)
@@ -489,11 +489,11 @@ struct LocalModelRuntimeSetupTests {
                 installSteps: []
             ),
             LocalModelRuntimeSpec(
-                id: .yoloSegmenter,
-                displayName: "YOLO26 screenshot segmentation",
-                environmentVariableName: "DONKEY_YOLO_SEGMENTER",
-                expectedExecutableRelativePath: "bin/donkey-yolo-segmenter",
-                modelName: "ultralytics/yolo26n-seg",
+                id: .screenshotSegmentationStub,
+                displayName: "Screenshot segmentation stub",
+                environmentVariableName: "DONKEY_SCREENSHOT_SEGMENTATION_STUB",
+                expectedExecutableRelativePath: "bin/donkey-screenshot-segmentation-stub",
+                modelName: "stubbed-screenshot-segmentation",
                 downloadPageURL: nil,
                 manifestURL: nil,
                 installSteps: []

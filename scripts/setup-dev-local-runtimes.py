@@ -20,14 +20,12 @@ RUNTIME_ENV_NAMES = {
     "local-llm": "DONKEY_LOCAL_LLM_RUNTIME_MANIFEST_URL",
     "parakeet-transcriber": "DONKEY_PARAKEET_RUNTIME_MANIFEST_URL",
     "ui-understander": "DONKEY_UI_UNDERSTANDER_RUNTIME_MANIFEST_URL",
-    "yolo-segmenter": "DONKEY_YOLO_RUNTIME_MANIFEST_URL",
 }
 
 RUNTIME_EXECUTABLE_ENV_NAMES = {
     "local-llm": "DONKEY_LOCAL_LLM_RUNNER",
     "parakeet-transcriber": "DONKEY_PARAKEET_TRANSCRIBER",
     "ui-understander": "DONKEY_UI_UNDERSTANDER",
-    "yolo-segmenter": "DONKEY_YOLO_SEGMENTER",
 }
 
 DEFAULT_BASE_DIR = (

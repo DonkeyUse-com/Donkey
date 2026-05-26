@@ -23,7 +23,7 @@ quick local-app actions:
 - Keep prompt submissions, voice transcripts, and follow-ups on the same agent-harness path: task-thread routing, context assembly, conversational response, clarification, review, catalog-backed action parsing, task validation, and guarded local-app execution when a turn is actionable.
 - Resolve model-classified local-item requests against local apps, files, and folders by querying the current Mac with the SQLite-backed agent memory store, Spotlight/`mdfind`, and bounded filesystem fallback. If the requested local item cannot be found, keep the task safe and report that it was not found instead of falling back to a vague clarification.
 - Handle scriptable app tasks as guarded AppleScript automation when possible. Commands may use task metadata, generated source, or compact templates; completion is verified through generic task verification policy instead of requiring visible result text for every app.
-- Visualize agent work with the spawned task cursor when a submitted turn already has one. Normal local-app tasks keep planning in the background and may create a final `AgentVisualizationPlan` only from runtime evidence such as evidence-backed action steps, observations, and action traces. Cursor playback uses only grounded control bounds or action targets, so it does not animate to invented coordinates. Visual-only demonstration turns use the same plan shape without live input. Local-app visualizations use observed Accessibility or screenshot-understanding control bounds when available, convert target-window-normalized element centers into the active overlay screen's pixel coordinates, and only then move the overlay cursor. Donkey moves the overlay cursor along curved paths and shows compact labels next to it while keeping the real mouse untouched. A separate visualization-only cursor is only a fallback when no spawned cursor is available to attach to.
+- Visualize agent work with the spawned task cursor when a submitted turn already has one. Normal local-app tasks keep planning in the background and may create a final `AgentVisualizationPlan` only from runtime evidence such as evidence-backed action steps, observations, and action traces. Cursor playback uses only grounded control bounds or action targets, so it does not animate to invented coordinates. Visual-only demonstration turns use the same plan shape without live input. Local-app visualizations use observed Accessibility or action-trace control bounds when available, convert target-window-normalized element centers into the active overlay screen's pixel coordinates, and only then move the overlay cursor. Donkey moves the overlay cursor along curved paths and shows compact labels next to it while keeping the real mouse untouched. A separate visualization-only cursor is only a fallback when no spawned cursor is available to attach to.
 - Maintain a background agent memory store in Application Support. The store records resolved and missing local-item lookups, prewarms apps, stores runtime task definitions, keeps metadata such as kind/path/bundle ID/source/task/action, indexes records with SQLite FTS5 plus local vectors, and passes a bounded set of matching hints into the agent harness memory section for classifier and model consideration. Protected file folders such as Desktop, Documents, and Downloads stay lazy and are searched only when a user-requested local-item lookup needs them. See `docs/guides/decision-system.md` for how those hints feed typed model decisions and guarded local-app plans.
 - Persist task threads as searchable Core Data conversations with event history, task assets, and per-run runtime coordination for any action work attached to the thread.
 - Keep the overlay non-invasive. Permission setup requests Accessibility, screenshot, and microphone access with user-visible reasons, but the overlay itself does not capture the screen or synthesize input directly. Bounded screenshots and Accessibility reads are used only by guarded local-app workflows.
@@ -34,15 +34,15 @@ quick local-app actions:
   no config exists, the config is invalid, or `"enabled": false`, the debug
   overlay is fully disabled. When enabled with `"provider": "accessibility"`,
   it uses the local UI element detection service: invisible Accessibility reads
-  are merged with native screenshot OCR, shape/layout, color/icon, and optional
-  hover-probe evidence, then drawn as click-through boxes with source badges
-  beneath Donkey's own prompt/status/spawn UI. The local Accessibility provider
-  only inspects safe visible windows on the selected screen. Optional target
-  filters such as `"targetBundleIdentifiers"` and `"targetAppNames"` can narrow
-  the overlay to matching apps, and `"activeWindowOnly": true` can suppress
-  rendering unless the matching app owns the focused frontmost window. Hosted
-  `openai` and `gemini` providers still use the read-only inspection route and
-  strict JSON element metadata.
+  are merged with optional hover-probe evidence, then drawn as
+  click-through boxes with source badges beneath Donkey's own
+  prompt/status/spawn UI. The native screenshot CV detector is stubbed and does
+  not emit OCR, shape, color, layout, segmentation, or tap-target candidates.
+  The local Accessibility provider only inspects safe visible windows on the
+  selected screen. Optional target filters such as `"targetBundleIdentifiers"`
+  and `"targetAppNames"` can narrow the overlay to matching apps, and
+  `"activeWindowOnly": true` can suppress rendering unless the matching app owns
+  the focused frontmost window.
 
 ```json
 {
@@ -77,11 +77,11 @@ quick local-app actions:
 - The developer UI inspection overlay is separate from agent visualization. It
   is a transparent, non-activating, click-through, keyboard-pass-through AppKit
   panel at a lower window level than Donkey's interactive UI. It renders
-  CALayer rectangles and labels from local detector output or model-returned
-  JSON only; provider action calls such as click, type, scroll, drag,
+  CALayer rectangles and labels from local Accessibility or hover-probe detector
+  output only. Provider action calls such as click, type, scroll, drag,
   navigation, `computer_call`, or `function_call` are rejected instead of
-  executed. CV-only and hover-only detections are visualization/read-only
-  evidence and must not become live input authority.
+  executed. Hover-only detections are visualization/read-only evidence and must
+  not become live input authority.
 - Task actions in the notch, including follow-up submission and pause/resume, must cross the model/controller command boundary with the selected task ID.
 - Pointer prompt command handling should emit actionable `com.donkey.app` route/result logs for submitted commands, routing decisions, intent resolution, local action traces, unsupported requests, unavailable apps, and final task status. Action trace logs should state the backend, input mode, whether an element click happened, the control or bounds target, and that the overlay pointer is visual-only.
 
@@ -98,7 +98,7 @@ Manually verify:
 - With multiple spawned cursors visible, clicking a cursor selects it; double-Command still opens the centered prompt, and the submitted typed or voice turn routes to the selected/latest cursor's task without opening the inline label editor.
 - Open requests for installed apps, files, and folders launch or open the local item; missing local items show a not-found result and log the lookup provider/reason.
 - LLM-classified visual-only prompts complete as visualization turns and show the animated cursor with typed labels without moving the real pointer.
-- Normal local-app tasks can produce final visualization steps for observed, navigated, acted, and verified runtime work. Planning stays in the background. Cursor playback should target observed control centers from Accessibility, screenshot understanding, or action traces when those bounds exist, omit ungrounded steps, and must not claim completion unless the runtime verification state supports it.
+- Normal local-app tasks can produce final visualization steps for observed, navigated, acted, and verified runtime work. Planning stays in the background. Cursor playback should target observed control centers from Accessibility or action traces when those bounds exist, omit ungrounded steps, and must not claim completion unless the runtime verification state supports it.
 - The prompt supports wrapping, Shift-Return newline insertion, Return submission, Escape dismissal, outside-click dismissal, and dragging from non-input areas.
 - File drops on the notch attach to the active or most recent task.
 - With `dev-overlay.json` enabled, interact with underlying applications while

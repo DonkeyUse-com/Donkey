@@ -272,8 +272,8 @@ internal planning, approval/review, guarded execution, and verification.
 Evidence planning remains a background runtime concern: the handler should not
 publish a pre-execution visualization for normal live work. The runner derives
 agent visualization steps from observed evidence and action traces, and cursor
-playback requires Accessibility, screenshot-understanding, or action-trace
-targets. The model can be told about this state, but the runner owns it.
+playback requires Accessibility or action-trace targets. The model can be told
+about this state, but the runner owns it.
 
 Live input remains guarded. The action engine checks permission policy, target
 focus, rate limits, hold duration, and backend evidence before issuing input.
@@ -305,13 +305,15 @@ bug, even if the script happens to work on one machine.
 Observation prefers Accessibility and app/window metadata. Bounded screenshots
 are fallback observation context only; they do not emit direct input actions.
 The local UI element detection service keeps this boundary explicit: it merges
-invisible Accessibility candidates with native screenshot signals such as OCR,
-shape/layout grouping, color/icon hints, and optional hover-probe evidence, then
-marks each element as overlay-only, read-only evidence, cursor-visualization
-evidence, or guarded-action eligible. CV-only and hover-only elements can guide
-debug overlays or visualization, but they do not authorize live clicks or text
-entry. Captured screenshots, Accessibility snapshots, and manual capture
-artifacts are trace evidence, not a general live vision loop.
+Accessibility candidates with optional hover-probe evidence, then marks each
+element as overlay-only, read-only evidence, cursor-visualization evidence, or
+guarded-action eligible. The native screenshot CV detector and off-the-shelf
+vision pipeline are stubs and must not produce OCR, shape, color, layout,
+segmentation, or tap-target candidates until a new measured implementation
+replaces them. Hover-only evidence can guide debug overlays or visualization,
+but it does not authorize live clicks or text entry. Captured screenshots,
+Accessibility snapshots, and manual capture artifacts are trace evidence, not a
+general live vision loop.
 Verification and screenshot fallback behavior should be derived from task
 metadata and runtime item metadata, not one-off branches for individual apps.
 
@@ -341,7 +343,10 @@ local AX-primary UI element detection service and renders merged source badges.
 The local provider only inspects safe visible windows on the selected screen;
 optional target filters can narrow it to matching apps, and
 `"activeWindowOnly": true` can keep it blank unless a matching app owns the
-focused frontmost window. Hosted providers send screenshots to the read-only
+focused frontmost window. The overlay tracker stabilizes small geometry jitter,
+brief disappearances, and one-sample label/source changes before redrawing so
+the debugger reflects durable UI changes instead of sampler noise. Hosted
+providers send screenshots to the read-only
 inspection route only while a config explicitly enables them, and accept strict
 JSON element metadata only. If a provider returns a computer/function action for
 this route, the client rejects the frame and performs no interaction.

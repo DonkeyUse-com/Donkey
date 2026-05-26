@@ -41,10 +41,6 @@ DEFAULT_RUNTIME_REQUIREMENTS: dict[str, list[str]] = {
     "parakeet-transcriber": [
         "huggingface_hub>=0.25,<1",
     ],
-    "yolo-segmenter": [
-        "ultralytics>=8.3,<9",
-        "opencv-python-headless>=4.10,<5",
-    ],
 }
 
 
@@ -72,8 +68,8 @@ def main() -> int:
     if RUNTIME_ID == "parakeet-transcriber":
         write_json(run_parakeet(request))
         return 0
-    if RUNTIME_ID == "yolo-segmenter":
-        write_json(run_yolo(request))
+    if RUNTIME_ID == "screenshot-segmentation-stub":
+        write_json(run_screenshot_segmentation_stub(request))
         return 0
     if RUNTIME_ID == "ui-understander":
         write_json(run_ui_understander(request))
@@ -275,16 +271,23 @@ def prepare_model_weights(request: dict[str, Any]) -> dict[str, Any]:
             return prepared(cache_dir, {"modelWeights.status": "cached", "modelWeights.path": str(target_file)})
         return download_model_file(MODEL_URL, target_file, MODEL_SHA256, cache_dir)
 
-    if RUNTIME_ID == "yolo-segmenter":
-        return prepare_ultralytics_model(cache_dir)
+    if RUNTIME_ID == "screenshot-segmentation-stub":
+        return prepared(
+            cache_dir,
+            {
+                "modelWeights.status": "notRequired",
+                "runtime.backend": "screenshot-segmentation-stub",
+                "reason": "cvPipelineRemovedPendingReplacement",
+            },
+        )
 
     if RUNTIME_ID == "ui-understander":
         return prepared(
             cache_dir,
             {
                 "modelWeights.status": "notRequired",
-                "runtime.backend": "external-ui-understander",
-                "reason": "uiUnderstandingUsesPackagedAppleVisionSidecar",
+                "runtime.backend": "local-ui-understanding-stubbed-visual",
+                "reason": "uiUnderstandingVisualPipelineStubbed",
             },
         )
 
@@ -335,31 +338,6 @@ def prepare_huggingface_snapshot(cache_dir: str) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         return error_payload(
             "huggingFaceSnapshotDownloadFailed",
-            {"cacheDirectory": cache_dir, "detail": str(exc)},
-        )
-
-
-def prepare_ultralytics_model(cache_dir: str) -> dict[str, Any]:
-    try:
-        from ultralytics import YOLO  # type: ignore
-    except Exception as exc:  # noqa: BLE001
-        return error_payload(
-            "pythonDependencyUnavailable",
-            {"cacheDirectory": cache_dir, "dependency": "ultralytics", "detail": str(exc)},
-        )
-
-    try:
-        YOLO(MODEL_ID)
-        return prepared(
-            cache_dir,
-            {
-                "modelWeights.status": "cached",
-                "modelWeights.provider": "ultralytics",
-            },
-        )
-    except Exception as exc:  # noqa: BLE001
-        return error_payload(
-            "ultralyticsModelPrepareFailed",
             {"cacheDirectory": cache_dir, "detail": str(exc)},
         )
 
@@ -1575,65 +1553,19 @@ def transcript_payload(text: str, confidence: float, extra: dict[str, Any] | Non
     }
 
 
-def run_yolo(request: dict[str, Any]) -> dict[str, Any]:
-    external_command = os.environ.get("DONKEY_YOLO_COMMAND")
-    if external_command:
-        return run_external_json_command(external_command, request)
-
-    try:
-        from ultralytics import YOLO  # type: ignore
-    except Exception as exc:  # noqa: BLE001
-        return {"masks": [], "preprocessMS": 0, "modelInferenceMS": 0, "metadata": metadata({"reason": "pythonDependencyUnavailable", "dependency": "ultralytics", "detail": str(exc)})}
-
-    image_path = request.get("cropImagePath")
-    if not image_path:
-        return {"masks": [], "preprocessMS": 0, "modelInferenceMS": 0, "metadata": metadata({"reason": "missingCropImagePath"})}
-
-    started = time.monotonic()
-    try:
-        model = YOLO(MODEL_ID)
-        loaded = time.monotonic()
-        results = model(image_path)
-        finished = time.monotonic()
-        masks = yolo_masks(results)
-        return {
-            "masks": masks,
-            "preprocessMS": (loaded - started) * 1000,
-            "modelInferenceMS": (finished - loaded) * 1000,
-            "metadata": metadata({"runtime.backend": "ultralytics"}),
-        }
-    except Exception as exc:  # noqa: BLE001
-        return {"masks": [], "preprocessMS": 0, "modelInferenceMS": 0, "metadata": metadata({"reason": "yoloSegmentationFailed", "detail": str(exc)})}
-
-
-def yolo_masks(results: Any) -> list[dict[str, Any]]:
-    masks: list[dict[str, Any]] = []
-    first = results[0] if results else None
-    if first is None or getattr(first, "boxes", None) is None:
-        return masks
-    names = getattr(first, "names", {}) or {}
-    boxes = getattr(first.boxes, "xyxy", []) or []
-    confidences = getattr(first.boxes, "conf", []) or []
-    classes = getattr(first.boxes, "cls", []) or []
-    for index, box in enumerate(boxes):
-        values = [float(v) for v in box.tolist()]
-        confidence = float(confidences[index]) if index < len(confidences) else 0
-        class_id = int(classes[index]) if index < len(classes) else -1
-        label = str(names.get(class_id, class_id))
-        masks.append(
+def run_screenshot_segmentation_stub(request: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "masks": [],
+        "preprocessMS": 0,
+        "modelInferenceMS": 0,
+        "metadata": metadata(
             {
-                "id": f"mask-{index}",
-                "label": label,
-                "bounds": {
-                    "origin": {"x": values[0], "y": values[1], "space": "window"},
-                    "size": {"width": max(0, values[2] - values[0]), "height": max(0, values[3] - values[1]), "space": "window"},
-                },
-                "confidence": confidence,
-                "pointCount": 0,
-                "metadata": {"classID": str(class_id)},
+                "runtime.backend": "screenshot-segmentation-stub",
+                "reason": "cvPipelineRemovedPendingReplacement",
+                "rawPixelsRead": "false",
             }
-        )
-    return masks
+        ),
+    }
 
 
 def run_ui_understander(request: dict[str, Any]) -> dict[str, Any]:
@@ -1645,7 +1577,7 @@ def run_ui_understander(request: dict[str, Any]) -> dict[str, Any]:
         "controls": [],
         "formFields": [],
         "confidence": 0,
-        "metadata": metadata({"reason": "uiUnderstandingRequiresPackagedAppleVisionSidecar"}),
+        "metadata": metadata({"reason": "uiUnderstandingVisualPipelineStubbed", "rawPixelsRead": "false"}),
     }
 
 

@@ -23,6 +23,12 @@ final class DebugUIInspectionOverlayController {
         }
     }
 
+    func setHidden(_ hidden: Bool) {
+        for surface in surfaces.values {
+            surface.setHidden(hidden)
+        }
+    }
+
     func close() {
         for surface in surfaces.values {
             surface.close()
@@ -124,6 +130,14 @@ private final class DebugUIInspectionSurface {
         elementLayers.removeAll()
     }
 
+    func setHidden(_ hidden: Bool) {
+        if hidden {
+            panel.orderOut(nil)
+        } else {
+            panel.orderFrontRegardless()
+        }
+    }
+
     private func makeLayers(for element: DebugUIElement) -> DebugUIInspectionElementLayers {
         let boxLayer = CAShapeLayer()
         boxLayer.name = "debug-ui-box-\(element.id)"
@@ -171,62 +185,23 @@ private final class DebugUIInspectionSurface {
         layers.box.strokeColor = nsColor(hex: element.visualStyle.borderColor, alpha: 0.95).cgColor
 
         let title = labelText(for: element)
-        let labelSize = labelFrameSize(for: title, boxFrame: boxFrame)
-        let labelY = max(0, boxFrame.minY - labelSize.height - 2)
+        let labelFrame = DebugUIOverlayGeometry.stableLabelFrame(
+            for: title,
+            boxFrame: boxFrame,
+            containerSize: rootView.bounds.size
+        )
         layers.label.string = title
         layers.label.foregroundColor = nsColor(hex: element.visualStyle.labelColor, alpha: 1).cgColor
         layers.label.backgroundColor = nsColor(hex: element.visualStyle.overlayColor, alpha: 0.92).cgColor
-        layers.label.frame = CGRect(
-            x: max(0, min(boxFrame.minX, rootView.bounds.width - labelSize.width)),
-            y: labelY,
-            width: labelSize.width,
-            height: labelSize.height
-        ).integral
+        layers.label.frame = labelFrame
     }
 
     private func labelText(for element: DebugUIElement) -> String {
         let label = element.label.trimmingCharacters(in: .whitespacesAndNewlines)
-        let baseLabel: String
         if label.isEmpty {
-            baseLabel = element.type.rawValue.replacingOccurrences(of: "_", with: " ")
-        } else {
-            baseLabel = label
+            return element.type.rawValue.replacingOccurrences(of: "_", with: " ")
         }
-
-        guard let sources = element.metadata["localUIElement.sources"],
-              !sources.isEmpty
-        else {
-            return baseLabel
-        }
-        let badge = sources
-            .split(separator: ",")
-            .map { sourceBadge(for: String($0)) }
-            .joined(separator: "+")
-        return "[\(badge)] \(baseLabel)"
-    }
-
-    private func sourceBadge(for source: String) -> String {
-        switch source {
-        case "accessibility": return "AX"
-        case "connectedComponent": return "CC"
-        case "hoverProbe": return "HOVER"
-        case "template": return "TPL"
-        case "shape": return "SHAPE"
-        case "color": return "COLOR"
-        case "layout": return "LAYOUT"
-        case "ocr": return "OCR"
-        default:
-            return source.uppercased()
-        }
-    }
-
-    private func labelFrameSize(for text: String, boxFrame: CGRect) -> CGSize {
-        let characterWidth = 6.5
-        let width = min(
-            max(48, Double(text.count) * characterWidth + 14),
-            max(64, Double(rootView.bounds.width - max(0, boxFrame.minX)))
-        )
-        return CGSize(width: width, height: 18)
+        return label
     }
 
     private func fillColor(for element: DebugUIElement) -> CGColor {

@@ -75,25 +75,25 @@ struct ManualCaptureDebugCommandTests {
                 "Donkey",
                 "--install-local-runtime",
                 "--runtime-id",
-                "yolo-segmenter",
+                "screenshot-segmentation-stub",
                 "--runtime-source",
-                "/tmp/yolo-runtime"
+                "/tmp/segmentation-stub-runtime"
             ]
         )
 
         #expect(command == .installLocalRuntime(
             LocalRuntimeInstallDebugOptions(
-                runtimeID: .yoloSegmenter,
-                sourceDirectory: URL(fileURLWithPath: "/tmp/yolo-runtime")
+                runtimeID: .screenshotSegmentationStub,
+                sourceDirectory: URL(fileURLWithPath: "/tmp/segmentation-stub-runtime")
             )
         ))
 
         #expect(try ManualCaptureDebugCommandParser.parse(
-            arguments: ["Donkey", "--repair-local-runtime", "--runtime-id", "yolo-segmenter"]
-        ) == .repairLocalRuntime(.yoloSegmenter))
+            arguments: ["Donkey", "--repair-local-runtime", "--runtime-id", "screenshot-segmentation-stub"]
+        ) == .repairLocalRuntime(.screenshotSegmentationStub))
         #expect(try ManualCaptureDebugCommandParser.parse(
-            arguments: ["Donkey", "--remove-local-runtime", "--runtime-id", "yolo-segmenter"]
-        ) == .removeLocalRuntime(.yoloSegmenter))
+            arguments: ["Donkey", "--remove-local-runtime", "--runtime-id", "screenshot-segmentation-stub"]
+        ) == .removeLocalRuntime(.screenshotSegmentationStub))
     }
 
     @Test
@@ -207,7 +207,7 @@ struct ManualCaptureDebugCommandTests {
         #expect(instructionLines.contains("runtime=parakeet-transcriber"))
         #expect(instructionLines.contains("expectedExecutable=bin/donkey-parakeet-transcriber"))
         #expect(statusLines.contains("local runtime status"))
-        #expect(statusLines.contains("runtime=yolo-segmenter | state=notInstalled | env=DONKEY_YOLO_SEGMENTER | executable=- | reason=noRegisteredRuntime"))
+        #expect(statusLines.contains("runtime=screenshot-segmentation-stub | state=notInstalled | env=DONKEY_SCREENSHOT_SEGMENTATION_STUB | executable=- | reason=noRegisteredRuntime"))
 
         let supportLines = ManualCaptureDebugCommandFormatter.lines(
             for: try manager.supportSnapshot()

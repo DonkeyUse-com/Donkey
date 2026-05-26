@@ -4,7 +4,6 @@ import DonkeyRuntime
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
-@preconcurrency import Vision
 
 private struct SidecarRequest: Codable {
     var operation: String?
@@ -66,7 +65,7 @@ private struct DebugInspectionArtifact: Codable {
 
 private let runtimeID = ProcessInfo.processInfo.environment["DONKEY_RUNTIME_ID"] ?? "ui-understander"
 private let runtimeVersion = ProcessInfo.processInfo.environment["DONKEY_RUNTIME_VERSION"] ?? "0.3.0-runner"
-private let modelID = ProcessInfo.processInfo.environment["DONKEY_MODEL_ID"] ?? "apple-vision-text-recognition"
+private let modelID = ProcessInfo.processInfo.environment["DONKEY_MODEL_ID"] ?? "local-ui-understanding-stubbed-visual"
 
 @main
 struct DonkeyUIUnderstandingSidecar {
@@ -92,7 +91,7 @@ struct DonkeyUIUnderstandingSidecar {
                 runtimeID: runtimeID,
                 modelID: modelID,
                 metadata: [
-                    "runtime.backend": "apple-vision",
+                    "runtime.backend": "local-ui-understanding-stubbed-visual",
                     "reason": "uiUnderstandingSidecarFailed",
                     "detail": String(describing: error)
                 ]
@@ -111,7 +110,7 @@ struct DonkeyUIUnderstandingSidecar {
             modelID: modelID,
             protocolVersion: "v1",
             metadata: [
-                "runtime.backend": "apple-vision",
+                "runtime.backend": "local-ui-understanding-stubbed-visual",
                 "modelWeights.status": "notRequired",
                 "modelWeights.provider": "system"
             ]
@@ -125,7 +124,7 @@ struct DonkeyUIUnderstandingSidecar {
             modelID: modelID,
             cacheDirectory: cacheDirectory,
             metadata: [
-                "runtime.backend": "apple-vision",
+                "runtime.backend": "local-ui-understanding-stubbed-visual",
                 "modelWeights.status": "notRequired",
                 "modelWeights.provider": "system"
             ]
@@ -208,7 +207,7 @@ struct DonkeyUIUnderstandingSidecar {
             return LocalUIUnderstandingResult(
                 confidence: 0,
                 metadata: [
-                    "runtime.backend": "apple-vision",
+                    "runtime.backend": "local-ui-understanding-stubbed-visual",
                     "reason": "missingImagePath"
                 ]
             )
@@ -222,29 +221,70 @@ struct DonkeyUIUnderstandingSidecar {
             LocalUIElementDetectionRequest(
                 traceID: request.traceID ?? "ui-understanding-\(UUID().uuidString)",
                 screenshotPNGData: imageData,
+                screenshotImagePath: imageURL.path,
                 pixelSize: pixelSize,
                 minConfidence: Double(request.metadata?["minConfidence"] ?? "") ?? 0.25,
                 metadata: [
-                    "runtime.backend": "apple-vision-native-ui-detection",
+                    "runtime.backend": "local-ui-element-detection-stubbed-visual",
                     "targetID": request.targetID ?? ""
                 ].merging(request.metadata ?? [:]) { current, _ in current }
             )
         )
         let elapsedMS = (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000
-        let result = LocalUIElementDetectionService().localUIUnderstandingResult(from: trace)
+        let detectionService = LocalUIElementDetectionService()
+        let result = detectionService.localUIUnderstandingResult(from: trace)
+        let debugFrame = detectionService.debugInspectionFrame(from: trace)
+        let annotatedURL = try writeAnnotatedScreenshot(
+            request: request,
+            imageURL: imageURL,
+            screenshotPNGData: imageData,
+            frame: debugFrame
+        )
         return LocalUIUnderstandingResult(
             visibleText: result.visibleText,
             controls: result.controls,
             formFields: result.formFields,
             confidence: result.confidence,
             metadata: result.metadata.merging([
-                "runtime.backend": "apple-vision-native-ui-detection",
-                "recognition.count": String(trace.candidates.filter { $0.source == .ocr }.count),
-                "latency.appleVisionTextMS": String(format: "%.3f", trace.metrics.latencyMS["nativeVisual.ocr"] ?? 0),
+                "runtime.backend": "local-ui-element-detection-stubbed-visual",
+                "nativeVisual.status": trace.metadata["nativeVisual.status"] ?? "unknown",
                 "latency.localUIElementSidecarMS": String(format: "%.3f", elapsedMS),
+                "debugInspection.element.count": String(debugFrame.elements.count),
+                "debugInspection.annotatedPath": annotatedURL?.path ?? "",
                 "directInputActionsAllowed": "false"
             ]) { current, _ in current }
         )
+    }
+
+    private static func writeAnnotatedScreenshot(
+        request: SidecarRequest,
+        imageURL: URL,
+        screenshotPNGData: Data,
+        frame: DebugUIInspectionFrame
+    ) throws -> URL? {
+        guard let annotated = annotatedPNGData(
+            screenshotPNGData: screenshotPNGData,
+            frame: frame
+        ) else {
+            return nil
+        }
+
+        let outputDirectory = URL(
+            fileURLWithPath: request.outputDirectory
+                ?? request.artifactURL
+                ?? FileManager.default.temporaryDirectory
+                    .appendingPathComponent("donkey-debug-ui-inspection", isDirectory: true)
+                    .path,
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: outputDirectory,
+            withIntermediateDirectories: true
+        )
+        let filename = "\(slug(request.traceID ?? imageURL.deletingPathExtension().lastPathComponent)).annotated.png"
+        let annotatedURL = outputDirectory.appendingPathComponent(filename)
+        try annotated.write(to: annotatedURL, options: .atomic)
+        return annotatedURL
     }
 
     private static func imagePixelSize(from data: Data) -> HotLoopSize {
@@ -256,36 +296,6 @@ struct DonkeyUIUnderstandingSidecar {
             return HotLoopSize(width: 1, height: 1, space: .screen)
         }
         return HotLoopSize(width: width.doubleValue, height: height.doubleValue, space: .screen)
-    }
-
-    private static func recognizedText(in imageURL: URL) throws -> [(text: String, confidence: Double, frame: HotLoopRect)] {
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .fast
-        request.usesLanguageCorrection = true
-        request.recognitionLanguages = ["en-US"]
-
-        let handler = VNImageRequestHandler(url: imageURL)
-        try handler.perform([request])
-
-        return (request.results ?? []).compactMap { observation in
-            guard let candidate = observation.topCandidates(1).first else {
-                return nil
-            }
-            let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return nil }
-            let box = observation.boundingBox
-            return (
-                text: text,
-                confidence: Double(candidate.confidence),
-                frame: HotLoopRect(
-                    x: box.minX,
-                    y: 1 - box.maxY,
-                    width: box.width,
-                    height: box.height,
-                    space: .normalizedTarget
-                )
-            )
-        }
     }
 
     private static func annotatedPNGData(
@@ -381,29 +391,10 @@ struct DonkeyUIUnderstandingSidecar {
     }
 
     private static func annotationLabel(for element: DebugUIElement) -> String {
-        let sources = (element.metadata["localUIElement.sources"] ?? "")
-            .split(separator: ",")
-            .map(sourceBadge)
-            .filter { !$0.isEmpty }
-            .joined(separator: "+")
         let label = element.label.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = label.isEmpty ? element.type.rawValue : label
         let cappedTitle = title.count > 34 ? "\(title.prefix(31))..." : title
-        return sources.isEmpty ? cappedTitle : "[\(sources)] \(cappedTitle)"
-    }
-
-    private static func sourceBadge(_ source: Substring) -> String {
-        switch source {
-        case "accessibility": return "AX"
-        case "ocr": return "OCR"
-        case "shape": return "SHAPE"
-        case "template": return "TPL"
-        case "color": return "COLOR"
-        case "connectedComponent": return "CC"
-        case "hoverProbe": return "HOVER"
-        case "layout": return "LAYOUT"
-        default: return String(source).uppercased()
-        }
+        return cappedTitle
     }
 
     private static func nsColor(hex: String) -> NSColor? {

@@ -197,6 +197,123 @@ struct DebugUIInspectionTests {
     }
 
     @Test
+    func trackerFreezesLargerBoundingBoxJitter() {
+        var tracker = DebugUIElementTracker()
+        _ = tracker.update(with: DebugUIInspectionFrame(elements: [
+            element(id: "button-1", label: "Save", x: 10, y: 20)
+        ]))
+        _ = tracker.update(with: DebugUIInspectionFrame(elements: [
+            element(id: "button-1", label: "Save", x: 10, y: 20)
+        ]))
+
+        let updated = tracker.update(with: DebugUIInspectionFrame(elements: [
+            element(id: "button-1", label: "Save", x: 15.8, y: 24.9)
+        ]))
+
+        #expect(updated.elements.first?.bbox == DebugUIBoundingBox(x: 10, y: 20, width: 80, height: 30))
+    }
+
+    @Test
+    func trackerRequiresRepeatedSamplesBeforeRenderingModerateMovement() {
+        var tracker = DebugUIElementTracker()
+        _ = tracker.update(with: DebugUIInspectionFrame(elements: [
+            element(id: "button-1", label: "Save", x: 10, y: 20)
+        ]))
+        _ = tracker.update(with: DebugUIInspectionFrame(elements: [
+            element(id: "button-1", label: "Save", x: 10, y: 20)
+        ]))
+
+        let firstMoved = tracker.update(with: DebugUIInspectionFrame(elements: [
+            element(id: "button-1", label: "Save", x: 28, y: 20)
+        ]))
+        let secondMoved = tracker.update(with: DebugUIInspectionFrame(elements: [
+            element(id: "button-1", label: "Save", x: 28.5, y: 20.2)
+        ]))
+
+        #expect(firstMoved.elements.first?.bbox == DebugUIBoundingBox(x: 10, y: 20, width: 80, height: 30))
+        #expect(secondMoved.elements.first?.bbox == DebugUIBoundingBox(x: 28.5, y: 20.2, width: 80, height: 30))
+    }
+
+    @Test
+    func trackerAcceptsLargeMovementImmediately() {
+        var tracker = DebugUIElementTracker()
+        _ = tracker.update(with: DebugUIInspectionFrame(elements: [
+            element(id: "button-1", label: "Save", x: 10, y: 20)
+        ]))
+        _ = tracker.update(with: DebugUIInspectionFrame(elements: [
+            element(id: "button-1", label: "Save", x: 10, y: 20)
+        ]))
+
+        let moved = tracker.update(with: DebugUIInspectionFrame(elements: [
+            element(id: "button-1", label: "Save", x: 95, y: 20)
+        ]))
+
+        #expect(moved.elements.first?.bbox == DebugUIBoundingBox(x: 95, y: 20, width: 80, height: 30))
+    }
+
+    @Test
+    func trackerRequiresRepeatedSamplesBeforeRenderingLabelAndSourceBadgeChanges() {
+        var tracker = DebugUIElementTracker()
+        let accessibilityElement = element(
+            id: "button-1",
+            label: "Save",
+            x: 10,
+            y: 20,
+            metadata: ["localUIElement.sources": "accessibility"]
+        )
+        _ = tracker.update(with: DebugUIInspectionFrame(elements: [accessibilityElement]))
+        let rendered = tracker.update(with: DebugUIInspectionFrame(elements: [accessibilityElement]))
+
+        let changed = element(
+            id: "button-1",
+            label: "Save file",
+            x: 10,
+            y: 20,
+            metadata: ["localUIElement.sources": "accessibility,ocr"]
+        )
+        let firstChanged = tracker.update(with: DebugUIInspectionFrame(elements: [changed]))
+        let secondChanged = tracker.update(with: DebugUIInspectionFrame(elements: [changed]))
+
+        #expect(firstChanged.isOverlayRenderEquivalent(to: rendered))
+        #expect(secondChanged.elements.first?.label == "Save file")
+        #expect(secondChanged.elements.first?.metadata["localUIElement.sources"] == "accessibility,ocr")
+    }
+
+    @Test
+    func trackerRequiresMultipleSamplesBeforeRenderingNewElement() {
+        var tracker = DebugUIElementTracker()
+
+        let first = tracker.update(with: DebugUIInspectionFrame(elements: [
+            element(id: "button-1", label: "Save", x: 10, y: 20)
+        ]))
+        let second = tracker.update(with: DebugUIInspectionFrame(elements: [
+            element(id: "button-1", label: "Save", x: 10, y: 20)
+        ]))
+
+        #expect(first.elements.isEmpty)
+        #expect(second.elements.map(\.id) == ["button-1"])
+    }
+
+    @Test
+    func trackerRetainsMissingElementForAFewSamplesBeforeRemoving() {
+        var tracker = DebugUIElementTracker()
+        _ = tracker.update(with: DebugUIInspectionFrame(elements: [
+            element(id: "button-1", label: "Save", x: 10, y: 20)
+        ]))
+        _ = tracker.update(with: DebugUIInspectionFrame(elements: [
+            element(id: "button-1", label: "Save", x: 10, y: 20)
+        ]))
+
+        let firstMissing = tracker.update(with: DebugUIInspectionFrame())
+        let secondMissing = tracker.update(with: DebugUIInspectionFrame())
+        let thirdMissing = tracker.update(with: DebugUIInspectionFrame())
+
+        #expect(firstMissing.elements.map(\.id) == ["button-1"])
+        #expect(secondMissing.elements.map(\.id) == ["button-1"])
+        #expect(thirdMissing.elements.isEmpty)
+    }
+
+    @Test
     func geometryConvertsScreenshotPixelsToAppKitPoints() {
         let frame = DebugUIOverlayGeometry.appKitFrame(
             for: DebugUIBoundingBox(x: 200, y: 100, width: 400, height: 200),
@@ -216,6 +333,29 @@ struct DebugUIInspectionTests {
         )
 
         #expect(frame == CGRect(x: 100, y: 350, width: 200, height: 100))
+    }
+
+    @Test
+    func labelGeometryUsesStableWidthBuckets() {
+        let short = DebugUIOverlayGeometry.stableLabelFrame(
+            for: "Save",
+            boxFrame: CGRect(x: 24, y: 80, width: 80, height: 30),
+            containerSize: CGSize(width: 500, height: 400)
+        )
+        let medium = DebugUIOverlayGeometry.stableLabelFrame(
+            for: "Save current document",
+            boxFrame: CGRect(x: 24, y: 80, width: 80, height: 30),
+            containerSize: CGSize(width: 500, height: 400)
+        )
+        let topEdge = DebugUIOverlayGeometry.stableLabelFrame(
+            for: "Toolbar",
+            boxFrame: CGRect(x: 24, y: 4, width: 80, height: 30),
+            containerSize: CGSize(width: 500, height: 400)
+        )
+
+        #expect(short == CGRect(x: 24, y: 60, width: 96, height: 18))
+        #expect(medium == CGRect(x: 24, y: 60, width: 160, height: 18))
+        #expect(topEdge == CGRect(x: 24, y: 6, width: 96, height: 18))
     }
 
     @Test
@@ -965,14 +1105,19 @@ struct DebugUIInspectionTests {
         id: String,
         label: String,
         x: Double,
-        y: Double
+        y: Double,
+        width: Double = 80,
+        height: Double = 30,
+        type: DebugUIElementType = .button,
+        metadata: [String: String] = [:]
     ) -> DebugUIElement {
         DebugUIElement(
             id: id,
-            type: .button,
+            type: type,
             label: label,
-            bbox: DebugUIBoundingBox(x: x, y: y, width: 80, height: 30),
-            confidence: 0.9
+            bbox: DebugUIBoundingBox(x: x, y: y, width: width, height: height),
+            confidence: 0.9,
+            metadata: metadata
         )
     }
 

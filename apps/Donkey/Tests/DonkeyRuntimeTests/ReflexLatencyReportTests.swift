@@ -57,7 +57,6 @@ struct ReflexLatencyReportTests {
                         "latency.accessibilityActionMS": "5",
                         "latency.keyboardActionMS": "6",
                         "latency.verificationMS": "9",
-                        "latency.yoloSegmentationMS": "21",
                         "latency.uiUnderstandingMS": "16",
                         "latency.parakeetTranscriptionMS": "31"
                     ]
@@ -75,7 +74,6 @@ struct ReflexLatencyReportTests {
         #expect(lines.contains("droppedFrameCount=1"))
         #expect(lines.contains("softwareLoopMS=p50=10.00,p95=10.00,p99=10.00"))
         #expect(lines.contains("componentLatency.commandParseMS=p50=4.00,p95=4.00,p99=4.00"))
-        #expect(lines.contains("componentLatency.yoloSegmentationMS=p50=21.00,p95=21.00,p99=21.00"))
         #expect(lines.contains("componentLatency.parakeetTranscriptionMS=p50=31.00,p95=31.00,p99=31.00"))
     }
 

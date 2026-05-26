@@ -133,7 +133,7 @@ public struct LocalUIElementDetectionMetrics: Codable, Equatable, Sendable {
     public var elementCount: Int
     public var suppressedCount: Int
     public var duplicateCount: Int
-    public var cvOnlyElementCount: Int
+    public var nonAccessibilityElementCount: Int
     public var minConfidence: Double
     public var latencyMS: [String: Double]
 
@@ -143,7 +143,7 @@ public struct LocalUIElementDetectionMetrics: Codable, Equatable, Sendable {
         elementCount: Int = 0,
         suppressedCount: Int = 0,
         duplicateCount: Int = 0,
-        cvOnlyElementCount: Int = 0,
+        nonAccessibilityElementCount: Int = 0,
         minConfidence: Double = 0,
         latencyMS: [String: Double] = [:]
     ) {
@@ -152,7 +152,7 @@ public struct LocalUIElementDetectionMetrics: Codable, Equatable, Sendable {
         self.elementCount = elementCount
         self.suppressedCount = suppressedCount
         self.duplicateCount = duplicateCount
-        self.cvOnlyElementCount = cvOnlyElementCount
+        self.nonAccessibilityElementCount = nonAccessibilityElementCount
         self.minConfidence = min(max(minConfidence, 0), 1)
         self.latencyMS = latencyMS
     }
@@ -186,6 +186,7 @@ public struct LocalUIElementDetectionTrace: Codable, Equatable, Sendable {
 public struct LocalUIElementDetectionRequest: Equatable, Sendable {
     public var traceID: String
     public var screenshotPNGData: Data?
+    public var screenshotImagePath: String?
     public var pixelSize: HotLoopSize
     public var accessibilityCandidates: [LocalUIElementCandidate]
     public var hoverProbeCandidates: [LocalUIElementCandidate]
@@ -195,6 +196,7 @@ public struct LocalUIElementDetectionRequest: Equatable, Sendable {
     public init(
         traceID: String,
         screenshotPNGData: Data? = nil,
+        screenshotImagePath: String? = nil,
         pixelSize: HotLoopSize,
         accessibilityCandidates: [LocalUIElementCandidate] = [],
         hoverProbeCandidates: [LocalUIElementCandidate] = [],
@@ -203,6 +205,7 @@ public struct LocalUIElementDetectionRequest: Equatable, Sendable {
     ) {
         self.traceID = traceID
         self.screenshotPNGData = screenshotPNGData
+        self.screenshotImagePath = screenshotImagePath
         self.pixelSize = pixelSize
         self.accessibilityCandidates = accessibilityCandidates
         self.hoverProbeCandidates = hoverProbeCandidates

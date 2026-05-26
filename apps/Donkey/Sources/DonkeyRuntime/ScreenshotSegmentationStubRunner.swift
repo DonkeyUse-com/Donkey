@@ -123,113 +123,42 @@ public struct UnavailableScreenshotSegmentationBackend: ScreenshotSegmentationBa
 }
 
 public struct ProcessBackedScreenshotSegmentationBackend: ScreenshotSegmentationBackend {
-    public var sidecarRunner: any LocalJSONSidecarRunning
-    public var encoder: JSONEncoder
-    public var decoder: JSONDecoder
-
     public init(
         sidecarRunner: any LocalJSONSidecarRunning = ProcessBackedLocalJSONSidecarRunner(),
         encoder: JSONEncoder = JSONEncoder(),
         decoder: JSONDecoder = JSONDecoder()
     ) {
-        self.sidecarRunner = sidecarRunner
-        self.encoder = encoder
-        self.decoder = decoder
+        _ = sidecarRunner
+        _ = encoder
+        _ = decoder
     }
 
     public func segment(
         request: ScreenshotSegmentationRequest,
         model: OffTheShelfVisionModelCandidate
     ) async throws -> ScreenshotSegmentationBackendResult {
-        let input = YOLOSidecarRequest(
-            traceID: request.traceID,
-            frameID: request.frameID,
-            targetID: request.targetID,
-            cropID: request.cropID,
-            cropImagePath: request.cropImageFileURL?.path,
-            artifactURL: request.artifactURL?.absoluteString,
-            cropBounds: request.cropBounds,
-            pixelSize: request.pixelSize,
-            modelID: model.id,
-            modelName: model.modelName,
-            metadata: request.metadata
+        _ = request
+        _ = model
+        return ScreenshotSegmentationBackendResult(
+            masks: [],
+            preprocessMS: 0,
+            modelInferenceMS: 0,
+            metadata: [
+                "runner": "screenshot-segmentation-stub",
+                "reason": "cvPipelineRemovedPendingReplacement",
+                "rawPixelsRead": "false"
+            ]
         )
-        let result = await sidecarRunner.run(
-            LocalJSONSidecarRequest(
-                environmentVariableName: "DONKEY_YOLO_SEGMENTER",
-                inputData: try encoder.encode(input),
-                timeoutMS: Int(model.metadata["timeoutMS"] ?? "4000") ?? 4_000,
-                metadata: [
-                    "sidecar.role": "screenshotSegmentation",
-                    "modelID": model.id,
-                    "modelName": model.modelName
-                ]
-            )
-        )
-
-        guard result.status == .completed else {
-            throw ScreenshotSegmentationRunnerError.backendUnavailable(
-                result.metadata["sidecar.reason"] ?? result.status.rawValue
-            )
-        }
-
-        do {
-            let response = try decoder.decode(YOLOSidecarResponse.self, from: result.outputData)
-            return ScreenshotSegmentationBackendResult(
-                masks: response.masks,
-                preprocessMS: response.preprocessMS,
-                modelInferenceMS: response.modelInferenceMS,
-                metadata: result.metadata.merging(response.metadata) { current, _ in current }
-                    .merging([
-                        "latency.yoloSegmentationMS": result.latencyMS.map { String(format: "%.3f", $0) } ?? ""
-                    ]) { current, _ in current }
-            )
-        } catch {
-            throw ScreenshotSegmentationRunnerError.invalidOutput(String(describing: error))
-        }
     }
 }
 
-private struct YOLOSidecarRequest: Codable, Equatable, Sendable {
-    var traceID: String
-    var frameID: String
-    var targetID: String
-    var cropID: String
-    var cropImagePath: String?
-    var artifactURL: String?
-    var cropBounds: HotLoopRect
-    var pixelSize: HotLoopSize
-    var modelID: String
-    var modelName: String
-    var metadata: [String: String]
-}
-
-private struct YOLOSidecarResponse: Codable, Equatable, Sendable {
-    var masks: [ScreenshotSegmentationMask]
-    var preprocessMS: Double
-    var modelInferenceMS: Double
-    var metadata: [String: String]
-
-    init(
-        masks: [ScreenshotSegmentationMask] = [],
-        preprocessMS: Double = 0,
-        modelInferenceMS: Double = 0,
-        metadata: [String: String] = [:]
-    ) {
-        self.masks = masks
-        self.preprocessMS = preprocessMS
-        self.modelInferenceMS = modelInferenceMS
-        self.metadata = metadata
-    }
-}
-
-public struct YOLOScreenshotSegmentationRunner: Sendable {
+public struct ScreenshotSegmentationStubRunner: Sendable {
     public var model: OffTheShelfVisionModelCandidate
     public var backend: any ScreenshotSegmentationBackend
     public var now: @Sendable () -> RunTraceTimestamp
 
     public init(
-        model: OffTheShelfVisionModelCandidate = OffTheShelfVisionModelCatalog.yolo26NanoScreenshotSegmentation,
+        model: OffTheShelfVisionModelCandidate = OffTheShelfVisionModelCatalog.stubbedScreenshotSegmentation,
         backend: any ScreenshotSegmentationBackend = UnavailableScreenshotSegmentationBackend(),
         now: @escaping @Sendable () -> RunTraceTimestamp = Self.defaultNow
     ) {
@@ -240,7 +169,17 @@ public struct YOLOScreenshotSegmentationRunner: Sendable {
 
     public func run(_ request: ScreenshotSegmentationRequest) async throws -> ScreenshotSegmentationResult {
         let startedAt = now()
-        let backendResult = try await backend.segment(request: request, model: model)
+        _ = backend
+        let backendResult = ScreenshotSegmentationBackendResult(
+            masks: [],
+            preprocessMS: 0,
+            modelInferenceMS: 0,
+            metadata: [
+                "runner": "screenshot-segmentation-stub",
+                "reason": "cvPipelineRemovedPendingReplacement",
+                "rawPixelsRead": "false"
+            ]
+        )
         let completedAt = now()
         let totalMS = startedAt.milliseconds(until: completedAt) ?? 0
         let adapterOverheadMS = max(0, totalMS - backendResult.preprocessMS - backendResult.modelInferenceMS)
@@ -266,12 +205,13 @@ public struct YOLOScreenshotSegmentationRunner: Sendable {
             modelInferenceMS: backendResult.modelInferenceMS,
             adapterOverheadMS: adapterOverheadMS,
             metadata: [
-                "runner": "yolo-screenshot-segmentation",
+                "runner": "screenshot-segmentation-stub",
                 "modelFamily": model.family,
                 "modelName": model.modelName,
                 "inputSource": model.preferredInputSource.rawValue,
                 "liveDefault": model.metadata["liveDefault"] ?? "false",
-                "requiresLocalBenchmark": model.metadata["requiresLocalBenchmark"] ?? "true",
+                "reason": "cvPipelineRemovedPendingReplacement",
+                "rawPixelsRead": "false",
                 "latency.totalMS": String(totalMS)
             ].merging(backendResult.metadata) { current, _ in current }
         )

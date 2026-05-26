@@ -49,38 +49,35 @@ public struct OffTheShelfVisionModelCandidate: Codable, Equatable, Sendable {
 }
 
 public enum OffTheShelfVisionModelCatalog {
-    public static let yolo26NanoScreenshotSegmentation = OffTheShelfVisionModelCandidate(
-        id: "ultralytics-yolo26n-seg-screenshot",
-        family: "YOLO26",
-        modelName: "yolo26n-seg.pt",
+    public static let stubbedScreenshotSegmentation = OffTheShelfVisionModelCandidate(
+        id: "stubbed-screenshot-segmentation",
+        family: "stub",
+        modelName: "stubbed",
         signalKind: .segmentation,
-        preferredInputSource: .crop,
-        componentID: "screenshot-segmentation-yolo26",
-        docsURL: URL(string: "https://docs.ultralytics.com/models/yolo26/")!,
-        lastVerifiedAt: "2026-05-17",
+        preferredInputSource: .recorded,
+        componentID: "screenshot-segmentation-stub",
+        docsURL: URL(string: "https://github.com/dle87/donkey")!,
+        lastVerifiedAt: "2026-05-26",
         metadata: [
-            "provider": "ultralytics",
-            "task": "instanceSegmentation",
-            "latestYOLOFamilyVerified": "YOLO26",
-            "screenshotUse": "boundedCropFirst",
+            "provider": "none",
+            "task": "stub",
+            "reason": "cvPipelineRemovedPendingReplacement",
             "liveDefault": "false",
-            "requiresLocalBenchmark": "true",
-            "docsTaskURL": "https://docs.ultralytics.com/tasks/segment/"
+            "rawPixelsRead": "false"
         ]
     )
 
     public static var screenshotSegmentationCandidates: [OffTheShelfVisionModelCandidate] {
-        [yolo26NanoScreenshotSegmentation]
+        []
     }
 
     public static func defaultCandidate(
         signalKind: OffTheShelfVisionSignalKind,
         inputSource: OffTheShelfVisionInputSource
     ) -> OffTheShelfVisionModelCandidate? {
-        screenshotSegmentationCandidates.first {
-            $0.signalKind == signalKind
-                && ($0.preferredInputSource == inputSource || inputSource == .screenshot)
-        }
+        _ = signalKind
+        _ = inputSource
+        return nil
     }
 }
 
@@ -291,46 +288,8 @@ public struct OffTheShelfVisionPerceptionAdapter: DryRunPerceptionAdapting {
     }
 
     public func perceive(frame: HotLoopFrame) async -> [HotLoopPerceptionSignal] {
-        let signals = RecordedOffTheShelfVisionMetadataCodec.decode(from: frame.metadata)
-        return signals.map { signal in
-            let observedAt = frame.capturedAt.addingMilliseconds(
-                signal.preprocessMS + signal.modelInferenceMS + signal.adapterOverheadMS
-            )
-            return HotLoopPerceptionSignal(
-                id: signal.id,
-                traceID: frame.traceID,
-                frameID: frame.id,
-                kind: signal.kind.rawValue,
-                capturedAt: frame.capturedAt,
-                observedAt: observedAt,
-                confidence: signal.confidence,
-                observations: signal.observations.map { observation in
-                    HotLoopPerceptionObservation(
-                        id: observation.id,
-                        label: observation.label,
-                        bounds: observation.bounds,
-                        confidence: observation.confidence,
-                        metadata: observation.metadata.merging([
-                            "vision.componentID": signal.componentID,
-                            "vision.modelID": signal.modelID ?? "",
-                            "vision.cropID": signal.cropID ?? "",
-                            "vision.signalKind": signal.kind.rawValue
-                        ]) { current, _ in current }
-                    )
-                },
-                plannerHintID: frame.plannerHintID,
-                metadata: signal.metadata.merging([
-                    "adapter": adapterName,
-                    "rawPixelsExposed": "false",
-                    "vision.localEvidence": "true",
-                    "vision.componentID": signal.componentID,
-                    "vision.modelID": signal.modelID ?? "",
-                    "vision.cropID": signal.cropID ?? "",
-                    "latency.preprocessMS": String(signal.preprocessMS),
-                    "latency.modelInferenceMS": String(signal.modelInferenceMS)
-                ]) { current, _ in current }
-            )
-        }
+        _ = frame
+        return []
     }
 }
 
@@ -352,48 +311,13 @@ public struct OffTheShelfVisionWorldStateProjector: DryRunWorldStateProjecting {
             signals: signals,
             observedAt: observedAt,
             staleThresholdMS: staleSignalThresholdMS,
-            actionAffordances: actionAffordances(from: signals),
+            actionAffordances: [],
             metadata: [
-                "projector": "off-the-shelf-vision-world-state-projector",
-                "vision.localEvidence": String(!signals.isEmpty),
-                "rawPixelsExposed": "false"
+                "projector": "off-the-shelf-vision-world-state-projector-stub",
+                "vision.localEvidence": "false",
+                "rawPixelsExposed": "false",
+                "reason": "cvPipelineRemovedPendingReplacement"
             ]
-        )
-    }
-
-    private func actionAffordances(
-        from signals: [HotLoopPerceptionSignal]
-    ) -> [HotLoopActionAffordance] {
-        signals.flatMap { signal in
-            signal.observations.compactMap { observation in
-                guard let bounds = observation.bounds else { return nil }
-                return HotLoopActionAffordance(
-                    id: "affordance-\(observation.id)",
-                    kind: .tapTarget,
-                    targetBounds: bounds,
-                    confidence: min(signal.confidence, observation.confidence),
-                    sourceSignalID: signal.id,
-                    metadata: [
-                        "vision.label": observation.label,
-                        "vision.signalKind": signal.kind,
-                        "vision.componentID": signal.metadata["vision.componentID"] ?? "",
-                        "vision.modelID": signal.metadata["vision.modelID"] ?? "",
-                        "vision.cropID": signal.metadata["vision.cropID"] ?? "",
-                        "vision.localEvidence": "true"
-                    ].merging(observation.metadata) { current, _ in current }
-                )
-            }
-        }
-    }
-}
-
-private extension RunTraceTimestamp {
-    func addingMilliseconds(_ milliseconds: Double) -> RunTraceTimestamp {
-        RunTraceTimestamp(
-            wallClock: wallClock.addingTimeInterval(milliseconds / 1_000),
-            monotonicUptimeNanoseconds: UInt64(
-                max(0, Double(monotonicUptimeNanoseconds) + milliseconds * 1_000_000)
-            )
         )
     }
 }

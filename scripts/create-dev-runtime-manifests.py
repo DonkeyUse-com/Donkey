@@ -18,7 +18,6 @@ ENV_FILE = Path(os.environ.get("DONKEY_DEV_RUNTIME_ENV_FILE", ROOT_DIR / "dist" 
 
 RUNTIME_ENV_NAMES = {
     "parakeet-transcriber": "DONKEY_PARAKEET_RUNTIME_MANIFEST_URL",
-    "yolo-segmenter": "DONKEY_YOLO_RUNTIME_MANIFEST_URL",
     "ui-understander": "DONKEY_UI_UNDERSTANDER_RUNTIME_MANIFEST_URL",
     "local-llm": "DONKEY_LOCAL_LLM_RUNTIME_MANIFEST_URL",
 }

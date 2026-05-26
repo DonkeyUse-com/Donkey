@@ -25,7 +25,6 @@ public enum AgentVisualizationGroundingSource: String, Codable, Equatable, Senda
     case accessibility
     case windowMetadata
     case localUIUnderstanding
-    case yoloSegmentation
     case actionTrace
     case fallback
 }

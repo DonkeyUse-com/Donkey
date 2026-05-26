@@ -227,7 +227,6 @@ public enum ReflexLatencyReportBuilder {
             "accessibilityAction": "latency.accessibilityActionMS",
             "keyboardAction": "latency.keyboardActionMS",
             "verification": "latency.verificationMS",
-            "yoloSegmentation": "latency.yoloSegmentationMS",
             "uiUnderstanding": "latency.uiUnderstandingMS",
             "parakeetTranscription": "latency.parakeetTranscriptionMS"
         ]

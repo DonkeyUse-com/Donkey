@@ -19,6 +19,7 @@ final class DebugUIInspectionCoordinator {
     private var trackers: [UInt32: DebugUIElementTracker] = [:]
     private var lastFingerprints: [UInt32: String] = [:]
     private var lastRenderedFrames: [UInt32: DebugUIInspectionFrame] = [:]
+    private var lastSnapshots: [UInt32: DebugUIScreenCaptureSnapshot] = [:]
     private var timer: Timer?
     private var notificationObservers: [NSObjectProtocol] = []
     private var currentConfig: DebugUIOverlayConfiguration = .disabled
@@ -50,6 +51,7 @@ final class DebugUIInspectionCoordinator {
         trackers.removeAll()
         lastFingerprints.removeAll()
         lastRenderedFrames.removeAll()
+        lastSnapshots.removeAll()
         isAnalyzing = false
         currentConfig = .disabled
     }
@@ -115,6 +117,7 @@ final class DebugUIInspectionCoordinator {
             lastFingerprints.removeAll()
             trackers.removeAll()
             lastRenderedFrames.removeAll()
+            lastSnapshots.removeAll()
             if !newConfig.enabled {
                 overlayController.close()
             }
@@ -211,29 +214,64 @@ final class DebugUIInspectionCoordinator {
         )
 
         let activeScreenIDs = Set(results.map(\.snapshot.screenID))
-        overlayController.closeScreens(except: activeScreenIDs)
-        lastRenderedFrames = lastRenderedFrames.filter { activeScreenIDs.contains($0.key) }
-        lastFingerprints = lastFingerprints.filter { activeScreenIDs.contains($0.key) }
+        ageMissingAccessibilityScreens(activeScreenIDs: activeScreenIDs)
 
         for result in results {
             let snapshot = result.snapshot
-            guard force || lastFingerprints[snapshot.screenID] != snapshot.fingerprint else {
+            if !force, lastFingerprints[snapshot.screenID] == snapshot.fingerprint {
                 DebugUIInspectionLog.overlay.debug(
-                    "debug inspection skipped unchanged accessibility screenID=\(snapshot.screenID, privacy: .public)"
+                    "debug inspection sampling unchanged accessibility screenID=\(snapshot.screenID, privacy: .public)"
                 )
-                continue
             }
             lastFingerprints[snapshot.screenID] = snapshot.fingerprint
+            lastSnapshots[snapshot.screenID] = snapshot
 
             var tracker = trackers[snapshot.screenID] ?? DebugUIElementTracker()
             let trackedFrame = tracker.update(with: result.frame)
             trackers[snapshot.screenID] = tracker
+            if !force,
+               let previousFrame = lastRenderedFrames[snapshot.screenID],
+               trackedFrame.isOverlayRenderEquivalent(to: previousFrame) {
+                DebugUIInspectionLog.overlay.debug(
+                    "debug inspection skipped stable accessibility render screenID=\(snapshot.screenID, privacy: .public)"
+                )
+                continue
+            }
             DebugUIInspectionLog.overlay.info(
                 "debug inspection rendering source=accessibility screenID=\(snapshot.screenID, privacy: .public) elements=\(trackedFrame.elements.count, privacy: .public)"
             )
             logSampleMappings(frame: trackedFrame, snapshot: snapshot)
             lastRenderedFrames[snapshot.screenID] = trackedFrame
             overlayController.render(frame: trackedFrame, snapshot: snapshot)
+        }
+
+        let retainedScreenIDs = Set(lastRenderedFrames.keys).union(activeScreenIDs)
+        overlayController.closeScreens(except: retainedScreenIDs)
+        lastFingerprints = lastFingerprints.filter { retainedScreenIDs.contains($0.key) }
+        lastSnapshots = lastSnapshots.filter { retainedScreenIDs.contains($0.key) }
+    }
+
+    private func ageMissingAccessibilityScreens(activeScreenIDs: Set<UInt32>) {
+        let missingScreenIDs = Set(lastRenderedFrames.keys).subtracting(activeScreenIDs)
+        for screenID in missingScreenIDs {
+            var tracker = trackers[screenID] ?? DebugUIElementTracker()
+            let trackedFrame = tracker.update(with: DebugUIInspectionFrame())
+            trackers[screenID] = tracker
+            if trackedFrame.elements.isEmpty {
+                lastRenderedFrames.removeValue(forKey: screenID)
+                lastFingerprints.removeValue(forKey: screenID)
+                lastSnapshots.removeValue(forKey: screenID)
+                continue
+            }
+
+            if let snapshot = lastSnapshots[screenID] {
+                if let previousFrame = lastRenderedFrames[screenID],
+                   trackedFrame.isOverlayRenderEquivalent(to: previousFrame) {
+                    continue
+                }
+                lastRenderedFrames[screenID] = trackedFrame
+                overlayController.render(frame: trackedFrame, snapshot: snapshot)
+            }
         }
     }
 

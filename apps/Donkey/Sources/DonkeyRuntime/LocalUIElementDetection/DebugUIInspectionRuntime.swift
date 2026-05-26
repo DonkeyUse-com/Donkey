@@ -163,50 +163,184 @@ private struct RawDebugUIOverlayConfiguration: Codable {
 
 public struct DebugUIElementTracker: Equatable, Sendable {
     private var previousElements: [DebugUIElement]
+    private var lastObservedElements: [DebugUIElement]
+    private var appearanceCounts: [String: Int]
+    private var missingCounts: [String: Int]
+    private var pendingMovements: [String: PendingTrackedElement]
+    private var pendingContent: [String: PendingTrackedElement]
+    private var appearanceThreshold: Int
+    private var disappearanceTolerance: Int
+    private var movementConfirmationSamples: Int
 
-    public init(previousElements: [DebugUIElement] = []) {
+    public init(
+        previousElements: [DebugUIElement] = [],
+        appearanceThreshold: Int = 2,
+        disappearanceTolerance: Int = 2,
+        movementConfirmationSamples: Int = 2
+    ) {
         self.previousElements = previousElements
+        self.lastObservedElements = previousElements
+        self.appearanceCounts = Dictionary(uniqueKeysWithValues: previousElements.map { ($0.id, appearanceThreshold) })
+        self.missingCounts = [:]
+        self.pendingMovements = [:]
+        self.pendingContent = [:]
+        self.appearanceThreshold = max(1, appearanceThreshold)
+        self.disappearanceTolerance = max(0, disappearanceTolerance)
+        self.movementConfirmationSamples = max(1, movementConfirmationSamples)
     }
 
     public mutating func update(with frame: DebugUIInspectionFrame) -> DebugUIInspectionFrame {
         var usedPreviousIDs = Set<String>()
-        let tracked = frame.elements.map { incoming -> DebugUIElement in
+        let matchBase = semanticMatchBase()
+        var trackedCandidates: [DebugUIElement] = []
+
+        for incoming in frame.elements {
             if let previous = previousElements.first(where: { $0.id == incoming.id }) {
                 usedPreviousIDs.insert(incoming.id)
-                return stableElement(incoming, matchedTo: previous)
+                trackedCandidates.append(stableElement(incoming, matchedTo: previous))
+                continue
+            }
+            if let observed = lastObservedElements.first(where: { $0.id == incoming.id }) {
+                usedPreviousIDs.insert(incoming.id)
+                trackedCandidates.append(stableElement(incoming, matchedTo: observed))
+                continue
             }
 
             guard let match = bestSemanticMatch(
                 for: incoming,
+                in: matchBase,
                 usedPreviousIDs: usedPreviousIDs
             ) else {
-                return incoming
+                trackedCandidates.append(incoming)
+                continue
             }
 
             usedPreviousIDs.insert(match.id)
-            return stableElement(incoming.replacingID(match.id), matchedTo: match)
+            trackedCandidates.append(stableElement(incoming.replacingID(match.id), matchedTo: match))
         }
 
-        previousElements = tracked
-        return DebugUIInspectionFrame(elements: tracked)
+        lastObservedElements = trackedCandidates
+        let trackedIDs = Set(trackedCandidates.map(\.id))
+        var rendered: [DebugUIElement] = []
+
+        for candidate in trackedCandidates {
+            if previousElements.contains(where: { $0.id == candidate.id }) {
+                appearanceCounts[candidate.id] = appearanceThreshold
+                missingCounts[candidate.id] = nil
+                rendered.append(candidate)
+                continue
+            }
+
+            let count = min(appearanceThreshold, (appearanceCounts[candidate.id] ?? 0) + 1)
+            appearanceCounts[candidate.id] = count
+            missingCounts[candidate.id] = nil
+            if count >= appearanceThreshold {
+                rendered.append(candidate)
+            }
+        }
+
+        for previous in previousElements where !trackedIDs.contains(previous.id) {
+            let missingCount = (missingCounts[previous.id] ?? 0) + 1
+            if missingCount <= disappearanceTolerance {
+                missingCounts[previous.id] = missingCount
+                rendered.append(previous)
+            } else {
+                missingCounts[previous.id] = nil
+                appearanceCounts[previous.id] = nil
+            }
+        }
+
+        let renderedIDs = Set(rendered.map(\.id))
+        appearanceCounts = appearanceCounts.filter { trackedIDs.contains($0.key) || renderedIDs.contains($0.key) }
+        missingCounts = missingCounts.filter { renderedIDs.contains($0.key) }
+        pendingMovements = pendingMovements.filter { trackedIDs.contains($0.key) || renderedIDs.contains($0.key) }
+        pendingContent = pendingContent.filter { trackedIDs.contains($0.key) || renderedIDs.contains($0.key) }
+        previousElements = rendered
+        return DebugUIInspectionFrame(elements: rendered)
     }
 
-    private func stableElement(
+    private func semanticMatchBase() -> [DebugUIElement] {
+        var seen = Set<String>()
+        return (previousElements + lastObservedElements).filter { element in
+            guard !seen.contains(element.id) else { return false }
+            seen.insert(element.id)
+            return true
+        }
+    }
+
+    private mutating func stableElement(
         _ incoming: DebugUIElement,
         matchedTo previous: DebugUIElement
     ) -> DebugUIElement {
-        guard shouldReusePreviousBounds(incoming.bbox, previous.bbox) else {
+        let geometryStable = stableGeometryElement(incoming, matchedTo: previous)
+        return stableContentElement(geometryStable, matchedTo: previous)
+    }
+
+    private mutating func stableGeometryElement(
+        _ incoming: DebugUIElement,
+        matchedTo previous: DebugUIElement
+    ) -> DebugUIElement {
+        if shouldReusePreviousBounds(incoming.bbox, previous.bbox) {
+            pendingMovements[incoming.id] = nil
+            return copy(incoming, bbox: previous.bbox)
+        }
+
+        if isLargeMovement(from: previous.bbox, to: incoming.bbox) {
+            pendingMovements[incoming.id] = nil
             return incoming
         }
+
+        let pending = pendingMovements[incoming.id]
+        let nextCount: Int
+        if let pending,
+           shouldReusePreviousBounds(incoming.bbox, pending.element.bbox) {
+            nextCount = min(movementConfirmationSamples, pending.count + 1)
+        } else {
+            nextCount = 1
+        }
+
+        if nextCount >= movementConfirmationSamples {
+            pendingMovements[incoming.id] = nil
+            return incoming
+        }
+
+        pendingMovements[incoming.id] = PendingTrackedElement(element: incoming, count: nextCount)
+        return copy(incoming, bbox: previous.bbox)
+    }
+
+    private mutating func stableContentElement(
+        _ incoming: DebugUIElement,
+        matchedTo previous: DebugUIElement
+    ) -> DebugUIElement {
+        if hasSameRenderContent(incoming, previous) {
+            pendingContent[incoming.id] = nil
+            return incoming
+        }
+
+        let pending = pendingContent[incoming.id]
+        let nextCount: Int
+        if let pending,
+           hasSameRenderContent(incoming, pending.element) {
+            nextCount = min(movementConfirmationSamples, pending.count + 1)
+        } else {
+            nextCount = 1
+        }
+
+        if nextCount >= movementConfirmationSamples {
+            pendingContent[incoming.id] = nil
+            return incoming
+        }
+
+        pendingContent[incoming.id] = PendingTrackedElement(element: incoming, count: nextCount)
         return DebugUIElement(
             id: incoming.id,
             type: incoming.type,
-            label: incoming.label,
+            label: previous.label,
             description: incoming.description,
-            bbox: previous.bbox,
+            bbox: incoming.bbox,
             confidence: incoming.confidence,
-            visualStyle: incoming.visualStyle,
-            metadata: incoming.metadata
+            visualStyle: previous.visualStyle,
+            metadata: stableRenderMetadata(incoming: incoming.metadata, previous: previous.metadata)
         )
     }
 
@@ -220,14 +354,73 @@ public struct DebugUIElementTracker: Equatable, Sendable {
             abs(incoming.width - previous.width),
             abs(incoming.height - previous.height)
         )
-        return maximumDelta <= 2.0 && matchScore(previous, incoming) >= 0.82
+        return maximumDelta <= jitterTolerance(for: previous) && matchScore(previous, incoming) >= 0.70
+    }
+
+    private func isLargeMovement(
+        from previous: DebugUIBoundingBox,
+        to incoming: DebugUIBoundingBox
+    ) -> Bool {
+        let maximumDelta = max(
+            abs(incoming.x - previous.x),
+            abs(incoming.y - previous.y),
+            abs(incoming.width - previous.width),
+            abs(incoming.height - previous.height)
+        )
+        let threshold = max(48.0, max(previous.width, previous.height) * 0.25)
+        return maximumDelta >= threshold || matchScore(previous, incoming) < 0.12
+    }
+
+    private func jitterTolerance(for bbox: DebugUIBoundingBox) -> Double {
+        min(max(6.0, min(bbox.width, bbox.height) * 0.08), 10.0)
+    }
+
+    private func hasSameRenderContent(
+        _ lhs: DebugUIElement,
+        _ rhs: DebugUIElement
+    ) -> Bool {
+        lhs.type == rhs.type
+            && lhs.label.trimmingCharacters(in: .whitespacesAndNewlines)
+                == rhs.label.trimmingCharacters(in: .whitespacesAndNewlines)
+            && lhs.visualStyle == rhs.visualStyle
+            && lhs.metadata["localUIElement.sources"] == rhs.metadata["localUIElement.sources"]
+    }
+
+    private func stableRenderMetadata(
+        incoming: [String: String],
+        previous: [String: String]
+    ) -> [String: String] {
+        guard let sources = previous["localUIElement.sources"] else {
+            return incoming
+        }
+
+        var metadata = incoming
+        metadata["localUIElement.sources"] = sources
+        return metadata
+    }
+
+    private func copy(
+        _ element: DebugUIElement,
+        bbox: DebugUIBoundingBox
+    ) -> DebugUIElement {
+        DebugUIElement(
+            id: element.id,
+            type: element.type,
+            label: element.label,
+            description: element.description,
+            bbox: bbox,
+            confidence: element.confidence,
+            visualStyle: element.visualStyle,
+            metadata: element.metadata
+        )
     }
 
     private func bestSemanticMatch(
         for incoming: DebugUIElement,
+        in candidates: [DebugUIElement],
         usedPreviousIDs: Set<String>
     ) -> DebugUIElement? {
-        previousElements
+        candidates
             .filter { previous in
                 !usedPreviousIDs.contains(previous.id)
                     && previous.type == incoming.type
@@ -269,7 +462,64 @@ public struct DebugUIElementTracker: Equatable, Sendable {
     }
 }
 
+private struct PendingTrackedElement: Equatable, Sendable {
+    var element: DebugUIElement
+    var count: Int
+}
+
+public extension DebugUIInspectionFrame {
+    func isOverlayRenderEquivalent(to other: DebugUIInspectionFrame) -> Bool {
+        guard elements.count == other.elements.count else { return false }
+
+        return zip(elements, other.elements).allSatisfy { lhs, rhs in
+            lhs.id == rhs.id
+                && lhs.type == rhs.type
+                && lhs.label == rhs.label
+                && lhs.bbox == rhs.bbox
+                && lhs.visualStyle == rhs.visualStyle
+                && lhs.metadata["localUIElement.sources"] == rhs.metadata["localUIElement.sources"]
+        }
+    }
+}
+
 public enum DebugUIOverlayGeometry {
+    public static func stableLabelFrame(
+        for text: String,
+        boxFrame: CGRect,
+        containerSize: CGSize
+    ) -> CGRect {
+        let height = 18.0
+        let availableWidth = max(64.0, Double(containerSize.width) - max(0, boxFrame.minX))
+        let estimatedWidth = Double(text.count) * 6.5 + 14
+        let bucketedWidth: Double
+        if estimatedWidth <= 96 {
+            bucketedWidth = 96
+        } else if estimatedWidth <= 160 {
+            bucketedWidth = 160
+        } else if estimatedWidth <= 240 {
+            bucketedWidth = 240
+        } else {
+            bucketedWidth = 320
+        }
+        let width = min(bucketedWidth, availableWidth)
+        let labelY: Double
+        if boxFrame.minY >= height + 2 {
+            labelY = boxFrame.minY - height - 2
+        } else {
+            labelY = min(
+                max(0, Double(boxFrame.minY) + 2),
+                max(0, Double(containerSize.height) - height)
+            )
+        }
+
+        return CGRect(
+            x: max(0, min(Double(boxFrame.minX), Double(containerSize.width) - width)),
+            y: labelY,
+            width: width,
+            height: height
+        ).integral
+    }
+
     public static func appKitFrame(
         for bbox: DebugUIBoundingBox,
         screenshotPixelSize: HotLoopSize,

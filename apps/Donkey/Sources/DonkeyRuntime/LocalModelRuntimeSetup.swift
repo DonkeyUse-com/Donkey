@@ -3,7 +3,7 @@ import Foundation
 
 public enum LocalModelRuntimeID: String, Codable, CaseIterable, Equatable, Sendable {
     case parakeetTranscriber = "parakeet-transcriber"
-    case yoloSegmenter = "yolo-segmenter"
+    case screenshotSegmentationStub = "screenshot-segmentation-stub"
     case uiUnderstander = "ui-understander"
     case localLLM = "local-llm"
 }
@@ -460,8 +460,8 @@ public struct LocalModelRuntimeSetupManager: Sendable {
         switch runtimeID {
         case .parakeetTranscriber:
             return "DONKEY_PARAKEET_RUNTIME_MANIFEST_URL"
-        case .yoloSegmenter:
-            return "DONKEY_YOLO_RUNTIME_MANIFEST_URL"
+        case .screenshotSegmentationStub:
+            return "DONKEY_SCREENSHOT_SEGMENTATION_STUB_RUNTIME_MANIFEST_URL"
         case .uiUnderstander:
             return "DONKEY_UI_UNDERSTANDER_RUNTIME_MANIFEST_URL"
         case .localLLM:
