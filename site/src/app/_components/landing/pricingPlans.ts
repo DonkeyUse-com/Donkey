@@ -45,7 +45,7 @@ export const pricingPlans = [
       "Local Mac automation",
       "Specialised agents for everyday work",
       "Review-first execution",
-      "Stripe billing and account access",
+      "Simple billing and account access",
     ],
     name: "Pro",
     price: "$20/month",
@@ -77,7 +77,7 @@ export const pricingPreviewPlans = [
       label: "See Pro",
     },
     body: "Start with the self-serve plan when you are ready to connect billing.",
-    detail: "Stripe checkout",
+    detail: "secure checkout",
   },
   pricingPlans[1],
 ] satisfies PricingPlan[];

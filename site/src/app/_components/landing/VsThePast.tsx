@@ -2,7 +2,7 @@
 
 import { Check, X } from "lucide-react";
 
-import { Headline, SectionLabel } from "@/app/_components/landing/LandingPrimitives";
+import { Headline } from "@/app/_components/landing/LandingPrimitives";
 import { comparisonRows } from "@/app/_components/landing/data";
 import { useMediaQuery } from "@/app/_components/landing/useMediaQuery";
 import { BLACK, CARD, CORAL } from "@/app/_components/landing/theme";
@@ -58,7 +58,6 @@ export function VsThePast() {
         margin: "0 auto",
       }}
     >
-      <SectionLabel number={5}>A new category</SectionLabel>
       <Headline>
         Donkey vs <span style={{ fontStyle: "italic" }}>the rest.</span>
       </Headline>
@@ -110,18 +109,6 @@ export function VsThePast() {
               }}
             >
               <div style={{ padding: isDesktop ? "24px" : "16px 12px" }}>
-                <div
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 800,
-                    letterSpacing: "0.1em",
-                    textTransform: "uppercase",
-                    color: "#777",
-                    marginBottom: 4,
-                  }}
-                >
-                  The capability
-                </div>
                 <div style={{ fontWeight: 900, fontSize: isDesktop ? 20 : 15 }}>
                   What you need
                 </div>
@@ -136,9 +123,6 @@ export function VsThePast() {
                     background: label === "Donkey" ? CORAL : "#fff",
                   }}
                 >
-                  <div style={{ fontSize: 11, fontWeight: 800, marginBottom: 4 }}>
-                    {label === "ChatGPT" ? "A" : label === "Donkey" ? "B" : "C"}
-                  </div>
                   <div
                     style={{
                       fontWeight: 900,

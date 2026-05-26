@@ -3,7 +3,6 @@
 import {
   Headline,
   NumberBadge,
-  SectionLabel,
   TapedCard,
 } from "@/app/_components/landing/LandingPrimitives";
 import { agentCards } from "@/app/_components/landing/data";
@@ -21,7 +20,6 @@ export function Agents() {
         margin: "0 auto",
       }}
     >
-      <SectionLabel number={3}>Our technology</SectionLabel>
       <Headline>
         A team of specialised agents.
         <br />

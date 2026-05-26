@@ -3,7 +3,6 @@
 import {
   Headline,
   NumberBadge,
-  SectionLabel,
   TapedCard,
 } from "@/app/_components/landing/LandingPrimitives";
 import { workflowSteps } from "@/app/_components/landing/data";
@@ -21,7 +20,6 @@ export function HowItWorks() {
         margin: "0 auto",
       }}
     >
-      <SectionLabel number={4}>How it works</SectionLabel>
       <Headline>
         Ask. Watch. <span style={{ fontStyle: "italic" }}>Approve.</span>
       </Headline>

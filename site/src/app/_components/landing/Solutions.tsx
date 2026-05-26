@@ -2,7 +2,6 @@
 
 import {
   Headline,
-  SectionLabel,
   TapedCard,
 } from "@/app/_components/landing/LandingPrimitives";
 import { solutionCards } from "@/app/_components/landing/data";
@@ -20,7 +19,6 @@ export function Solutions() {
         margin: "0 auto",
       }}
     >
-      <SectionLabel number={2}>Solutions</SectionLabel>
       <Headline>Built for the people who actually ship.</Headline>
       <p
         style={{

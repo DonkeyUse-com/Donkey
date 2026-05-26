@@ -68,8 +68,8 @@ export function PricingPage() {
             maxWidth: 640,
           }}
         >
-          Pro is the self-serve path through Stripe. Enterprise stays personal:
-          tell us what your team needs, and we will shape the rollout around it.
+          Pro is the self-serve path. Enterprise stays personal: tell us what
+          your team needs, and we will shape the rollout around it.
         </p>
       </section>
 
@@ -151,7 +151,7 @@ export function PricingPage() {
                 }}
               >
                 Manage payment methods, receipts, and subscription details from
-                one Stripe-hosted place.
+                one secure place.
               </p>
             </div>
             <div

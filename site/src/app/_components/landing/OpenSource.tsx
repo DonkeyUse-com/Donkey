@@ -5,7 +5,6 @@ import { ArrowRight } from "lucide-react";
 import {
   Headline,
   PillButton,
-  SectionLabel,
   TapedCard,
 } from "@/app/_components/landing/LandingPrimitives";
 import { GITHUB_REPO_URL, openSourceReasons } from "@/app/_components/landing/data";
@@ -23,7 +22,6 @@ export function OpenSource() {
         margin: "0 auto",
       }}
     >
-      <SectionLabel number={6}>Open source</SectionLabel>
       <Headline>
         Donkey is yours. <span style={{ fontStyle: "italic" }}>All of it.</span>
       </Headline>

@@ -2,7 +2,7 @@
 
 import { ArrowRight } from "lucide-react";
 
-import { PillButton, SectionLabel } from "@/app/_components/landing/LandingPrimitives";
+import { PillButton } from "@/app/_components/landing/LandingPrimitives";
 import { DONKEY_DOWNLOAD_URL } from "@/app/_components/landing/data";
 import { useMediaQuery } from "@/app/_components/landing/useMediaQuery";
 
@@ -18,7 +18,6 @@ export function Hero() {
         margin: "0 auto",
       }}
     >
-      <SectionLabel number={1}>Your Mac, on autopilot</SectionLabel>
       <h1
         style={{
           fontWeight: 900,
