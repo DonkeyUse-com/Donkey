@@ -46,8 +46,8 @@ export function TopNav({
       >
         <div
           style={{
-            width: 36,
-            height: 36,
+            width: 47,
+            height: 47,
             borderRadius: 8,
             display: "flex",
             alignItems: "center",
@@ -58,9 +58,9 @@ export function TopNav({
           <Image
             src="/donkey-site-mark.webp"
             alt=""
-            width={36}
-            height={36}
-            sizes="36px"
+            width={47}
+            height={47}
+            sizes="47px"
             style={{
               display: "block",
               width: "100%",
