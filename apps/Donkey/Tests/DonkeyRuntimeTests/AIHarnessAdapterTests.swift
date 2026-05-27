@@ -503,7 +503,19 @@ struct AIHarnessAdapterTests {
     @Test
     func hostedTaskIntentAdapterUsesBackendResponsesProxy() async throws {
         let httpClient = FakeAIHTTPClient(
-            data: Data(#"{"output_text":"{\"taskType\":\"media_playback\",\"targetAppName\":\"Music\",\"entities\":{\"query\":\"Viva La Vida Coldplay\"},\"normalizedEntities\":{\"query\":\"Viva La Vida Coldplay\"},\"confidence\":0.91,\"needsConfirmation\":false,\"actionPlan\":{\"tools\":[],\"inputEntity\":\"\",\"controlID\":\"\",\"focusKey\":\"\",\"verification\":\"commandAttempted\"},\"metadata\":{\"source\":\"test\",\"mediaSelection.kind\":\"representative_song\",\"mediaSelection.seed\":\"Coldplay\",\"mediaSelection.selectedTitle\":\"Viva La Vida\",\"mediaSelection.reason\":\"User asked for Coldplay, so choose a concrete song.\"}}"}"#.utf8),
+            data: responseData(
+                outputText: hostedPlanningOutput(
+                    goal: "play Viva La Vida by Coldplay",
+                    taskType: "media_playback",
+                    targetAppName: "Music",
+                    entitiesJSON: #"{"query":"Viva La Vida Coldplay"}"#,
+                    normalizedEntitiesJSON: #"{"query":"Viva La Vida Coldplay"}"#,
+                    confidence: 0.91,
+                    verificationCriteriaJSON: #"["Playback command is attempted for the concrete selected song."]"#,
+                    fallbacksJSON: #"["Ask before playing if the selected media is ambiguous."]"#,
+                    metadataJSON: #"{"source":"test","mediaSelection.kind":"representative_song","mediaSelection.seed":"Coldplay","mediaSelection.selectedTitle":"Viva La Vida","mediaSelection.reason":"User asked for Coldplay, so choose a concrete song."}"#
+                )
+            ),
             statusCode: 200
         )
         let adapter = HostedTaskIntentParsingAdapter(
@@ -536,6 +548,20 @@ struct AIHarnessAdapterTests {
         #expect(body["donkeyProvider"] == nil)
         let parameters = try #require(body["parameters"] as? [String: Any])
         let instructions = try #require(parameters["instructions"] as? String)
+        let text = try #require(body["text"] as? [String: Any])
+        let format = try #require(text["format"] as? [String: Any])
+        #expect(format["name"] as? String == "generic_harness_planning")
+        let schema = try #require(format["schema"] as? [String: Any])
+        let properties = try #require(schema["properties"] as? [String: Any])
+        #expect(properties["structuredIntent"] != nil)
+        #expect(properties["ambiguityRisk"] != nil)
+        #expect(properties["contextNeeds"] != nil)
+        #expect(properties["planSteps"] != nil)
+        #expect(properties["verificationCriteria"] != nil)
+        #expect(properties["fallbacks"] != nil)
+        #expect(properties["clarificationPolicy"] != nil)
+        #expect(result.intent?.metadata["genericHarness.schemaVersion"] == "generic_harness_planning")
+        #expect(result.intent?.metadata["genericHarness.intent.goal"] == "play Viva La Vida by Coldplay")
         #expect(instructions.contains("local_app_interaction"))
         #expect(instructions.contains("media playback"))
         #expect(instructions.contains("play/listen media requests"))
@@ -548,9 +574,14 @@ struct AIHarnessAdapterTests {
     func hostedTaskIntentAdapterPreservesNoTaskConversationResponse() async throws {
         let httpClient = FakeAIHTTPClient(
             data: responseData(
-                outputText: """
-                {"taskType":"none","targetAppName":"none","entities":{},"normalizedEntities":{},"confidence":0,"needsConfirmation":false,"actionPlan":{"tools":[],"inputEntity":"","controlID":"","focusKey":"","verification":"commandAttempted"},"metadata":{"responseMode":"conversation","assistantResponse":"Hi there! What would you like to work on?"}}
-                """
+                outputText: hostedPlanningOutput(
+                    route: "conversation",
+                    goal: "respond to greeting",
+                    taskType: "none",
+                    targetAppName: "none",
+                    confidence: 0,
+                    metadataJSON: #"{"responseMode":"conversation","assistantResponse":"Hi there! What would you like to work on?"}"#
+                )
             ),
             statusCode: 200
         )
@@ -576,6 +607,60 @@ struct AIHarnessAdapterTests {
         #expect(result.trace.metadata["responseMode"] == "conversation")
         #expect(result.trace.metadata["assistantResponse"] == "Hi there! What would you like to work on?")
         #expect(result.trace.metadata["provider"] == "donkeyBackend")
+    }
+
+    @Test
+    func hostedTaskIntentAdapterMapsGenericPlanStepsToBridgeActionPlan() async throws {
+        let httpClient = FakeAIHTTPClient(
+            data: responseData(
+                outputText: hostedPlanningOutput(
+                    goal: "open cnn.com in Safari",
+                    taskType: "local_app_interaction",
+                    targetAppName: "Safari",
+                    entitiesJSON: #"{"appName":"Safari","goal":"open requested website","query":"https://cnn.com"}"#,
+                    normalizedEntitiesJSON: #"{"appName":"Safari","goal":"open requested website","query":"https://cnn.com"}"#,
+                    confidence: 0.94,
+                    contextNeedsJSON: #"["app lookup","screen observation"]"#,
+                    planStepsJSON: """
+                    [{"id":"launch","summary":"Open or focus Safari.","toolName":"app.openOrFocus","inputEntity":"","controlID":"","focusKey":"","expectedObservation":"Safari is focused."},{"id":"focus-address","summary":"Focus the address bar.","toolName":"ui.focusAddressBar","inputEntity":"","controlID":"addressBar","focusKey":"Command+L","expectedObservation":"Address bar is ready."},{"id":"enter-url","summary":"Enter the requested URL.","toolName":"ui.setText","inputEntity":"query","controlID":"addressBar","focusKey":"","expectedObservation":"URL is entered."},{"id":"submit","summary":"Navigate to the URL.","toolName":"ui.pressReturn","inputEntity":"","controlID":"","focusKey":"","expectedObservation":"Navigation is attempted."},{"id":"verify","summary":"Verify the navigation command.","toolName":"app.verifyCommand","inputEntity":"","controlID":"","focusKey":"","expectedObservation":"Command attempt is recorded."}]
+                    """,
+                    verificationCriteriaJSON: #"["Navigation to the requested URL is attempted."]"#,
+                    fallbacksJSON: #"["Ask if the URL is missing or ambiguous."]"#,
+                    metadataJSON: #"{"source":"test"}"#
+                )
+            ),
+            statusCode: 200
+        )
+        let adapter = HostedTaskIntentParsingAdapter(
+            configuration: DonkeyBackendInferenceConfiguration(
+                baseURL: URL(string: "https://donkey.example")!,
+                clientID: "client-1"
+            ),
+            httpClient: httpClient
+        )
+
+        let result = await adapter.parseTaskIntent(
+            TaskIntentAdapterRequest(
+                command: "open cnn.com",
+                taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
+                sourceTraceID: "trace-hosted-plan-steps"
+            )
+        )
+
+        #expect(result.intent?.taskType == "local_app_interaction")
+        #expect(result.intent?.targetApp.appName == "Safari")
+        #expect(result.intent?.actionPlan?.tools == [
+            .openOrFocusApp,
+            .focusAddressBar,
+            .setText,
+            .pressReturn,
+            .verifyCommand
+        ])
+        #expect(result.intent?.actionPlan?.inputEntity == "query")
+        #expect(result.intent?.actionPlan?.controlID == "addressBar")
+        #expect(result.intent?.actionPlan?.focusKey == "Command+L")
+        #expect(result.intent?.metadata["genericHarness.contextNeedsJSON"] == #"["app lookup","screen observation"]"#)
+        #expect(result.intent?.metadata["genericHarness.fallbacksJSON"] == #"["Ask if the URL is missing or ambiguous."]"#)
     }
 
     @Test
@@ -1294,9 +1379,14 @@ struct AIHarnessAdapterTests {
             ),
             httpClient: FakeAIHTTPClient(
                 data: responseData(
-                    outputText: """
-                    {"taskType":"none","targetAppName":"none","entities":{},"normalizedEntities":{},"confidence":0,"needsConfirmation":false,"actionPlan":{"tools":[],"inputEntity":"","controlID":"","focusKey":"","verification":"commandAttempted"},"metadata":{"responseMode":"conversation","assistantResponse":"Hi there! What would you like to work on?"}}
-                    """
+                    outputText: hostedPlanningOutput(
+                        route: "conversation",
+                        goal: "respond to greeting",
+                        taskType: "none",
+                        targetAppName: "none",
+                        confidence: 0,
+                        metadataJSON: #"{"responseMode":"conversation","assistantResponse":"Hi there! What would you like to work on?"}"#
+                    )
                 ),
                 statusCode: 200
             )
@@ -2025,6 +2115,33 @@ struct AIHarnessAdapterTests {
             .replacingOccurrences(of: "\"", with: "\\\"")
             .replacingOccurrences(of: "\n", with: "\\n")
         return Data("{\"id\":\"resp-1\",\"output_text\":\"\(escaped)\"}".utf8)
+    }
+
+    private func hostedPlanningOutput(
+        route: String = "localAppTask",
+        goal: String,
+        taskType: String,
+        targetAppName: String,
+        entitiesJSON: String = "{}",
+        normalizedEntitiesJSON: String = "{}",
+        confidence: Double,
+        needsConfirmation: Bool = false,
+        ambiguityClass: String = "safe",
+        riskLevel: String = "low",
+        missingInformationJSON: String = "[]",
+        shouldAskBeforeActing: Bool = false,
+        contextNeedsJSON: String = "[]",
+        planStepsJSON: String = "[]",
+        verificationCriteriaJSON: String = "[]",
+        fallbacksJSON: String = "[]",
+        clarificationShouldAsk: Bool = false,
+        clarificationQuestionsJSON: String = "[]",
+        clarificationPolicy: String = "Ask only when required information is missing.",
+        metadataJSON: String = "{}"
+    ) -> String {
+        """
+        {"schemaVersion":"generic_harness_planning","structuredIntent":{"route":"\(route)","goal":"\(goal)","taskType":"\(taskType)","targetAppName":"\(targetAppName)","entities":\(entitiesJSON),"normalizedEntities":\(normalizedEntitiesJSON),"confidence":\(confidence),"needsConfirmation":\(needsConfirmation)},"ambiguityRisk":{"ambiguityClass":"\(ambiguityClass)","riskLevel":"\(riskLevel)","missingInformation":\(missingInformationJSON),"shouldAskBeforeActing":\(shouldAskBeforeActing)},"contextNeeds":\(contextNeedsJSON),"planSteps":\(planStepsJSON),"verificationCriteria":\(verificationCriteriaJSON),"fallbacks":\(fallbacksJSON),"clarificationPolicy":{"shouldAsk":\(clarificationShouldAsk),"questions":\(clarificationQuestionsJSON),"policy":"\(clarificationPolicy)"},"metadata":\(metadataJSON)}
+        """
     }
 
     private func localGenerateResponseData(response: String) -> Data {

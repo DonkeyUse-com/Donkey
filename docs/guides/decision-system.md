@@ -1,127 +1,99 @@
 # Decision System
 
-## What It Decides
+## Purpose
 
-Donkey treats every prompt, voice transcript, file drop, and follow-up as a task-thread turn first. The decision system chooses what the turn should do next:
+Donkey treats every prompt, voice transcript, file drop, and follow-up as a
+task-thread turn first. The decision system chooses whether the next step is a
+conversation response, a clarification, a review flow, a guarded local-app
+action, or no action for empty input.
 
-- respond conversationally
-- ask for a specific missing detail
-- open a review flow
-- run a guarded local-app action
-- do nothing for empty or already-handled input
+Action is not the default. A local action starts only after a typed model or
+runtime artifact says the turn is actionable and the runtime validates the
+target, plan, permissions, and available control surface.
 
-Action is not the default. A local action only starts after a typed model or runtime artifact says the turn is actionable and the runtime validates the target, plan, permissions, and available control surface.
+A runnable local task needs a clear action, a destination or target, and enough
+payload to execute safely. Questions, greetings, malformed requests, and vague
+local-task requests stay conversational or ask for a specific missing detail.
 
-A runnable task needs a clear action, a destination or target, and enough payload to execute safely. If the turn is a question, conversation, or malformed local-task request, the model should mark it as conversational in structured metadata and Donkey answers in the thread instead of opening an app.
-For document-writing plans, Donkey also validates the model output itself: a short unquoted label-like payload is not enough to create or edit a document, even if the model selected Notes or another writing app.
+## Model Boundary
 
-## Decision Flow
+Pointer prompt turns are routed through bounded harness context. Semantic
+decisions go through typed model boundaries; the supported hosted path uses the
+authenticated Donkey backend Responses proxy with `store=false`, and the
+backend chooses the concrete model.
 
-The pointer prompt records the user-visible turn, builds a bounded context packet, and routes it through the harness. Empty input can be handled directly. Semantic decisions go through typed model boundaries. By default, task-intent and follow-up decisions use the authenticated Donkey backend Responses proxy with `store=false`; the Mac app does not send a concrete hosted model, because backend configuration chooses it. Local model adapters are not part of the supported decision path.
+The hosted decision output is strict `generic_harness_planning` JSON. It carries:
 
-For local app work, the model receives:
+- structured intent
+- ambiguity and risk
+- context needs
+- plan steps
+- verification criteria
+- fallbacks
+- clarification policy
 
-- the current command
-- supported runtime task definitions
-- an app-finder catalog of installed apps with descriptions, support status,
-  declared capabilities, and control profiles when available
-- safety and execution expectations encoded in task metadata
+The generic harness stores those fields in task state. During the migration, the
+local-app bridge decodes the structured intent into a `TaskIntent` only so the
+existing catalog and live runner can execute the validated task.
 
-The model returns strict JSON, not free-form instructions. The result is decoded into a `TaskIntent`. If the intent names an existing task definition, the catalog validates that definition. If it names the generic local-app interaction capability, the model must ground the selected app in the app-finder catalog when one was supplied. The catalog then resolves the requested app from local memory and app lookup, and materializes a transient task definition from the typed `actionPlan`.
+Do not infer semantic intent by matching raw user text. Deterministic code may
+match only typed model output, catalog fields, resolved app/item ids, tool names,
+and other non-semantic runtime fields.
 
-For dynamic local-item capabilities, the app or item name comes from the typed model output. For dynamic local-app interactions, the app name is accepted only when it can be matched to a supplied app-finder catalog entry with `supportStatus=supported` and a selected declared capability. Catalog and memory matching happen after typed output exists, so lookup is scoped to structured fields such as `targetAppName`, `entities.appName`, `metadata.appFinder.selectedAppID`, or a resolved target id. That inference is not execution authority; the catalog still resolves and verifies the target before any action runs.
+## Local App Plans
 
-The `TaskIntent` wire format always includes an `actionPlan` object. Non-planned task types must return an empty `actionPlan.tools` array; non-empty action plans are accepted only for task definitions that explicitly opt into model-planned local-app interaction.
-Conversational turns use `taskType: "none"` with an empty action plan,
-`metadata.responseMode=conversation`, and `metadata.assistantResponse`; the
-resolver preserves that response instead of turning it into an unsupported local
-action failure.
+Models may choose only supplied task definitions and declared app capabilities.
+`local_app_interaction` is the generic model-planned capability for app work
+that has no more specific learned task definition.
 
-## Generic Local-App Interaction
+When an app-finder catalog is supplied, executable app choices must resolve to a
+`supported` catalog entry with a declared capability and control profile.
+Candidate, unsupported, or denied entries are not executable targets.
 
-`local_app_interaction` is the default model-planned app capability. It exists for requests like "play some Justin Bieber" where the user is not asking to merely open an app, and no durable app-specific task definition has been learned yet.
-
-For this capability the model must provide:
-
-- `targetAppName`, such as `Music`
-- `entities.appName`
-- `entities.goal`
-- `entities.query` when text needs to be entered
-- `actionPlan.tools`, a typed sequence of allowed local tools
-- `actionPlan.inputEntity`, usually `query` when `ui.setText` is present
-- `actionPlan.controlID`, `actionPlan.focusKey`, and `actionPlan.verification` for the guarded UI strategy
-
-When an app-finder catalog is present, the model must also provide:
-
-- `metadata.appFinder.selectedAppID`
-- `metadata.appFinder.selectedCapabilityID`
-- `metadata.appFinder.controlProfile`
-
-The selected app id must exist in the catalog, the catalog entry must be
-`supported`, and the selected capability/control profile must be declared on
-that entry. Catalog entries marked `candidate`, `unsupported`, or `denied` are
-not executable targets.
-
-The supported plan tools are intentionally small:
+Supported generic plan tools are:
 
 ```text
-app.openOrFocus
-app.observe
-ui.newDocument
-ui.focusSearch
-ui.focusAddressBar
-ui.focusTextEntry
-ui.setText
-ui.pressReturn
-app.verifyCommand
-app.verifyVisibleText
+app.openOrFocus, app.observe, ui.newDocument, ui.focusSearch,
+ui.focusAddressBar, ui.focusTextEntry, ui.setText, ui.pressReturn,
+app.verifyCommand, app.verifyVisibleText
 ```
 
-The model may choose tools, entities, target app, and confidence. Website navigation should target Safari or the user's browser and use `ui.focusAddressBar` with a URL query. Simple document creation, such as writing in Notes or putting tabular text into Numbers, should use `ui.newDocument` and `ui.setText`. Media playback is not just app/query parsing: vague artist or genre requests must be planned into a concrete playable selection before execution, with `metadata.mediaSelection.*` explaining the chosen song, album, or playlist. Play-media model output without a concrete media-selection kind is rejected before execution. Validated Music `play_media` requests resolve to the AppleScript-backed media playback task instead of the generic keyboard search workflow. Unsupported tool names fail model-output validation or block before execution and become clarification/review instead of input.
+Plans that type text must provide the text as structured entity data, usually
+`query`. Document-writing requests must contain meaningful final text; short
+unquoted labels and copied prompt placeholders are not enough to open a writing
+app. Media requests that name only an artist, genre, or seed must choose a
+concrete playable song, album, or playlist before execution.
 
-## Runtime Validation
+## Validation
 
-The catalog resolves dynamic targets through the agent memory store, Spotlight/app lookup, and bounded filesystem lookup. A planned action only proceeds when:
+Before execution, Donkey validates model confidence, required entities,
+app-finder metadata, target availability, allowed tools, permissions, and whether
+the plan can be represented as guarded workflow steps.
 
-- model confidence is high enough
-- app-finder metadata matches a supported app/capability when a catalog was supplied
-- the target app or item is available
-- required entities are present
-- every planned tool is in the allowlist
-- the plan can be represented as guarded workflow steps
+The live runner owns launch/focus, observation, evidence-backed planning,
+guarded input, verification, and recovery. Accessibility and keyboard input run
+through action-engine guardrails. AppleScript may run only from typed task
+metadata or validated generated artifacts; free-form planner text is never
+direct input.
 
-The live runner then owns launch/focus, observation, evidence-backed action
-planning, guarded execution, verification, and agent visualization evidence.
-Accessibility and keyboard input run through action-engine guardrails.
-Focus-control steps that name a keyboard shortcut, such as `Command+F` or
-`Command+L`, may execute once the target app is focused; pointer-style focus
-still requires grounded control bounds.
-AppleScript may be used only when supplied by typed task metadata or validated
-generated artifacts; free-form planner text is never direct input.
+Agent visualization is evidence-derived. Normal local-app tasks may publish
+cursor playback only from observed controls, action traces, or other grounded
+runtime evidence; visual-only demonstrations use the same plan shape without
+live input.
 
-Agent visualization is evidence-derived, not a separate command path for real
-work. Normal local-app tasks may emit a final plan from evidence-backed action
-steps, observations, and action traces after the runner has evidence; they do
-not publish a pre-execution visualization from intent resolution. Cursor
-playback only uses steps with grounded control bounds or action targets, so
-background planning does not animate to invented points. Visual-only
-demonstration requests use the same plan shape with `executionMode=visualOnly`
-and no live input. In both cases, the overlay cursor is a visualization surface
-only and does not move the real macOS pointer.
+## Learning
 
-## Learning Boundary
+Reviewed or successful plans can become reusable runtime task definitions in
+agent memory. That keeps the supported path generic: typed decision, catalog
+validation, guarded execution, verification, and optional memory-backed learning.
 
-Successful or reviewed plans can be stored as runtime task definitions in agent memory. That lets Donkey turn a one-off generic plan into a reusable supported capability without adding app-specific Swift fixtures or keyword lists.
-
-Weather, Music, and document form-fill fixtures remain useful for tests and replay. The supported runtime path is generic: local app/item lookup, model-selected intent or plan, catalog validation, guarded execution, verification, and optional memory-backed learning.
-
-The local app finder catalog is seeded from bundled JSON and refreshed in the background from the user's installed applications. Donkey persists a daily app-catalog snapshot under Application Support, compares it with the previously seen application ids, and sends only newly discovered apps through the typed catalog-profile model route. Generated profiles are persisted as JSON, sanitized to the allowed generic control profiles, and merged with the shipped seed; bundled deny/support entries remain authoritative.
+The app-finder catalog is seeded from bundled profiles and refreshed from the
+user's installed applications. Generated profiles are sanitized to generic
+control profiles before they can influence executable planning.
 
 ## Source Entry Points
 
-- Prompt command handling starts in `apps/Donkey/Sources/Donkey/PointerPromptCommandHandler.swift`.
-- Harness routing and context packet assembly live in `apps/Donkey/Sources/DonkeyRuntime/AppHarnessTurnRouter.swift`.
-- Task-intent parsing, app-finder prompt context, and the hosted Responses adapter live in `apps/Donkey/Sources/DonkeyAI/LocalGenerateTaskIntentAdapter.swift`.
-- Catalog validation and generic local-app interaction materialization live in `apps/Donkey/Sources/DonkeyRuntime/LocalAppTaskCatalog.swift`.
-- App-finder profile JSON loading and background refresh live in `apps/Donkey/Sources/DonkeyRuntime/LocalAppCatalogProfiles.swift`; hosted profile generation lives in `apps/Donkey/Sources/DonkeyAI/HostedLocalAppCatalogProfileGenerator.swift`.
-- Guarded execution lives in `apps/Donkey/Sources/DonkeyRuntime/LocalAppTaskLiveRunner.swift` and the action-engine backends.
+- Prompt handling: `apps/Donkey/Sources/Donkey/PointerPromptCommandHandler.swift`
+- Hosted decision adapter: `apps/Donkey/Sources/DonkeyAI/LocalGenerateTaskIntentAdapter.swift`
+- Catalog validation: `apps/Donkey/Sources/DonkeyRuntime/LocalAppTaskCatalog.swift`
+- Generic lifecycle bridge: `apps/Donkey/Sources/DonkeyRuntime/AppHarnessGenericLifecycle.swift`

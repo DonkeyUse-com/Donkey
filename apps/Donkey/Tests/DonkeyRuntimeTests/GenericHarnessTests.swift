@@ -484,6 +484,69 @@ struct GenericHarnessTests {
     }
 
     @Test
+    func pointerPromptLifecycleUsesHostedGenericPlanningMetadata() async {
+        let store = InMemoryHarnessThreadStore()
+        let coordinator = HarnessTaskCoordinator()
+        let lifecycle = AppHarnessGenericLifecycle(threadStore: store, coordinator: coordinator)
+        let task = await coordinator.createTask(
+            id: "pointer-task-hosted-plan",
+            threadID: "thread-hosted-plan",
+            goal: "open a site"
+        )
+        let intent = TaskIntent(
+            intentID: "intent-hosted-plan",
+            taskType: "local_app_interaction",
+            targetApp: LocalAppTarget(appName: "Safari"),
+            entities: ["query": "https://example.org"],
+            normalizedEntities: ["query": "https://example.org"],
+            confidence: 0.92,
+            parserSource: .onlineModel,
+            metadata: [
+                "genericHarness.schemaVersion": "generic_harness_planning",
+                "genericHarness.intent.goal": "open example.org in Safari",
+                "genericHarness.ambiguity.class": "safe",
+                "genericHarness.risk.level": "low",
+                "genericHarness.shouldAskBeforeActing": "false",
+                "genericHarness.missingInformationJSON": "[]",
+                "genericHarness.planStepsJSON": """
+                [{"controlID":"addressBar","expectedObservation":"Address bar is focused.","focusKey":"Command+L","id":"focus-address","inputEntity":"","summary":"Focus the browser address bar.","toolName":"ui.focusAddressBar"},{"controlID":"addressBar","expectedObservation":"Requested URL is entered.","focusKey":"","id":"enter-url","inputEntity":"query","summary":"Enter the requested URL.","toolName":"ui.setText"}]
+                """,
+                "genericHarness.verificationCriteriaJSON": #"["The requested website navigation is attempted."]"#,
+                "genericHarness.fallbacksJSON": #"["Ask before navigating if the URL is ambiguous."]"#,
+                "genericHarness.clarification.questionsJSON": #"["Which URL should I open?"]"#,
+                "genericHarness.clarification.policy": "Ask only if the requested URL is missing."
+            ]
+        )
+        let resolution = LocalAppTaskCatalogResolution(
+            status: .resolved,
+            intent: intent
+        )
+
+        _ = await lifecycle.planLocalTaskRun(
+            taskID: task.id,
+            resolution: resolution,
+            fallbackGoal: "open a site",
+            traceID: "trace-hosted-plan"
+        )
+        let planned = await coordinator.task(id: task.id)
+
+        #expect(planned?.intent?.goal == "open example.org in Safari")
+        #expect(planned?.intent?.riskLevel == .low)
+        #expect(planned?.plan?.steps.first?.id == "model-focus-address")
+        #expect(planned?.plan?.steps.first?.toolCall == nil)
+        #expect(planned?.plan?.steps.first?.metadata["toolName"] == "ui.focusAddressBar")
+        #expect(planned?.plan?.steps.contains { $0.id == "run-local-app-task" } == true)
+        #expect(planned?.plan?.successCriteria == ["The requested website navigation is attempted."])
+        #expect(planned?.plan?.fallbackPolicy == ["Ask before navigating if the URL is ambiguous."])
+        #expect(planned?.plan?.clarificationPolicy == [
+            "Which URL should I open?",
+            "Ask only if the requested URL is missing."
+        ])
+        #expect(planned?.plan?.metadata["modelPlan.schemaVersion"] == "generic_harness_planning")
+        #expect(planned?.plan?.metadata["modelPlan.stepCount"] == "2")
+    }
+
+    @Test
     func pointerPromptLifecycleConsumesPendingContinuationOnFollowUpTurn() async {
         let store = InMemoryHarnessThreadStore()
         let coordinator = HarnessTaskCoordinator()

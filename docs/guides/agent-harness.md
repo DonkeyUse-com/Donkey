@@ -18,11 +18,12 @@ product migrates onto the generic harness. New work should build toward the
 generic contracts and avoid expanding the older app-specific paths.
 
 Pointer-prompt local-app execution now enters the generic lifecycle before it
-uses the older live-runner backend. The supported boundary is that thread
-context, task state, planning, execution gates, verification, recovery,
-pause/resume, and clarification continuations are owned by the generic harness.
-The migration bridge still delegates concrete desktop work to the older runner;
-keep new lifecycle behavior on the generic side of that bridge.
+uses the older live-runner backend. The hosted planning boundary emits the
+`generic_harness_planning` packet: structured intent, ambiguity/risk,
+context needs, plan steps, verification criteria, fallbacks, and clarification
+policy. The bridge stores that packet in generic task intent/plan state, then
+delegates concrete desktop work to the older runner until generic executors
+cover it. Keep new lifecycle behavior on the generic side of that bridge.
 
 ## Core Model
 

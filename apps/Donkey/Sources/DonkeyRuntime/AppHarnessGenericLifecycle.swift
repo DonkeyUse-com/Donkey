@@ -143,9 +143,11 @@ public struct AppHarnessGenericLifecycle: Sendable {
             fallbackGoal: fallbackGoal
         )
         _ = await coordinator.updateIntent(taskID: taskID, intent: intent)
+        let plannedStepMetadata = resolution.intent?.metadata ?? [:]
+        let modelPlanSteps = Self.modelPlanningSteps(from: plannedStepMetadata)
         let plan = HarnessPlan(
             goal: intent.goal,
-            steps: [
+            steps: modelPlanSteps + [
                 HarnessPlanStep(
                     id: "run-local-app-task",
                     summary: "Run the resolved local app task through the generic harness executor.",
@@ -182,14 +184,22 @@ public struct AppHarnessGenericLifecycle: Sendable {
                     expectedObservation: "Verification records success criteria or evidence."
                 )
             ],
-            successCriteria: ["Resolved local app result is completed or handed to a user gate."],
-            fallbackPolicy: ["If execution needs review or missing detail, stop at the user gate."],
-            clarificationPolicy: ["Ask a specific follow-up question when the resolved task is incomplete."],
+            successCriteria: Self.stringArrayMetadata(
+                plannedStepMetadata["genericHarness.verificationCriteriaJSON"],
+                fallback: ["Resolved local app result is completed or handed to a user gate."]
+            ),
+            fallbackPolicy: Self.stringArrayMetadata(
+                plannedStepMetadata["genericHarness.fallbacksJSON"],
+                fallback: ["If execution needs review or missing detail, stop at the user gate."]
+            ),
+            clarificationPolicy: Self.clarificationPolicy(from: plannedStepMetadata),
             confidence: intent.confidence,
             metadata: [
                 "planner": "genericHarnessPointerPromptBridge",
                 "traceID": traceID,
-                "resolution.status": resolution.status.rawValue
+                "resolution.status": resolution.status.rawValue,
+                "modelPlan.stepCount": String(modelPlanSteps.count),
+                "modelPlan.schemaVersion": plannedStepMetadata["genericHarness.schemaVersion"] ?? ""
             ]
         )
         _ = await coordinator.updatePlan(taskID: taskID, plan: plan)
@@ -417,19 +427,33 @@ public struct AppHarnessGenericLifecycle: Sendable {
             targetApp.map { "in \($0)" }
         ].compactMap { $0 }
         let goal = goalParts.isEmpty ? fallbackGoal : goalParts.joined(separator: " ")
+        let metadata = resolution.intent?.metadata ?? [:]
+        let modelGoal = metadata["genericHarness.intent.goal"]
+            .flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         let missingInformation: [String]
         if resolution.status == .needsConfirmation {
-            missingInformation = [resolution.metadata["reason"] ?? "more detail"]
+            missingInformation = Self.stringArrayMetadata(
+                metadata["genericHarness.missingInformationJSON"],
+                fallback: [resolution.metadata["reason"] ?? "more detail"]
+            )
         } else {
-            missingInformation = []
+            missingInformation = Self.stringArrayMetadata(
+                metadata["genericHarness.missingInformationJSON"],
+                fallback: []
+            )
         }
         return HarnessIntentAnalysis(
-            goal: goal,
+            goal: modelGoal ?? goal,
             entities: resolution.intent?.normalizedEntities ?? resolution.intent?.entities ?? [:],
-            ambiguityClass: resolution.status == .needsConfirmation ? .recoverable : .safe,
-            riskLevel: .medium,
+            ambiguityClass: HarnessAmbiguityClass(
+                rawValue: metadata["genericHarness.ambiguity.class"] ?? ""
+            ) ?? (resolution.status == .needsConfirmation ? .recoverable : .safe),
+            riskLevel: HarnessRiskLevel(
+                rawValue: metadata["genericHarness.risk.level"] ?? ""
+            ) ?? .medium,
             missingInformation: missingInformation,
-            shouldAskBeforeActing: resolution.status == .needsConfirmation,
+            shouldAskBeforeActing: metadata["genericHarness.shouldAskBeforeActing"] == "true"
+                || resolution.status == .needsConfirmation,
             confidence: resolution.intent?.confidence ?? 0,
             metadata: [
                 "resolution.status": resolution.status.rawValue,
@@ -438,6 +462,64 @@ public struct AppHarnessGenericLifecycle: Sendable {
                 "intentID": resolution.intent?.intentID ?? ""
             ].merging(resolution.metadata) { current, _ in current }
         )
+    }
+
+    private static func modelPlanningSteps(from metadata: [String: String]) -> [HarnessPlanStep] {
+        guard let text = metadata["genericHarness.planStepsJSON"],
+              let data = text.data(using: .utf8),
+              let values = try? JSONSerialization.jsonObject(with: data) as? [[String: String]]
+        else {
+            return []
+        }
+
+        return values.enumerated().map { index, value in
+            let id = nonEmpty(value["id"]) ?? "model-plan-step-\(index + 1)"
+            return HarnessPlanStep(
+                id: "model-\(id)",
+                summary: nonEmpty(value["summary"]) ?? "Model-planned harness step",
+                toolCall: nil,
+                expectedObservation: nonEmpty(value["expectedObservation"]),
+                metadata: [
+                    "source": "hostedGenericHarnessPlanning",
+                    "toolName": value["toolName"] ?? "",
+                    "inputEntity": value["inputEntity"] ?? "",
+                    "controlID": value["controlID"] ?? "",
+                    "focusKey": value["focusKey"] ?? ""
+                ]
+            )
+        }
+    }
+
+    private static func clarificationPolicy(from metadata: [String: String]) -> [String] {
+        var policy = stringArrayMetadata(
+            metadata["genericHarness.clarification.questionsJSON"],
+            fallback: []
+        )
+        if let text = nonEmpty(metadata["genericHarness.clarification.policy"]) {
+            policy.append(text)
+        }
+        return policy.isEmpty
+            ? ["Ask a specific follow-up question when the resolved task is incomplete."]
+            : policy
+    }
+
+    private static func stringArrayMetadata(
+        _ text: String?,
+        fallback: [String]
+    ) -> [String] {
+        guard let text,
+              let data = text.data(using: .utf8),
+              let values = try? JSONSerialization.jsonObject(with: data) as? [String]
+        else {
+            return fallback
+        }
+        let cleaned = values.compactMap(nonEmpty)
+        return cleaned.isEmpty ? fallback : cleaned
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 

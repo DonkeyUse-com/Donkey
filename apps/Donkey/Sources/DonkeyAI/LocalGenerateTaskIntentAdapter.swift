@@ -767,7 +767,7 @@ public struct LocalGenerateTaskIntentAdapter: TaskIntentParsingAdapter {
 }
 
 public struct HostedTaskIntentParsingAdapter: TaskIntentParsingAdapter {
-    public static let schemaID = "task_intent_v1"
+    public static let schemaID = "generic_harness_planning"
 
     public var router: AIModelRouter
     public var configuration: DonkeyBackendInferenceConfiguration?
@@ -840,7 +840,7 @@ public struct HostedTaskIntentParsingAdapter: TaskIntentParsingAdapter {
                 )
             }
 
-            guard let intent = try TaskIntentWireCodec.decodeIntent(
+            guard let intent = try TaskIntentWireCodec.decodeHostedPlanningIntent(
                 outputText,
                 definitions: request.taskDefinitions,
                 originalCommand: request.command,
@@ -854,7 +854,7 @@ public struct HostedTaskIntentParsingAdapter: TaskIntentParsingAdapter {
                         "provider": "donkeyBackend",
                         "privacy.store": "false"
                     ]) { current, _ in current }
-                guard let noTaskMetadata = try? TaskIntentWireCodec.noTaskMetadata(
+                guard let noTaskMetadata = try? TaskIntentWireCodec.hostedPlanningNoTaskMetadata(
                     outputText,
                     parserName: "hosted-responses-v1"
                 ) else {
@@ -929,7 +929,7 @@ public struct HostedTaskIntentParsingAdapter: TaskIntentParsingAdapter {
                     "type": .string("json_schema"),
                     "name": .string(Self.schemaID),
                     "strict": .bool(true),
-                    "schema": Self.jsonValue(TaskIntentWireCodec.jsonSchema(taskDefinitions: adapterRequest.taskDefinitions))
+                    "schema": Self.jsonValue(TaskIntentWireCodec.genericHarnessPlanningJsonSchema(taskDefinitions: adapterRequest.taskDefinitions))
                 ])
             ],
             metadata: [
@@ -960,26 +960,31 @@ public struct HostedTaskIntentParsingAdapter: TaskIntentParsingAdapter {
 
     private static let instructions = [
         "Decide whether the user is asking Donkey to run one of the provided local app task definitions.",
-        "Return strict JSON only.",
+        "Return strict JSON only using the generic harness planning schema.",
         "First decide whether Command is an executable local-app task or a conversation turn.",
         "Executable local-app task means all three are clear: action, destination or target app/item, and enough payload to execute safely.",
-        "If Command is a greeting, conversation, question, malformed request, or lacks a real executable payload, return taskType \"none\", targetAppName \"none\", empty entities and normalizedEntities, confidence 0, needsConfirmation false, actionPlan.tools empty, and metadata.responseMode \"conversation\" with metadata.assistantResponse containing a brief natural-language reply.",
-        "For supported actions, choose only a provided taskType and target app. Fill entities and normalizedEntities with the concrete values needed by required entity rules.",
+        "Always fill structuredIntent, ambiguityRisk, contextNeeds, planSteps, verificationCriteria, fallbacks, clarificationPolicy, and metadata.",
+        "If Command is a greeting, conversation, question, malformed request, or lacks a real executable payload, set structuredIntent.route conversation, taskType \"none\", targetAppName \"none\", empty entities and normalizedEntities, confidence 0, needsConfirmation false, no planSteps with toolName values, and metadata.responseMode \"conversation\" with metadata.assistantResponse containing a brief natural-language reply.",
+        "For supported actions, set structuredIntent.route localAppTask, choose only a provided taskType and target app, and fill entities and normalizedEntities with the concrete values needed by required entity rules.",
         "Use the generic local_app_interaction task type for executable local app requests that need a model-planned app workflow and do not have a more specific provided task type.",
+        "Use ambiguityRisk for safe, recoverable, or dangerous ambiguity. Dangerous ambiguity and missing required details must set structuredIntent.needsConfirmation true, ambiguityRisk.shouldAskBeforeActing true, and clarificationPolicy.shouldAsk true with a specific question.",
+        "Use contextNeeds for app lookup, memory lookup, screen observation, element discovery, or skill lookup needed before or during execution.",
+        "Use planSteps for the generic harness plan. Each executable step must name one allowed toolName, with inputEntity/controlID/focusKey filled when that tool needs them. Non-executable reasoning steps should use an empty toolName.",
+        "Use verificationCriteria for what proves success, fallbacks for safe recovery choices, and clarificationPolicy for when Donkey should stop and ask.",
         "For play/listen media requests, treat the turn as executable when a supported play_media capability or media_playback task is available; choose Music or another supported media app, set query to the requested artist/song/album, and do not downgrade it to conversation.",
         "For every media playback request, include metadata.mediaSelection.kind. For explicit playable requests use explicit_song, explicit_album, or explicit_playlist. For vague artist-level media requests such as 'play some <artist>', do media-selection planning before returning JSON: pick one concrete playable song or album by that artist using model knowledge, set query to '<selected title> <artist>', and include metadata.mediaSelection.kind=representative_song or representative_album, metadata.mediaSelection.seed=<artist>, metadata.mediaSelection.selectedTitle=<title>, and metadata.mediaSelection.reason. Do not use an artist-only query unless the user explicitly asks to open the artist page, play an artist radio/station, or browse the artist.",
         "If visible search results are provided in context for a media request, choose the highest-confidence playable Song row whose artist matches the requested seed; skip Artist, Playlist, category, and different-artist rows.",
         "When App finder catalog JSON is non-empty and you use local_app_interaction, choose the target app only from a catalog entry with supportStatus supported and a matching capability. Set metadata.appFinder.selectedAppID to the exact appID, metadata.appFinder.selectedCapabilityID to the capability id, and metadata.appFinder.controlProfile to one declared control profile. Never select candidate, unsupported, or denied entries for execution.",
         "For local_app_interaction, select the most likely local app, set targetAppName and entities.appName to the human app name, set entities.goal, and when text must be entered set entities.query plus normalizedEntities.query.",
-        "For local_app_interaction, fill actionPlan.tools with allowed tools only: app.openOrFocus, app.observe, ui.newDocument, ui.focusSearch, ui.focusAddressBar, ui.focusTextEntry, ui.setText, ui.pressReturn, app.verifyCommand, app.verifyVisibleText.",
-        "When ui.setText is present, entities.query and normalizedEntities.query must be non-empty, actionPlan.inputEntity should usually be query, and actionPlan.controlID/focusKey should describe the guarded UI strategy.",
+        "For local_app_interaction, fill planSteps with allowed toolName values only: app.openOrFocus, app.observe, ui.newDocument, ui.focusSearch, ui.focusAddressBar, ui.focusTextEntry, ui.setText, ui.pressReturn, app.verifyCommand, app.verifyVisibleText.",
+        "When ui.setText is present, entities.query and normalizedEntities.query must be non-empty, the step inputEntity should usually be query, and controlID/focusKey should describe the guarded UI strategy.",
         "For media playback when media_playback is provided, use taskType=media_playback, targetAppName=Music, entities.query=<concrete playable title plus artist>, normalizedEntities.query=<concrete playable title plus artist>, and metadata.mediaSelection.* when the user gave only an artist/genre/seed.",
-        "For media playback through generic local_app_interaction, targetAppName=Music, entities.appName=Music, entities.goal=play media, entities.query=<concrete playable title plus artist>, actionPlan.tools=[app.openOrFocus, app.observe, ui.focusSearch, ui.setText, ui.pressReturn, app.verifyCommand] with inputEntity=query, controlID=search, focusKey=Command+F, metadata.appFinder.selectedCapabilityID=play_media when selected from the app finder catalog, and metadata.mediaSelection.* when the user gave only an artist/genre/seed.",
-        "For website navigation, choose Safari or the user's browser, set query to the URL, and use ui.focusAddressBar, ui.setText, ui.pressReturn, app.verifyCommand.",
-        "For writing in Notes, choose Notes, make query the complete text to type, and use ui.newDocument, ui.setText, app.verifyCommand.",
-        "For spreadsheet or table creation, choose Numbers, put compact tab-separated table content in query, and use ui.newDocument, ui.setText, app.verifyCommand.",
-        "For every other task type, actionPlan.tools must be empty.",
-        "If no supported capability fits, choose taskType \"none\" with a helpful conversational assistantResponse rather than a generic local-action failure.",
+        "For media playback through generic local_app_interaction, targetAppName=Music, entities.appName=Music, entities.goal=play media, entities.query=<concrete playable title plus artist>, planSteps should use app.openOrFocus, app.observe, ui.focusSearch, ui.setText, ui.pressReturn, app.verifyCommand with inputEntity=query, controlID=search, focusKey=Command+F, metadata.appFinder.selectedCapabilityID=play_media when selected from the app finder catalog, and metadata.mediaSelection.* when the user gave only an artist/genre/seed.",
+        "For website navigation, choose Safari or the user's browser, set query to the URL, and use planSteps for ui.focusAddressBar, ui.setText, ui.pressReturn, app.verifyCommand.",
+        "For writing in Notes, choose Notes, make query the complete text to type, and use planSteps for ui.newDocument, ui.setText, app.verifyCommand.",
+        "For spreadsheet or table creation, choose Numbers, put compact tab-separated table content in query, and use planSteps for ui.newDocument, ui.setText, app.verifyCommand.",
+        "For every other task type, planSteps should not contain executable toolName values.",
+        "If no supported capability fits, set structuredIntent.route conversation and taskType \"none\" with a helpful conversational assistantResponse rather than a generic local-action failure.",
         "Do not invent task types, unsupported entities, unsupported tools, app scripts, or direct input outside the schema."
     ].joined(separator: " ")
 
@@ -1313,6 +1318,160 @@ private enum TaskIntentWireCodec {
         ]
     }
 
+    static func genericHarnessPlanningJsonSchema(taskDefinitions: [LocalAppTaskDefinition]) -> [String: Any] {
+        let allowsDynamicTargets = taskDefinitions.contains { definition in
+            definition.metadata["dynamicTarget"] == "true"
+        }
+        let taskTypes = (Array(Set(taskDefinitions.map(\.taskType))) + ["none"]).sorted()
+        let appNames = (Array(Set(taskDefinitions.map(\.targetApp.appName))) + ["none"]).sorted()
+        let targetAppNameSchema: [String: Any] = allowsDynamicTargets
+            ? ["type": "string"]
+            : ["type": "string", "enum": appNames]
+        let toolNames = [""] + LocalAppActionPlanTool.allCases.map(\.rawValue)
+        let planStepSchema: [String: Any] = [
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "id",
+                "summary",
+                "toolName",
+                "inputEntity",
+                "controlID",
+                "focusKey",
+                "expectedObservation"
+            ],
+            "properties": [
+                "id": ["type": "string"],
+                "summary": ["type": "string"],
+                "toolName": ["type": "string", "enum": toolNames],
+                "inputEntity": ["type": "string"],
+                "controlID": ["type": "string"],
+                "focusKey": ["type": "string"],
+                "expectedObservation": ["type": "string"]
+            ]
+        ]
+
+        return [
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "schemaVersion",
+                "structuredIntent",
+                "ambiguityRisk",
+                "contextNeeds",
+                "planSteps",
+                "verificationCriteria",
+                "fallbacks",
+                "clarificationPolicy",
+                "metadata"
+            ],
+            "properties": [
+                "schemaVersion": ["type": "string", "enum": ["generic_harness_planning"]],
+                "structuredIntent": [
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                        "route",
+                        "goal",
+                        "taskType",
+                        "targetAppName",
+                        "entities",
+                        "normalizedEntities",
+                        "confidence",
+                        "needsConfirmation"
+                    ],
+                    "properties": [
+                        "route": [
+                            "type": "string",
+                            "enum": ["localAppTask", "conversation", "clarification"]
+                        ],
+                        "goal": ["type": "string"],
+                        "taskType": ["type": "string", "enum": taskTypes],
+                        "targetAppName": targetAppNameSchema,
+                        "entities": [
+                            "type": "object",
+                            "additionalProperties": ["type": "string"]
+                        ],
+                        "normalizedEntities": [
+                            "type": "object",
+                            "additionalProperties": ["type": "string"]
+                        ],
+                        "confidence": ["type": "number", "minimum": 0, "maximum": 1],
+                        "needsConfirmation": ["type": "boolean"]
+                    ]
+                ],
+                "ambiguityRisk": [
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                        "ambiguityClass",
+                        "riskLevel",
+                        "missingInformation",
+                        "shouldAskBeforeActing"
+                    ],
+                    "properties": [
+                        "ambiguityClass": [
+                            "type": "string",
+                            "enum": ["safe", "recoverable", "dangerous"]
+                        ],
+                        "riskLevel": [
+                            "type": "string",
+                            "enum": ["low", "medium", "high"]
+                        ],
+                        "missingInformation": [
+                            "type": "array",
+                            "maxItems": 8,
+                            "items": ["type": "string"]
+                        ],
+                        "shouldAskBeforeActing": ["type": "boolean"]
+                    ]
+                ],
+                "contextNeeds": [
+                    "type": "array",
+                    "maxItems": 8,
+                    "items": ["type": "string"]
+                ],
+                "planSteps": [
+                    "type": "array",
+                    "maxItems": 12,
+                    "items": planStepSchema
+                ],
+                "verificationCriteria": [
+                    "type": "array",
+                    "maxItems": 8,
+                    "items": ["type": "string"]
+                ],
+                "fallbacks": [
+                    "type": "array",
+                    "maxItems": 8,
+                    "items": ["type": "string"]
+                ],
+                "clarificationPolicy": [
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                        "shouldAsk",
+                        "questions",
+                        "policy"
+                    ],
+                    "properties": [
+                        "shouldAsk": ["type": "boolean"],
+                        "questions": [
+                            "type": "array",
+                            "maxItems": 4,
+                            "items": ["type": "string"]
+                        ],
+                        "policy": ["type": "string"]
+                    ]
+                ],
+                "metadata": [
+                    "type": "object",
+                    "additionalProperties": ["type": "string"]
+                ]
+            ]
+        ]
+    }
+
     static func decodeIntent(
         _ outputText: String,
         definitions: [LocalAppTaskDefinition],
@@ -1323,6 +1482,65 @@ private enum TaskIntentWireCodec {
         parserSource: TaskIntentParserSource = .localModel
     ) throws -> TaskIntent? {
         let wire = try decodeWire(from: outputText)
+        return try decodeIntent(
+            from: wire,
+            definitions: definitions,
+            originalCommand: originalCommand,
+            appFinderCatalog: appFinderCatalog,
+            sourceModelCallID: sourceModelCallID,
+            parserName: parserName,
+            parserSource: parserSource
+        )
+    }
+
+    static func decodeHostedPlanningIntent(
+        _ outputText: String,
+        definitions: [LocalAppTaskDefinition],
+        originalCommand: String,
+        appFinderCatalog: [LocalAppFinderCatalogEntry] = [],
+        sourceModelCallID: String,
+        parserName: String,
+        parserSource: TaskIntentParserSource
+    ) throws -> TaskIntent? {
+        let planningWire = try decodeHostedPlanningWire(from: outputText)
+        guard planningWire.structuredIntent.route == "localAppTask",
+              planningWire.structuredIntent.taskType != "none"
+        else {
+            return nil
+        }
+
+        let wire = TaskIntentWire(
+            taskType: planningWire.structuredIntent.taskType,
+            targetAppName: planningWire.structuredIntent.targetAppName,
+            entities: planningWire.structuredIntent.entities,
+            normalizedEntities: planningWire.structuredIntent.normalizedEntities,
+            confidence: planningWire.structuredIntent.confidence,
+            needsConfirmation: planningWire.structuredIntent.needsConfirmation
+                || planningWire.ambiguityRisk.shouldAskBeforeActing
+                || planningWire.clarificationPolicy.shouldAsk,
+            actionPlan: actionPlan(from: planningWire),
+            metadata: hostedPlanningMetadata(from: planningWire)
+        )
+        return try decodeIntent(
+            from: wire,
+            definitions: definitions,
+            originalCommand: originalCommand,
+            appFinderCatalog: appFinderCatalog,
+            sourceModelCallID: sourceModelCallID,
+            parserName: parserName,
+            parserSource: parserSource
+        )
+    }
+
+    private static func decodeIntent(
+        from wire: TaskIntentWire,
+        definitions: [LocalAppTaskDefinition],
+        originalCommand: String,
+        appFinderCatalog: [LocalAppFinderCatalogEntry],
+        sourceModelCallID: String,
+        parserName: String,
+        parserSource: TaskIntentParserSource
+    ) throws -> TaskIntent? {
         if wire.taskType == "none" {
             return nil
         }
@@ -1448,6 +1666,28 @@ private enum TaskIntentWireCodec {
         )
     }
 
+    static func hostedPlanningNoTaskMetadata(
+        _ outputText: String,
+        parserName: String
+    ) throws -> [String: String]? {
+        let wire = try decodeHostedPlanningWire(from: outputText)
+        guard wire.structuredIntent.route != "localAppTask"
+            || wire.structuredIntent.taskType == "none"
+        else {
+            return nil
+        }
+
+        var metadata = hostedPlanningMetadata(from: wire)
+        metadata["parser"] = parserName
+        metadata["reason"] = nonEmpty(metadata["reason"]) ?? "noSupportedTaskIntent"
+        metadata["responseMode"] = "conversation"
+        metadata["assistantResponse"] = nonEmpty(metadata["assistantResponse"])
+            ?? defaultConversationAssistantResponse
+        metadata["taskType"] = "none"
+        metadata["targetApp"] = wire.structuredIntent.targetAppName
+        return metadata
+    }
+
     static func noTaskMetadata(
         _ outputText: String,
         parserName: String
@@ -1483,6 +1723,27 @@ private enum TaskIntentWireCodec {
             DecodingError.Context(
                 codingPath: [],
                 debugDescription: "No JSON object found in task intent model output"
+            )
+        )
+    }
+
+    private static func decodeHostedPlanningWire(from outputText: String) throws -> GenericHarnessPlanningWire {
+        var lastError: Error?
+        for candidate in jsonObjectCandidates(in: outputText) {
+            do {
+                return try JSONDecoder().decode(GenericHarnessPlanningWire.self, from: Data(candidate.utf8))
+            } catch {
+                lastError = error
+            }
+        }
+
+        if let lastError {
+            throw lastError
+        }
+        throw DecodingError.dataCorrupted(
+            DecodingError.Context(
+                codingPath: [],
+                debugDescription: "No JSON object found in generic harness planning model output"
             )
         )
     }
@@ -1527,6 +1788,80 @@ private enum TaskIntentWireCodec {
 
         var seen = Set<String>()
         return candidates.filter { seen.insert($0).inserted }
+    }
+
+    private static func actionPlan(from wire: GenericHarnessPlanningWire) -> LocalAppActionPlan {
+        let tools = wire.planSteps.compactMap { step -> LocalAppActionPlanTool? in
+            let toolName = step.toolName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !toolName.isEmpty else { return nil }
+            return LocalAppActionPlanTool(rawValue: toolName)
+        }
+        let inputEntity = firstNonEmpty(wire.planSteps.map(\.inputEntity)) ?? ""
+        let controlID = firstNonEmpty(wire.planSteps.map(\.controlID)) ?? ""
+        let focusKey = firstNonEmpty(wire.planSteps.map(\.focusKey)) ?? ""
+        let verification: LocalAppActionPlanVerification = wire.planSteps.contains { step in
+            step.toolName == LocalAppActionPlanTool.verifyVisibleText.rawValue
+        } || wire.verificationCriteria.contains { criterion in
+            criterion.localizedCaseInsensitiveContains("visible")
+        } ? .visibleText : .commandAttempted
+
+        return LocalAppActionPlan(
+            tools: tools,
+            inputEntity: inputEntity,
+            controlID: controlID,
+            focusKey: focusKey,
+            verification: verification
+        )
+    }
+
+    private static func hostedPlanningMetadata(from wire: GenericHarnessPlanningWire) -> [String: String] {
+        var metadata = wire.metadata
+        metadata["genericHarness.schemaVersion"] = wire.schemaVersion
+        metadata["genericHarness.intent.route"] = wire.structuredIntent.route
+        metadata["genericHarness.intent.goal"] = wire.structuredIntent.goal
+        metadata["genericHarness.ambiguity.class"] = wire.ambiguityRisk.ambiguityClass
+        metadata["genericHarness.risk.level"] = wire.ambiguityRisk.riskLevel
+        metadata["genericHarness.shouldAskBeforeActing"] = String(wire.ambiguityRisk.shouldAskBeforeActing)
+        metadata["genericHarness.missingInformationJSON"] = jsonString(wire.ambiguityRisk.missingInformation)
+        metadata["genericHarness.contextNeedsJSON"] = jsonString(wire.contextNeeds)
+        metadata["genericHarness.planStepsJSON"] = jsonString(
+            wire.planSteps.map { step in
+                [
+                    "id": step.id,
+                    "summary": step.summary,
+                    "toolName": step.toolName,
+                    "inputEntity": step.inputEntity,
+                    "controlID": step.controlID,
+                    "focusKey": step.focusKey,
+                    "expectedObservation": step.expectedObservation
+                ]
+            }
+        )
+        metadata["genericHarness.verificationCriteriaJSON"] = jsonString(wire.verificationCriteria)
+        metadata["genericHarness.fallbacksJSON"] = jsonString(wire.fallbacks)
+        metadata["genericHarness.clarification.shouldAsk"] = String(wire.clarificationPolicy.shouldAsk)
+        metadata["genericHarness.clarification.questionsJSON"] = jsonString(wire.clarificationPolicy.questions)
+        metadata["genericHarness.clarification.policy"] = wire.clarificationPolicy.policy
+        return metadata
+    }
+
+    private static func jsonString(_ value: Any) -> String {
+        guard JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(
+                withJSONObject: value,
+                options: [.sortedKeys]
+              ),
+              let text = String(data: data, encoding: .utf8)
+        else {
+            return "[]"
+        }
+        return text
+    }
+
+    private static func firstNonEmpty(_ values: [String]) -> String? {
+        values.first { value in
+            !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 
     private static func nonEmpty(_ value: String?) -> String? {
@@ -1945,6 +2280,52 @@ private enum TaskIntentWireCodec {
             .split(separator: " ")
             .joined(separator: "-")
     }
+}
+
+private struct GenericHarnessPlanningWire: Decodable {
+    var schemaVersion: String
+    var structuredIntent: GenericHarnessStructuredIntentWire
+    var ambiguityRisk: GenericHarnessAmbiguityRiskWire
+    var contextNeeds: [String]
+    var planSteps: [GenericHarnessPlanStepWire]
+    var verificationCriteria: [String]
+    var fallbacks: [String]
+    var clarificationPolicy: GenericHarnessClarificationPolicyWire
+    var metadata: [String: String]
+}
+
+private struct GenericHarnessStructuredIntentWire: Decodable {
+    var route: String
+    var goal: String
+    var taskType: String
+    var targetAppName: String
+    var entities: [String: String]
+    var normalizedEntities: [String: String]
+    var confidence: Double
+    var needsConfirmation: Bool
+}
+
+private struct GenericHarnessAmbiguityRiskWire: Decodable {
+    var ambiguityClass: String
+    var riskLevel: String
+    var missingInformation: [String]
+    var shouldAskBeforeActing: Bool
+}
+
+private struct GenericHarnessPlanStepWire: Decodable {
+    var id: String
+    var summary: String
+    var toolName: String
+    var inputEntity: String
+    var controlID: String
+    var focusKey: String
+    var expectedObservation: String
+}
+
+private struct GenericHarnessClarificationPolicyWire: Decodable {
+    var shouldAsk: Bool
+    var questions: [String]
+    var policy: String
 }
 
 private struct TaskIntentWire: Decodable {
