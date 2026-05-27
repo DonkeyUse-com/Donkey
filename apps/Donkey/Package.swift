@@ -46,6 +46,9 @@ let package = Package(
                 .process("Resources/local-app-finder-profiles.json"),
                 .copy("Resources/BuiltInSkills")
             ],
+            swiftSettings: [
+                .define("DONKEY_DEBUG_OVERLAY", .when(configuration: .debug))
+            ],
             linkerSettings: [
                 .linkedLibrary("sqlite3")
             ]
@@ -55,6 +58,9 @@ let package = Package(
             dependencies: [
                 "DonkeyContracts",
                 "DonkeyRuntime"
+            ],
+            swiftSettings: [
+                .define("DONKEY_DEBUG_OVERLAY", .when(configuration: .debug))
             ]
         ),
         .target(
@@ -79,6 +85,9 @@ let package = Package(
                 .copy("Resources/donkey-app-icon.png"),
                 .copy("Resources/google-continue-dark-rounded.png"),
                 .copy("Resources/theme.json")
+            ],
+            swiftSettings: [
+                .define("DONKEY_DEBUG_OVERLAY", .when(configuration: .debug))
             ]
         ),
         .executableTarget(

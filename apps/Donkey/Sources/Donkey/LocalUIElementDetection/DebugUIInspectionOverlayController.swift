@@ -1,3 +1,5 @@
+#if DONKEY_DEBUG_OVERLAY
+
 import AppKit
 import DonkeyContracts
 import DonkeyRuntime
@@ -348,3 +350,5 @@ private final class DebugUIInspectionRootView: NSView {
         nil
     }
 }
+
+#endif

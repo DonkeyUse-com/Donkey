@@ -1,3 +1,5 @@
+#if DONKEY_DEBUG_OVERLAY
+
 import AppKit
 import CryptoKit
 import DonkeyAI
@@ -884,3 +886,5 @@ private struct DebugUICompressedImage: Sendable {
     var contentType: String
     var pixelSize: HotLoopSize
 }
+
+#endif

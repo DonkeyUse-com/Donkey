@@ -1,3 +1,5 @@
+#if DONKEY_DEBUG_OVERLAY
+
 @preconcurrency import AppKit
 import CoreGraphics
 import CryptoKit
@@ -1209,3 +1211,5 @@ private extension LocalUIElementDetectionTrace {
         return area > 0 && overlap / area >= 0.72
     }
 }
+
+#endif

@@ -1,3 +1,5 @@
+#if DONKEY_DEBUG_OVERLAY
+
 import DonkeyContracts
 import Foundation
 
@@ -127,3 +129,5 @@ public enum DebugUIInspectionFrameFusion {
             .joined(separator: " ")
     }
 }
+
+#endif

@@ -1,3 +1,5 @@
+#if DONKEY_DEBUG_OVERLAY
+
 @preconcurrency import AppKit
 import CoreGraphics
 import CryptoKit
@@ -843,3 +845,5 @@ protocol DebugUIScreenCapturing: Sendable {
 }
 
 extension DebugUIScreenCaptureService: DebugUIScreenCapturing {}
+
+#endif
