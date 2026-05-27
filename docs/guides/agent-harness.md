@@ -59,17 +59,20 @@ task; it must not block unrelated active tasks.
 ## Thread Storage
 
 Threads are the durable conversation record. The generic harness defines a
-thread-store boundary for threads, events, and assets. In tests this is backed
-by an in-memory store; the app should back the same contract with the local
-Donkey database. The older pointer-prompt UI currently persists its tasks and
-events in the user's Application Support directory, but new harness code should
-depend on the generic store contract rather than reaching into that UI-specific
-store directly.
+thread-store boundary for threads, events, assets, task snapshots, task events,
+and compaction snapshots. In tests this can be backed by an in-memory store; in
+the app the default generic lifecycle uses a file-backed local store under the
+user's Application Support directory. Harness code should depend on this
+generic store contract rather than reaching into UI-specific persistence.
 
 A thread record stores the user-visible conversation and the active task ids.
 Task state stores execution details such as world model, plan, permissions,
-tool history, and pending continuations. Keeping those separate lets one thread
-coordinate multiple active tasks without mixing their execution state.
+tool history, and pending continuations. Summaries are stored as thread events
+with the `summary` role. Compaction snapshots store the selected event, asset,
+and task ids plus truncation/drop metadata so model context remains
+inspectable. Keeping thread records, task snapshots, and compaction metadata
+separate lets one thread coordinate multiple active tasks without mixing their
+execution state.
 
 ## Smart Compaction
 

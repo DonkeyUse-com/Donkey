@@ -428,8 +428,9 @@ struct GenericHarnessTests {
 
     @Test
     func pointerPromptLifecyclePlansLocalRunAndStopsForExecutorUserGate() async {
+        let store = InMemoryHarnessThreadStore()
         let coordinator = HarnessTaskCoordinator()
-        let lifecycle = AppHarnessGenericLifecycle(coordinator: coordinator)
+        let lifecycle = AppHarnessGenericLifecycle(threadStore: store, coordinator: coordinator)
         let task = await coordinator.createTask(
             id: "pointer-task-gate",
             threadID: "thread-gate",
@@ -484,8 +485,9 @@ struct GenericHarnessTests {
 
     @Test
     func pointerPromptLifecycleConsumesPendingContinuationOnFollowUpTurn() async {
+        let store = InMemoryHarnessThreadStore()
         let coordinator = HarnessTaskCoordinator()
-        let lifecycle = AppHarnessGenericLifecycle(coordinator: coordinator)
+        let lifecycle = AppHarnessGenericLifecycle(threadStore: store, coordinator: coordinator)
         let task = await coordinator.createTask(
             id: "pointer-task-answer",
             threadID: "pointer-task-answer",
@@ -531,8 +533,9 @@ struct GenericHarnessTests {
 
     @Test
     func pointerPromptLifecyclePauseResumeUsesGenericTaskState() async {
+        let store = InMemoryHarnessThreadStore()
         let coordinator = HarnessTaskCoordinator()
-        let lifecycle = AppHarnessGenericLifecycle(coordinator: coordinator)
+        let lifecycle = AppHarnessGenericLifecycle(threadStore: store, coordinator: coordinator)
         let task = await coordinator.createTask(
             id: "pointer-task-pause",
             threadID: "thread-pause",
@@ -555,8 +558,9 @@ struct GenericHarnessTests {
 
     @Test
     func pointerPromptLifecyclePlansRecoveryAsGenericToolStep() async {
+        let store = InMemoryHarnessThreadStore()
         let coordinator = HarnessTaskCoordinator()
-        let lifecycle = AppHarnessGenericLifecycle(coordinator: coordinator)
+        let lifecycle = AppHarnessGenericLifecycle(threadStore: store, coordinator: coordinator)
         let task = await coordinator.createTask(
             id: "pointer-task-recover",
             threadID: "thread-recover",
@@ -612,10 +616,111 @@ struct GenericHarnessTests {
         let loadedThread = await store.thread(id: thread.id)
         let events = await store.events(threadID: thread.id)
         let assets = await store.assets(threadID: thread.id)
+        await store.upsertTaskSnapshot(
+            HarnessTaskState(
+                id: "task-1",
+                threadID: thread.id,
+                goal: "learn this app",
+                status: .completed
+            )
+        )
+        let completedThread = await store.thread(id: thread.id)
 
         #expect(loadedThread?.title == "Plan a desktop task")
         #expect(events.map(\.text) == ["learn this app"])
         #expect(assets.first?.displayName == "screen.png")
+        #expect(completedThread?.activeTaskIDs == [])
+        #expect(completedThread?.status == .completed)
+    }
+
+    @Test
+    func fileThreadStorePersistsGenericThreadTaskAndCompactionState() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("donkey-harness-store-\(UUID().uuidString)", isDirectory: true)
+        let storeURL = root.appendingPathComponent("store.json")
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let store = FileHarnessThreadStore(storeURL: storeURL)
+        let thread = HarnessThread(
+            id: "thread-durable",
+            title: "Learn an app",
+            activeTaskIDs: ["task-durable"],
+            metadata: ["source": "test"]
+        )
+        await store.upsertThread(thread)
+        await store.appendEvent(
+            HarnessThreadEvent(
+                id: "event-summary",
+                threadID: thread.id,
+                taskID: "task-durable",
+                role: .summary,
+                text: "User wants app learning.",
+                sequence: 0
+            )
+        )
+        await store.appendAsset(
+            HarnessThreadAsset(
+                id: "asset-screen",
+                threadID: thread.id,
+                taskID: "task-durable",
+                displayName: "screen.png",
+                contentType: "image/png",
+                urlString: "file:///tmp/screen.png"
+            )
+        )
+
+        let coordinator = HarnessTaskCoordinator(threadStore: store)
+        _ = await coordinator.createTask(
+            id: "task-durable",
+            threadID: thread.id,
+            goal: "learn this application",
+            grantedPermissions: [.screenCapture]
+        )
+        _ = await coordinator.waitForUser(
+            taskID: "task-durable",
+            question: "Which workflow should I learn first?",
+            pendingToolCall: HarnessToolCall(id: "pending-clarify", name: "user.clarify")
+        )
+        await store.appendCompactionSnapshot(
+            HarnessCompactionSnapshot(
+                id: "compact-1",
+                threadID: thread.id,
+                taskIDs: ["task-durable"],
+                eventIDs: ["event-summary"],
+                assetIDs: ["asset-screen"],
+                promptCharacterCount: 240,
+                records: [
+                    AppHarnessContextCompactionRecord(
+                        itemKind: .recentEvent,
+                        originalCount: 3,
+                        includedCount: 1,
+                        droppedCount: 2
+                    )
+                ],
+                metadata: ["compactor": "smart-priority-v1"]
+            )
+        )
+
+        let reloadedStore = FileHarnessThreadStore(storeURL: storeURL)
+        let reloadedCoordinator = HarnessTaskCoordinator(threadStore: reloadedStore)
+        let reloadedThread = await reloadedStore.thread(id: thread.id)
+        let reloadedEvents = await reloadedStore.events(threadID: thread.id)
+        let reloadedAssets = await reloadedStore.assets(threadID: thread.id)
+        let reloadedTask = await reloadedCoordinator.task(id: "task-durable")
+        let reloadedTaskEvents = await reloadedCoordinator.events(taskID: "task-durable")
+        let reloadedCompactions = await reloadedStore.compactionSnapshots(threadID: thread.id, limit: 1)
+
+        #expect(reloadedThread?.activeTaskIDs == ["task-durable"])
+        #expect(reloadedEvents.map(\.role) == [.summary])
+        #expect(reloadedAssets.first?.displayName == "screen.png")
+        #expect(reloadedTask?.status == .waitingForUser)
+        #expect(reloadedTask?.pendingContinuation?.question == "Which workflow should I learn first?")
+        #expect(reloadedTask?.grantedPermissions == [.screenCapture])
+        #expect(reloadedTaskEvents.map(\.summary) == ["Task created", "Task needs user clarification"])
+        #expect(reloadedCompactions.first?.metadata["compactor"] == "smart-priority-v1")
+        #expect(reloadedCompactions.first?.records.first?.droppedCount == 2)
     }
 
     @Test

@@ -28,12 +28,13 @@ public struct AppHarnessGenericLifecycle: Sendable {
     public var compactor: HarnessThreadCompactor
 
     public init(
-        threadStore: any HarnessThreadStoring = InMemoryHarnessThreadStore(),
-        coordinator: HarnessTaskCoordinator = HarnessTaskCoordinator(),
+        threadStore: (any HarnessThreadStoring)? = nil,
+        coordinator: HarnessTaskCoordinator? = nil,
         compactor: HarnessThreadCompactor = HarnessThreadCompactor()
     ) {
-        self.threadStore = threadStore
-        self.coordinator = coordinator
+        let resolvedThreadStore = threadStore ?? FileHarnessThreadStore()
+        self.threadStore = resolvedThreadStore
+        self.coordinator = coordinator ?? HarnessTaskCoordinator(threadStore: resolvedThreadStore)
         self.compactor = compactor
     }
 
@@ -107,6 +108,20 @@ public struct AppHarnessGenericLifecycle: Sendable {
             events: events,
             assets: assets,
             activeTasks: activeTasks
+        )
+        await threadStore.appendCompactionSnapshot(
+            HarnessCompactionSnapshot(
+                threadID: threadID,
+                taskIDs: compactedContext.activeTasks.map(\.id),
+                eventIDs: compactedContext.events.map(\.id),
+                assetIDs: compactedContext.assets.map(\.id),
+                promptCharacterCount: compactedContext.promptText.count,
+                records: compactedContext.compactionRecords,
+                metadata: compactedContext.metadata.merging([
+                    "source": "pointerPrompt",
+                    "traceID": traceID
+                ]) { current, _ in current }
+            )
         )
 
         return AppHarnessGenericLifecyclePreparedTurn(

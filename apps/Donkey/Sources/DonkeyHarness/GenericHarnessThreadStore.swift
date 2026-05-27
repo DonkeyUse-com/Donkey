@@ -109,6 +109,40 @@ public struct HarnessThreadAsset: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+public struct HarnessCompactionSnapshot: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var threadID: String
+    public var taskIDs: [String]
+    public var eventIDs: [String]
+    public var assetIDs: [String]
+    public var promptCharacterCount: Int
+    public var records: [AppHarnessContextCompactionRecord]
+    public var createdAt: Date
+    public var metadata: [String: String]
+
+    public init(
+        id: String = UUID().uuidString,
+        threadID: String,
+        taskIDs: [String],
+        eventIDs: [String],
+        assetIDs: [String],
+        promptCharacterCount: Int,
+        records: [AppHarnessContextCompactionRecord],
+        createdAt: Date = Date(),
+        metadata: [String: String] = [:]
+    ) {
+        self.id = id
+        self.threadID = threadID
+        self.taskIDs = taskIDs
+        self.eventIDs = eventIDs
+        self.assetIDs = assetIDs
+        self.promptCharacterCount = promptCharacterCount
+        self.records = records
+        self.createdAt = createdAt
+        self.metadata = metadata
+    }
+}
+
 public protocol HarnessThreadStoring: Sendable {
     func upsertThread(_ thread: HarnessThread) async
     func thread(id: String) async -> HarnessThread?
@@ -117,12 +151,23 @@ public protocol HarnessThreadStoring: Sendable {
     func events(threadID: String) async -> [HarnessThreadEvent]
     func appendAsset(_ asset: HarnessThreadAsset) async
     func assets(threadID: String) async -> [HarnessThreadAsset]
+    func upsertTaskSnapshot(_ task: HarnessTaskState) async
+    func taskSnapshot(id: String) async -> HarnessTaskState?
+    func taskSnapshots(threadID: String) async -> [HarnessTaskState]
+    func activeTaskSnapshots() async -> [HarnessTaskState]
+    func appendTaskEvent(_ event: HarnessTaskEvent) async
+    func taskEvents(taskID: String) async -> [HarnessTaskEvent]
+    func appendCompactionSnapshot(_ snapshot: HarnessCompactionSnapshot) async
+    func compactionSnapshots(threadID: String, limit: Int) async -> [HarnessCompactionSnapshot]
 }
 
 public actor InMemoryHarnessThreadStore: HarnessThreadStoring {
     private var threadsByID: [String: HarnessThread] = [:]
     private var eventsByThreadID: [String: [HarnessThreadEvent]] = [:]
     private var assetsByThreadID: [String: [HarnessThreadAsset]] = [:]
+    private var taskSnapshotsByID: [String: HarnessTaskState] = [:]
+    private var taskEventsByTaskID: [String: [HarnessTaskEvent]] = [:]
+    private var compactionSnapshotsByThreadID: [String: [HarnessCompactionSnapshot]] = [:]
 
     public init() {}
 
@@ -143,7 +188,11 @@ public actor InMemoryHarnessThreadStore: HarnessThreadStoring {
 
     public func appendEvent(_ event: HarnessThreadEvent) {
         var events = eventsByThreadID[event.threadID] ?? []
-        events.append(event)
+        if let existingIndex = events.firstIndex(where: { $0.id == event.id }) {
+            events[existingIndex] = event
+        } else {
+            events.append(event)
+        }
         events.sort {
             if $0.sequence == $1.sequence {
                 return $0.createdAt < $1.createdAt
@@ -159,7 +208,11 @@ public actor InMemoryHarnessThreadStore: HarnessThreadStoring {
 
     public func appendAsset(_ asset: HarnessThreadAsset) {
         var assets = assetsByThreadID[asset.threadID] ?? []
-        assets.append(asset)
+        if let existingIndex = assets.firstIndex(where: { $0.id == asset.id }) {
+            assets[existingIndex] = asset
+        } else {
+            assets.append(asset)
+        }
         assets.sort { $0.createdAt < $1.createdAt }
         assetsByThreadID[asset.threadID] = assets
     }
@@ -167,6 +220,266 @@ public actor InMemoryHarnessThreadStore: HarnessThreadStoring {
     public func assets(threadID: String) -> [HarnessThreadAsset] {
         assetsByThreadID[threadID] ?? []
     }
+
+    public func upsertTaskSnapshot(_ task: HarnessTaskState) {
+        taskSnapshotsByID[task.id] = task
+        updateActiveTaskIDs(for: task)
+    }
+
+    public func taskSnapshot(id: String) -> HarnessTaskState? {
+        taskSnapshotsByID[id]
+    }
+
+    public func taskSnapshots(threadID: String) -> [HarnessTaskState] {
+        taskSnapshotsByID.values
+            .filter { $0.threadID == threadID }
+            .sorted { $0.createdAt < $1.createdAt }
+    }
+
+    public func activeTaskSnapshots() -> [HarnessTaskState] {
+        taskSnapshotsByID.values
+            .filter(Self.isActiveTask)
+            .sorted { $0.createdAt < $1.createdAt }
+    }
+
+    public func appendTaskEvent(_ event: HarnessTaskEvent) {
+        var events = taskEventsByTaskID[event.taskID] ?? []
+        if let existingIndex = events.firstIndex(where: { $0.id == event.id }) {
+            events[existingIndex] = event
+        } else {
+            events.append(event)
+        }
+        events.sort { $0.createdAt < $1.createdAt }
+        taskEventsByTaskID[event.taskID] = events
+    }
+
+    public func taskEvents(taskID: String) -> [HarnessTaskEvent] {
+        taskEventsByTaskID[taskID] ?? []
+    }
+
+    public func appendCompactionSnapshot(_ snapshot: HarnessCompactionSnapshot) {
+        var snapshots = compactionSnapshotsByThreadID[snapshot.threadID] ?? []
+        if let existingIndex = snapshots.firstIndex(where: { $0.id == snapshot.id }) {
+            snapshots[existingIndex] = snapshot
+        } else {
+            snapshots.append(snapshot)
+        }
+        snapshots.sort { $0.createdAt < $1.createdAt }
+        compactionSnapshotsByThreadID[snapshot.threadID] = snapshots
+    }
+
+    public func compactionSnapshots(threadID: String, limit: Int) -> [HarnessCompactionSnapshot] {
+        compactionSnapshotsByThreadID[threadID]?
+            .sorted { $0.createdAt > $1.createdAt }
+            .prefix(max(0, limit))
+            .map { $0 } ?? []
+    }
+
+    private static func isActiveTask(_ task: HarnessTaskState) -> Bool {
+        [.running, .paused, .waitingForUser, .waitingForPermission, .interrupted, .resuming].contains(task.status)
+    }
+
+    private func updateActiveTaskIDs(for task: HarnessTaskState) {
+        guard var thread = threadsByID[task.threadID] else { return }
+
+        var activeTaskIDs = Set(thread.activeTaskIDs)
+        if Self.isActiveTask(task) {
+            activeTaskIDs.insert(task.id)
+            thread.status = .running
+        } else {
+            activeTaskIDs.remove(task.id)
+            if activeTaskIDs.isEmpty {
+                thread.status = task.status
+            }
+        }
+        thread.activeTaskIDs = activeTaskIDs.sorted()
+        thread.updatedAt = task.updatedAt
+        threadsByID[thread.id] = thread
+    }
+}
+
+public actor FileHarnessThreadStore: HarnessThreadStoring {
+    private let storeURL: URL
+    private var snapshot: HarnessThreadStoreSnapshot
+
+    public init(storeURL: URL? = nil) {
+        let resolvedStoreURL = storeURL ?? FileHarnessThreadStore.defaultStoreURL()
+        self.storeURL = resolvedStoreURL
+        self.snapshot = FileHarnessThreadStore.loadSnapshot(from: resolvedStoreURL)
+    }
+
+    public static func defaultStoreURL() -> URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Donkey", isDirectory: true)
+            .appendingPathComponent("HarnessStore", isDirectory: true)
+            .appendingPathComponent("store.json")
+    }
+
+    public func upsertThread(_ thread: HarnessThread) {
+        snapshot.threadsByID[thread.id] = thread
+        save()
+    }
+
+    public func thread(id: String) -> HarnessThread? {
+        snapshot.threadsByID[id]
+    }
+
+    public func recentThreads(limit: Int) -> [HarnessThread] {
+        snapshot.threadsByID.values
+            .sorted { $0.updatedAt > $1.updatedAt }
+            .prefix(max(0, limit))
+            .map { $0 }
+    }
+
+    public func appendEvent(_ event: HarnessThreadEvent) {
+        var events = snapshot.eventsByThreadID[event.threadID] ?? []
+        if let existingIndex = events.firstIndex(where: { $0.id == event.id }) {
+            events[existingIndex] = event
+        } else {
+            events.append(event)
+        }
+        events.sort {
+            if $0.sequence == $1.sequence {
+                return $0.createdAt < $1.createdAt
+            }
+            return $0.sequence < $1.sequence
+        }
+        snapshot.eventsByThreadID[event.threadID] = events
+        save()
+    }
+
+    public func events(threadID: String) -> [HarnessThreadEvent] {
+        snapshot.eventsByThreadID[threadID] ?? []
+    }
+
+    public func appendAsset(_ asset: HarnessThreadAsset) {
+        var assets = snapshot.assetsByThreadID[asset.threadID] ?? []
+        if let existingIndex = assets.firstIndex(where: { $0.id == asset.id }) {
+            assets[existingIndex] = asset
+        } else {
+            assets.append(asset)
+        }
+        assets.sort { $0.createdAt < $1.createdAt }
+        snapshot.assetsByThreadID[asset.threadID] = assets
+        save()
+    }
+
+    public func assets(threadID: String) -> [HarnessThreadAsset] {
+        snapshot.assetsByThreadID[threadID] ?? []
+    }
+
+    public func upsertTaskSnapshot(_ task: HarnessTaskState) {
+        snapshot.taskSnapshotsByID[task.id] = task
+        updateActiveTaskIDs(for: task)
+        save()
+    }
+
+    public func taskSnapshot(id: String) -> HarnessTaskState? {
+        snapshot.taskSnapshotsByID[id]
+    }
+
+    public func taskSnapshots(threadID: String) -> [HarnessTaskState] {
+        snapshot.taskSnapshotsByID.values
+            .filter { $0.threadID == threadID }
+            .sorted { $0.createdAt < $1.createdAt }
+    }
+
+    public func activeTaskSnapshots() -> [HarnessTaskState] {
+        snapshot.taskSnapshotsByID.values
+            .filter(Self.isActiveTask)
+            .sorted { $0.createdAt < $1.createdAt }
+    }
+
+    public func appendTaskEvent(_ event: HarnessTaskEvent) {
+        var events = snapshot.taskEventsByTaskID[event.taskID] ?? []
+        if let existingIndex = events.firstIndex(where: { $0.id == event.id }) {
+            events[existingIndex] = event
+        } else {
+            events.append(event)
+        }
+        events.sort { $0.createdAt < $1.createdAt }
+        snapshot.taskEventsByTaskID[event.taskID] = events
+        save()
+    }
+
+    public func taskEvents(taskID: String) -> [HarnessTaskEvent] {
+        snapshot.taskEventsByTaskID[taskID] ?? []
+    }
+
+    public func appendCompactionSnapshot(_ snapshot: HarnessCompactionSnapshot) {
+        var snapshots = self.snapshot.compactionSnapshotsByThreadID[snapshot.threadID] ?? []
+        if let existingIndex = snapshots.firstIndex(where: { $0.id == snapshot.id }) {
+            snapshots[existingIndex] = snapshot
+        } else {
+            snapshots.append(snapshot)
+        }
+        snapshots.sort { $0.createdAt < $1.createdAt }
+        self.snapshot.compactionSnapshotsByThreadID[snapshot.threadID] = snapshots
+        save()
+    }
+
+    public func compactionSnapshots(threadID: String, limit: Int) -> [HarnessCompactionSnapshot] {
+        snapshot.compactionSnapshotsByThreadID[threadID]?
+            .sorted { $0.createdAt > $1.createdAt }
+            .prefix(max(0, limit))
+            .map { $0 } ?? []
+    }
+
+    private func save() {
+        do {
+            try FileManager.default.createDirectory(
+                at: storeURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(snapshot)
+            try data.write(to: storeURL, options: [.atomic])
+        } catch {
+            return
+        }
+    }
+
+    private static func loadSnapshot(from url: URL) -> HarnessThreadStoreSnapshot {
+        guard let data = try? Data(contentsOf: url) else {
+            return HarnessThreadStoreSnapshot()
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return (try? decoder.decode(HarnessThreadStoreSnapshot.self, from: data)) ?? HarnessThreadStoreSnapshot()
+    }
+
+    private static func isActiveTask(_ task: HarnessTaskState) -> Bool {
+        [.running, .paused, .waitingForUser, .waitingForPermission, .interrupted, .resuming].contains(task.status)
+    }
+
+    private func updateActiveTaskIDs(for task: HarnessTaskState) {
+        guard var thread = snapshot.threadsByID[task.threadID] else { return }
+
+        var activeTaskIDs = Set(thread.activeTaskIDs)
+        if Self.isActiveTask(task) {
+            activeTaskIDs.insert(task.id)
+            thread.status = .running
+        } else {
+            activeTaskIDs.remove(task.id)
+            if activeTaskIDs.isEmpty {
+                thread.status = task.status
+            }
+        }
+        thread.activeTaskIDs = activeTaskIDs.sorted()
+        thread.updatedAt = task.updatedAt
+        snapshot.threadsByID[thread.id] = thread
+    }
+}
+
+private struct HarnessThreadStoreSnapshot: Codable {
+    var threadsByID: [String: HarnessThread] = [:]
+    var eventsByThreadID: [String: [HarnessThreadEvent]] = [:]
+    var assetsByThreadID: [String: [HarnessThreadAsset]] = [:]
+    var taskSnapshotsByID: [String: HarnessTaskState] = [:]
+    var taskEventsByTaskID: [String: [HarnessTaskEvent]] = [:]
+    var compactionSnapshotsByThreadID: [String: [HarnessCompactionSnapshot]] = [:]
 }
 
 public struct HarnessCompactionPolicy: Codable, Equatable, Sendable {
@@ -404,4 +717,3 @@ public struct HarnessThreadCompactor: Sendable {
         return String(value.prefix(maxCharacters))
     }
 }
-

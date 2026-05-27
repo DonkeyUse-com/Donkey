@@ -109,8 +109,11 @@ public struct HarnessTaskEvent: Codable, Equatable, Sendable {
 public actor HarnessTaskCoordinator {
     private var tasksByID: [String: HarnessTaskState] = [:]
     private var eventsByTaskID: [String: [HarnessTaskEvent]] = [:]
+    private let threadStore: (any HarnessThreadStoring)?
 
-    public init() {}
+    public init(threadStore: (any HarnessThreadStoring)? = nil) {
+        self.threadStore = threadStore
+    }
 
     @discardableResult
     public func createTask(
@@ -120,7 +123,7 @@ public actor HarnessTaskCoordinator {
         intent: HarnessIntentAnalysis? = nil,
         context: HarnessContextSnapshot = HarnessContextSnapshot(),
         grantedPermissions: Set<HarnessPermission> = []
-    ) -> HarnessTaskState {
+    ) async -> HarnessTaskState {
         let task = HarnessTaskState(
             id: id,
             threadID: threadID,
@@ -130,29 +133,46 @@ public actor HarnessTaskCoordinator {
             grantedPermissions: grantedPermissions
         )
         tasksByID[id] = task
-        appendEvent(taskID: id, status: task.status, summary: "Task created")
+        await threadStore?.upsertTaskSnapshot(task)
+        await appendEvent(taskID: id, status: task.status, summary: "Task created")
         return task
     }
 
-    public func task(id: String) -> HarnessTaskState? {
-        tasksByID[id]
+    public func task(id: String) async -> HarnessTaskState? {
+        if let task = tasksByID[id] {
+            return task
+        }
+        guard let task = await threadStore?.taskSnapshot(id: id) else {
+            return nil
+        }
+        tasksByID[id] = task
+        return task
     }
 
-    public func activeTasks() -> [HarnessTaskState] {
-        tasksByID.values
-            .filter { [.running, .paused, .waitingForUser, .waitingForPermission, .interrupted, .resuming].contains($0.status) }
+    public func activeTasks() async -> [HarnessTaskState] {
+        let persistedTasks = await threadStore?.activeTaskSnapshots() ?? []
+        for task in persistedTasks {
+            tasksByID[task.id] = task
+        }
+        return tasksByID.values
+            .filter(Self.isActiveTask)
             .sorted { $0.createdAt < $1.createdAt }
     }
 
-    public func events(taskID: String) -> [HarnessTaskEvent] {
-        eventsByTaskID[taskID] ?? []
+    public func events(taskID: String) async -> [HarnessTaskEvent] {
+        if let events = eventsByTaskID[taskID] {
+            return events
+        }
+        let events = await threadStore?.taskEvents(taskID: taskID) ?? []
+        eventsByTaskID[taskID] = events
+        return events
     }
 
     public func updateIntent(
         taskID: String,
         intent: HarnessIntentAnalysis
-    ) -> HarnessTaskState? {
-        mutate(taskID: taskID, summary: "Intent updated") { task in
+    ) async -> HarnessTaskState? {
+        await mutate(taskID: taskID, summary: "Intent updated") { task in
             task.intent = intent
             task.goal = intent.goal
         }
@@ -161,8 +181,8 @@ public actor HarnessTaskCoordinator {
     public func updateContext(
         taskID: String,
         context: HarnessContextSnapshot
-    ) -> HarnessTaskState? {
-        mutate(taskID: taskID, summary: "Context updated") { task in
+    ) async -> HarnessTaskState? {
+        await mutate(taskID: taskID, summary: "Context updated") { task in
             task.context = context
         }
     }
@@ -170,8 +190,8 @@ public actor HarnessTaskCoordinator {
     public func updatePlan(
         taskID: String,
         plan: HarnessPlan
-    ) -> HarnessTaskState? {
-        mutate(taskID: taskID, summary: "Plan updated") { task in
+    ) async -> HarnessTaskState? {
+        await mutate(taskID: taskID, summary: "Plan updated") { task in
             task.plan = plan
         }
     }
@@ -179,42 +199,42 @@ public actor HarnessTaskCoordinator {
     public func updateWorldModel(
         taskID: String,
         worldModel: HarnessWorldModel
-    ) -> HarnessTaskState? {
-        mutate(taskID: taskID, summary: "World model updated") { task in
+    ) async -> HarnessTaskState? {
+        await mutate(taskID: taskID, summary: "World model updated") { task in
             task.worldModel = worldModel
         }
     }
 
-    public func pause(taskID: String, reason: String = "User paused task") -> HarnessTaskState? {
-        setStatus(taskID: taskID, status: .paused, summary: reason)
+    public func pause(taskID: String, reason: String = "User paused task") async -> HarnessTaskState? {
+        await setStatus(taskID: taskID, status: .paused, summary: reason)
     }
 
-    public func resume(taskID: String, reason: String = "Task resumed") -> HarnessTaskState? {
-        mutate(taskID: taskID, status: .resuming, summary: reason) { task in
+    public func resume(taskID: String, reason: String = "Task resumed") async -> HarnessTaskState? {
+        await mutate(taskID: taskID, status: .resuming, summary: reason) { task in
             task.pendingContinuation = nil
         }
     }
 
-    public func startRunning(taskID: String, reason: String = "Task running") -> HarnessTaskState? {
-        mutate(taskID: taskID, status: .running, summary: reason) { task in
+    public func startRunning(taskID: String, reason: String = "Task running") async -> HarnessTaskState? {
+        await mutate(taskID: taskID, status: .running, summary: reason) { task in
             task.pendingContinuation = nil
         }
     }
 
-    public func cancel(taskID: String, reason: String = "Task cancelled") -> HarnessTaskState? {
-        mutate(taskID: taskID, status: .cancelled, summary: reason) { task in
+    public func cancel(taskID: String, reason: String = "Task cancelled") async -> HarnessTaskState? {
+        await mutate(taskID: taskID, status: .cancelled, summary: reason) { task in
             task.pendingContinuation = nil
         }
     }
 
-    public func complete(taskID: String, reason: String = "Task completed") -> HarnessTaskState? {
-        mutate(taskID: taskID, status: .completed, summary: reason) { task in
+    public func complete(taskID: String, reason: String = "Task completed") async -> HarnessTaskState? {
+        await mutate(taskID: taskID, status: .completed, summary: reason) { task in
             task.pendingContinuation = nil
         }
     }
 
-    public func failSafe(taskID: String, reason: String) -> HarnessTaskState? {
-        mutate(taskID: taskID, status: .failedSafe, summary: reason) { task in
+    public func failSafe(taskID: String, reason: String) async -> HarnessTaskState? {
+        await mutate(taskID: taskID, status: .failedSafe, summary: reason) { task in
             task.pendingContinuation = nil
         }
     }
@@ -224,8 +244,8 @@ public actor HarnessTaskCoordinator {
         newGoal: String,
         turn: AppHarnessTurn? = nil,
         reason: String = "Task interrupted by user"
-    ) -> HarnessTaskState? {
-        mutate(taskID: taskID, status: .interrupted, summary: reason) { task in
+    ) async -> HarnessTaskState? {
+        await mutate(taskID: taskID, status: .interrupted, summary: reason) { task in
             task.goal = newGoal
             if let turn {
                 task.context.turn = turn
@@ -244,8 +264,8 @@ public actor HarnessTaskCoordinator {
         question: String,
         pendingToolCall: HarnessToolCall? = nil,
         reason: String = "Task needs user clarification"
-    ) -> HarnessTaskState? {
-        mutate(taskID: taskID, status: .waitingForUser, summary: reason) { task in
+    ) async -> HarnessTaskState? {
+        await mutate(taskID: taskID, status: .waitingForUser, summary: reason) { task in
             task.pendingContinuation = HarnessPendingContinuation(
                 stage: .clarification,
                 reason: reason,
@@ -260,8 +280,8 @@ public actor HarnessTaskCoordinator {
         missingPermissions: [HarnessPermission],
         pendingToolCall: HarnessToolCall,
         reason: String = "Task needs permission"
-    ) -> HarnessTaskState? {
-        mutate(taskID: taskID, status: .waitingForPermission, summary: reason) { task in
+    ) async -> HarnessTaskState? {
+        await mutate(taskID: taskID, status: .waitingForPermission, summary: reason) { task in
             task.pendingContinuation = HarnessPendingContinuation(
                 stage: .permissionGate,
                 reason: reason,
@@ -274,8 +294,8 @@ public actor HarnessTaskCoordinator {
     public func provideUserResponse(
         taskID: String,
         response: String
-    ) -> HarnessTaskState? {
-        mutate(taskID: taskID, status: .resuming, summary: "User response received") { task in
+    ) async -> HarnessTaskState? {
+        await mutate(taskID: taskID, status: .resuming, summary: "User response received") { task in
             task.context.memory.append(response)
             task.worldModel.facts["lastUserClarification"] = response
             task.pendingContinuation = nil
@@ -285,8 +305,8 @@ public actor HarnessTaskCoordinator {
     public func grantPermissions(
         taskID: String,
         permissions: Set<HarnessPermission>
-    ) -> HarnessTaskState? {
-        mutate(taskID: taskID, status: .resuming, summary: "Permission granted") { task in
+    ) async -> HarnessTaskState? {
+        await mutate(taskID: taskID, status: .resuming, summary: "Permission granted") { task in
             task.grantedPermissions.formUnion(permissions)
             task.pendingContinuation = nil
         }
@@ -296,8 +316,8 @@ public actor HarnessTaskCoordinator {
         taskID: String,
         call: HarnessToolCall,
         result: HarnessToolResult
-    ) -> HarnessTaskState? {
-        mutate(taskID: taskID, status: nil, summary: "Tool result recorded") { task in
+    ) async -> HarnessTaskState? {
+        await mutate(taskID: taskID, status: nil, summary: "Tool result recorded") { task in
             task.toolHistory.append(
                 HarnessToolCallRecord(
                     call: call,
@@ -315,8 +335,8 @@ public actor HarnessTaskCoordinator {
         taskID: String,
         status: HarnessTaskStatus,
         summary: String
-    ) -> HarnessTaskState? {
-        mutate(taskID: taskID, status: status, summary: summary) { _ in }
+    ) async -> HarnessTaskState? {
+        await mutate(taskID: taskID, status: status, summary: summary) { _ in }
     }
 
     private func mutate(
@@ -324,15 +344,22 @@ public actor HarnessTaskCoordinator {
         status: HarnessTaskStatus? = nil,
         summary: String,
         mutation: (inout HarnessTaskState) -> Void
-    ) -> HarnessTaskState? {
-        guard var task = tasksByID[taskID] else { return nil }
+    ) async -> HarnessTaskState? {
+        let existingTask: HarnessTaskState?
+        if let task = tasksByID[taskID] {
+            existingTask = task
+        } else {
+            existingTask = await threadStore?.taskSnapshot(id: taskID)
+        }
+        guard var task = existingTask else { return nil }
         if let status {
             task.status = status
         }
         mutation(&task)
         task.updatedAt = Date()
         tasksByID[taskID] = task
-        appendEvent(
+        await threadStore?.upsertTaskSnapshot(task)
+        await appendEvent(
             taskID: taskID,
             status: task.status,
             summary: summary
@@ -345,16 +372,20 @@ public actor HarnessTaskCoordinator {
         status: HarnessTaskStatus,
         summary: String,
         metadata: [String: String] = [:]
-    ) {
+    ) async {
         var events = eventsByTaskID[taskID] ?? []
-        events.append(
-            HarnessTaskEvent(
-                taskID: taskID,
-                status: status,
-                summary: summary,
-                metadata: metadata
-            )
+        let event = HarnessTaskEvent(
+            taskID: taskID,
+            status: status,
+            summary: summary,
+            metadata: metadata
         )
+        events.append(event)
         eventsByTaskID[taskID] = events
+        await threadStore?.appendTaskEvent(event)
+    }
+
+    private static func isActiveTask(_ task: HarnessTaskState) -> Bool {
+        [.running, .paused, .waitingForUser, .waitingForPermission, .interrupted, .resuming].contains(task.status)
     }
 }
