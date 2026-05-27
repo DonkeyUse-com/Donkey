@@ -5,5 +5,18 @@
     <link>https://donkeyuse.com/appcast.xml</link>
     <description>Donkey macOS app updates.</description>
     <language>en</language>
+    <item>
+      <title>Version 0.1.1</title>
+      <sparkle:releaseNotesLink>https://github.com/DonkeyUseCorp/Donkey/releases/tag/v0.1.1</sparkle:releaseNotesLink>
+      <pubDate>Wed, 27 May 2026 12:30:58 GMT</pubDate>
+      <enclosure
+        url="https://github.com/DonkeyUseCorp/Donkey/releases/download/v0.1.1/Donkey.dmg"
+        sparkle:version="6"
+        sparkle:shortVersionString="0.1.1"
+        sparkle:minimumSystemVersion="14.0"
+        sparkle:edSignature="BwuV2o7sQA2U8iJW0x/i7yFayE7nzME+Eq6U+t57iixcJFFAJKFFxnYDVs1blsLwz8zi7Q7I4ISXBaCKIO6VDg=="
+        length="8849945"
+        type="application/x-apple-diskimage" />
+    </item>
   </channel>
 </rss>
