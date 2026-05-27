@@ -28,7 +28,7 @@ struct MacKeyboardActionEngineInputBackendTests {
         )
 
         let result = await backend.execute(command(
-            key: "Coldplay",
+            key: "Sample Result",
             metadata: ["inputRole": "textEntry"]
         ))
 
@@ -36,7 +36,7 @@ struct MacKeyboardActionEngineInputBackendTests {
         #expect(result.metadata["inputMode"] == "pasteboardText")
         #expect(result.metadata["textEntry.method"] == "pasteboard")
         #expect(result.metadata["textEntry.shortcut"] == "Command+V")
-        #expect(result.metadata["textEntry.characterCount"] == "8")
+        #expect(result.metadata["textEntry.characterCount"] == "13")
         #expect(recorder.commands() == ["Command+V"])
     }
 

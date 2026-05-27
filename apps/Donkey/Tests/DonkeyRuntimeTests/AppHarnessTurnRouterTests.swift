@@ -231,7 +231,7 @@ struct AppHarnessTurnRouterTests {
     ) -> AppHarnessTurnRouter {
         AppHarnessTurnRouter(
             catalog: LocalAppTaskCatalog(
-                taskDefinitions: BuiltInLocalAppTaskDefinitions.benchmarkFixtures,
+                taskDefinitions: BuiltInLocalAppTaskDefinitions.testFixtures,
                 availabilityProvider: StaticLocalAppAvailabilityProvider(
                     installedBundleIdentifiers: [
                         "com.apple.weather",

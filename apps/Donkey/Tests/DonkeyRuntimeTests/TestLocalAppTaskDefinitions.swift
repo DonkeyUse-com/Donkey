@@ -62,7 +62,7 @@ extension BuiltInLocalAppTaskDefinitions {
         )
     }
 
-    static var benchmarkFixtures: [LocalAppTaskDefinition] {
+    static var testFixtures: [LocalAppTaskDefinition] {
         [
             LocalAppTaskCatalog.genericLocalItemOpenDefinition,
             LocalAppTaskCatalog.genericLocalAppInteractionDefinition,

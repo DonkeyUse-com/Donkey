@@ -24,7 +24,7 @@ struct PointerPromptCopyTests {
                 PointerPromptCopy.defaultPromptPlaceholder
         )
         #expect(
-            PointerPromptCopy.composerPlaceholder(for: "play some justin bieber") ==
+            PointerPromptCopy.composerPlaceholder(for: "play sample track") ==
                 PointerPromptCopy.defaultPromptPlaceholder
         )
         #expect(PointerPromptCopy.composerPlaceholder(for: "Listening...") == "Listening...")

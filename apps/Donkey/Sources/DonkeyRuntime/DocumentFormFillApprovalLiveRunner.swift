@@ -47,7 +47,7 @@ public struct DocumentFormFillApprovalLiveRunner: Sendable {
             deniedCapabilities: []
         ),
         coordinator: RunCoordinator? = nil,
-        actionEngineFactory: @escaping ActionEngineFactory = LocalAppTaskLiveRunner.accessibilityActionEngine(for:)
+        actionEngineFactory: @escaping ActionEngineFactory = LocalAppTaskActionEngines.accessibility(for:)
     ) {
         self.planner = planner
         self.appController = appController

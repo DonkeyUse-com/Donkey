@@ -145,7 +145,7 @@ struct OffTheShelfVisionPerceptionTests {
                 result: LocalJSONSidecarResult(
                     status: .completed,
                     outputData: Data("""
-                    {"visibleText":{"title":"Music","result":"Coldplay"},"controls":[{"id":"search","label":"Search","kind":"searchField","frame":{"x":0.1,"y":0.1,"width":0.8,"height":0.08,"space":"normalizedTarget"},"confidence":0.86,"metadata":{"controlID":"search"}}],"formFields":[],"confidence":0.84,"metadata":{"understander":"fake-local-llm"}}
+                    {"visibleText":{"title":"Music","result":"Sample Result"},"controls":[{"id":"search","label":"Search","kind":"searchField","frame":{"x":0.1,"y":0.1,"width":0.8,"height":0.08,"space":"normalizedTarget"},"confidence":0.86,"metadata":{"controlID":"search"}}],"formFields":[],"confidence":0.84,"metadata":{"understander":"fake-local-llm"}}
                     """.utf8),
                     metadata: ["sidecar.reason": "completed"]
                 )
@@ -161,7 +161,7 @@ struct OffTheShelfVisionPerceptionTests {
         let observation = result.observation(for: request)
 
         #expect(observation.availableControls["search"] == true)
-        #expect(observation.visibleText["result"] == "Coldplay")
+        #expect(observation.visibleText["result"] == "Sample Result")
         #expect(observation.metadata["directInputActionsAllowed"] == "false")
         #expect(observation.metadata["understander"] == "fake-local-llm")
     }

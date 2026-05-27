@@ -23,7 +23,7 @@ struct LocalAppTaskTests {
     @Test
     func catalogResolvesGenericAppOpenIntentFromModelSelectedLocalItem() throws {
         let catalog = LocalAppTaskCatalog(
-            taskDefinitions: BuiltInLocalAppTaskDefinitions.benchmarkFixtures,
+            taskDefinitions: BuiltInLocalAppTaskDefinitions.testFixtures,
             availabilityProvider: StaticLocalAppAvailabilityProvider(
                 installedBundleIdentifiers: ["com.figma.Desktop"],
                 installedApplicationNames: ["Figma": "com.figma.Desktop"],
@@ -68,7 +68,7 @@ struct LocalAppTaskTests {
     @Test
     func lowConfidenceModelIntentAsksForConfirmationBeforeLookupExecution() {
         let catalog = LocalAppTaskCatalog(
-            taskDefinitions: BuiltInLocalAppTaskDefinitions.benchmarkFixtures,
+            taskDefinitions: BuiltInLocalAppTaskDefinitions.testFixtures,
             availabilityProvider: StaticLocalAppAvailabilityProvider(
                 installedBundleIdentifiers: ["com.figma.Desktop"],
                 installedApplicationNames: ["Figma": "com.figma.Desktop"]
@@ -201,7 +201,7 @@ struct LocalAppTaskTests {
     @Test
     func appOpenAdapterVerifiesFocusedApp() throws {
         let catalog = LocalAppTaskCatalog(
-            taskDefinitions: BuiltInLocalAppTaskDefinitions.benchmarkFixtures,
+            taskDefinitions: BuiltInLocalAppTaskDefinitions.testFixtures,
             availabilityProvider: StaticLocalAppAvailabilityProvider(installedBundleIdentifiers: ["com.apple.Music"])
         )
         let resolution = catalog.resolve(intent: TaskIntent(
@@ -241,7 +241,7 @@ struct LocalAppTaskTests {
 
         let resolution = catalog.resolve(intent: genericLocalAppInteractionIntent(
             appName: "Music",
-            query: "Justin Bieber",
+            query: "Sample Track",
             planTools: [
                 .openOrFocusApp,
                 .observeApp,
@@ -288,7 +288,7 @@ struct LocalAppTaskTests {
             for: intent,
             issuedAt: timestamp(100)
         )
-        #expect(commands.map(\.key) == ["Command+F", "Justin Bieber", "Return", "Return"])
+        #expect(commands.map(\.key) == ["Command+F", "Sample Track", "Return", "Return"])
         #expect(commands.first?.metadata["plan.tool"] == "ui.focusSearch")
     }
 
@@ -302,7 +302,7 @@ struct LocalAppTaskTests {
         )
         let resolution = catalog.resolve(intent: genericLocalAppInteractionIntent(
             appName: "Music",
-            query: "Coldplay",
+            query: "Sample Track",
             planTools: [
                 .openOrFocusApp,
                 .observeApp,
@@ -328,58 +328,6 @@ struct LocalAppTaskTests {
         #expect(plan.canExecuteGuardedActions == true)
         #expect(plan.terminalState == .completed)
         #expect(plan.steps.first(where: { $0.role == .focusControl })?.status == .verified)
-    }
-
-    @Test
-    func catalogKeepsValidatedPlayMediaCapabilityOnGenericInteraction() throws {
-        let catalog = LocalAppTaskCatalog(
-            taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
-            availabilityProvider: StaticLocalAppAvailabilityProvider(
-                installedBundleIdentifiers: ["com.apple.Music"]
-            )
-        )
-        var genericIntent = genericLocalAppInteractionIntent(
-            appName: "Music",
-            query: "Viva La Vida Coldplay",
-            planTools: [
-                .openOrFocusApp,
-                .observeApp,
-                .focusSearch,
-                .setText,
-                .pressReturn,
-                .verifyCommand
-            ]
-        )
-        genericIntent.metadata.merge([
-            "appFinder.selectedAppID": "com.apple.Music",
-            "appFinder.selectedCapabilityID": "play_media",
-            "appFinder.controlProfile": "search_then_enter",
-            "mediaSelection.kind": "representative_song",
-            "mediaSelection.seed": "Coldplay",
-            "mediaSelection.selectedTitle": "Viva La Vida"
-        ]) { _, new in new }
-
-        let resolution = catalog.resolve(intent: genericIntent)
-        let intent = try #require(resolution.intent)
-        let definition = try #require(resolution.definition)
-        let automationCommands = catalog.adapter(for: definition).guardedAutomationCommandTemplates(
-            for: intent,
-            issuedAt: timestamp(100)
-        )
-        let keyboardCommands = catalog.adapter(for: definition).guardedKeyboardCommandTemplates(
-            for: intent,
-            issuedAt: timestamp(100)
-        )
-
-        #expect(resolution.status == .resolved)
-        #expect(intent.taskType == "local_app_interaction")
-        #expect(intent.targetApp.appName == "Music")
-        #expect(intent.normalizedEntities["query"] == "Viva La Vida Coldplay")
-        #expect(intent.metadata["appFinder.selectedCapabilityID"] == "play_media")
-        #expect(definition.taskType == "local_app_interaction")
-        #expect(definition.metadata["automationBackend"] == nil)
-        #expect(automationCommands.isEmpty)
-        #expect(keyboardCommands.map(\.key) == ["Command+F", "Viva La Vida Coldplay", "Return"])
     }
 
     @Test
@@ -486,7 +434,7 @@ struct LocalAppTaskTests {
 
         let resolution = catalog.resolve(intent: genericLocalAppInteractionIntent(
             appName: "Music",
-            query: "Justin Bieber",
+            query: "Sample Track",
             planTools: nil
         ))
 
@@ -497,7 +445,7 @@ struct LocalAppTaskTests {
     @Test
     func catalogResolvesStructuredIntentAgainstAvailableInstalledAppDefinition() throws {
         let catalog = LocalAppTaskCatalog(
-            taskDefinitions: BuiltInLocalAppTaskDefinitions.benchmarkFixtures,
+            taskDefinitions: BuiltInLocalAppTaskDefinitions.testFixtures,
             availabilityProvider: StaticLocalAppAvailabilityProvider(installedBundleIdentifiers: [
                 "com.apple.weather",
                 "com.apple.Music",
@@ -526,7 +474,7 @@ struct LocalAppTaskTests {
     @Test
     func catalogSeparatesUnsupportedMissingEntityAndUnavailableApp() {
         let availableCatalog = LocalAppTaskCatalog(
-            taskDefinitions: BuiltInLocalAppTaskDefinitions.benchmarkFixtures,
+            taskDefinitions: BuiltInLocalAppTaskDefinitions.testFixtures,
             availabilityProvider: StaticLocalAppAvailabilityProvider(installedBundleIdentifiers: ["com.apple.weather"])
         )
         let unavailableAppResolution = availableCatalog.resolve(intent: TaskIntent(
@@ -543,7 +491,7 @@ struct LocalAppTaskTests {
         #expect(availableCatalog.resolve(intent: weatherIntent(rawCity: "", city: "", needsConfirmation: true)).status == .needsConfirmation)
 
         let unavailableCatalog = LocalAppTaskCatalog(
-            taskDefinitions: BuiltInLocalAppTaskDefinitions.benchmarkFixtures,
+            taskDefinitions: BuiltInLocalAppTaskDefinitions.testFixtures,
             availabilityProvider: StaticLocalAppAvailabilityProvider(installedBundleIdentifiers: [])
         )
         #expect(unavailableCatalog.resolve(intent: weatherIntent(rawCity: "SF", city: "San Francisco")).status == .appUnavailable)
@@ -918,365 +866,6 @@ struct LocalAppTaskTests {
         #expect(command.targetBounds?.space == .screen)
     }
 
-    @Test @MainActor
-    func liveRunnerReturnsReviewPlanForDocumentFormFillWithoutExecutingInput() async throws {
-        let catalog = LocalAppTaskCatalog(
-            taskDefinitions: BuiltInLocalAppTaskDefinitions.benchmarkFixtures,
-            availabilityProvider: StaticLocalAppAvailabilityProvider(installedBundleIdentifiers: ["com.apple.Preview"])
-        )
-        let context = LocalAppTaskContext(
-            focusedAppName: "Preview",
-            focusedBundleIdentifier: "com.apple.Preview",
-            focusedWindowTitle: "Application.pdf",
-            structuredData: ["Name": "Grace Hopper"],
-            observedFormFields: [
-                LocalDocumentFormField(id: "name", label: "Name", isRequired: true)
-            ]
-        )
-        let runner = LocalAppTaskLiveRunner(
-            catalog: catalog,
-            contextProvider: StaticLocalAppTaskContextProvider(context: context)
-        )
-        let intent = documentFormFillIntent()
-
-        let result = await runner.run(
-            command: "fill out this PDF using this data",
-            traceID: "trace-document-fill",
-            resolution: catalog.resolve(intent: intent),
-            metadata: ["intentParser": "test-model"]
-        )
-
-        #expect(result.status == .needsUserReview)
-        #expect(result.actionTraces.isEmpty)
-        #expect(result.documentFormFillPlan?.status == .readyForReview)
-        #expect(result.documentFormFillPlan?.proposals.first?.proposedValue == "Grace Hopper")
-        #expect(result.metadata["reason"] == "reviewOnlyTask")
-        #expect(result.workflowProgress.state(for: .approval)?.status == .waiting)
-        #expect(result.workflowProgress.state(for: .execute)?.status == .skipped)
-    }
-
-    @Test @MainActor
-    func liveRunnerLaunchesFocusesExecutesGuardedCommandsAndVerifies() async throws {
-        let backend = RecordingLocalAppTaskInputBackend()
-        let controller = FakeLocalAppTaskAppController(
-            launchObservation: LocalAppTaskObservation(
-                appIsRunning: true,
-                appIsFocused: true,
-                availableControls: ["search": true],
-                confidence: 0.5,
-                metadata: groundedControlMetadata()
-            ),
-            finalObservation: LocalAppTaskObservation(
-                appIsRunning: true,
-                appIsFocused: true,
-                availableControls: ["search": true],
-                visibleText: ["city": "San Francisco, CA"],
-                confidence: 0.92,
-                metadata: groundedControlMetadata()
-            )
-        )
-        let catalog = LocalAppTaskCatalog(
-            taskDefinitions: BuiltInLocalAppTaskDefinitions.benchmarkFixtures,
-            availabilityProvider: StaticLocalAppAvailabilityProvider(installedBundleIdentifiers: ["com.apple.weather"])
-        )
-        let runner = LocalAppTaskLiveRunner(
-            catalog: catalog,
-            appController: controller,
-            actionEngineFactory: { _ in
-                ActionEngineGuardrail(
-                    configuration: ActionEngineConfiguration(liveInputEnabled: true),
-                    inputBackend: backend
-                )
-            },
-            permissionPolicy: ToolCallPolicy(deniedCapabilities: [])
-        )
-        let intent = weatherIntent(rawCity: "SF", city: "San Francisco")
-
-        let result = await runner.run(
-            command: "show me the weather for SF",
-            traceID: "trace-live-task",
-            resolution: catalog.resolve(intent: intent),
-            metadata: ["intentParser": "test-model"]
-        )
-
-        #expect(result.status == .completed)
-        #expect(result.finalActionPlan?.terminalState == .completed)
-        #expect(result.actionTraces.count == 4)
-        #expect(result.actionTraces.allSatisfy { $0.executed })
-        #expect(await backend.executedKeys() == ["Command+F", "San Francisco", "Return", "Return"])
-        #expect(controller.launchCount == 1)
-        #expect(controller.observeCount == 1)
-        #expect(result.workflowProgress.state(for: .parseIntent)?.status == .completed)
-        #expect(result.workflowProgress.state(for: .resolveApp)?.status == .completed)
-        #expect(result.workflowProgress.state(for: .evidencePlan)?.status == .completed)
-        #expect(result.workflowProgress.state(for: .approval)?.status == .skipped)
-        #expect(result.workflowProgress.state(for: .execute)?.status == .completed)
-        #expect(result.workflowProgress.state(for: .verify)?.status == .completed)
-        #expect(result.metadata["workflow.verify.status"] == "completed")
-    }
-
-    @Test @MainActor
-    func liveRunnerExecutesOnlyModelPlannedGenericPlayMediaSteps() async throws {
-        let backend = RecordingLocalAppTaskInputBackend()
-        let controller = FakeLocalAppTaskAppController(
-            launchObservation: LocalAppTaskObservation(
-                appIsRunning: true,
-                appIsFocused: true,
-                availableControls: [:],
-                confidence: 0.7
-            ),
-            finalObservation: LocalAppTaskObservation(
-                appIsRunning: true,
-                appIsFocused: true,
-                availableControls: [:],
-                confidence: 0.74
-            )
-        )
-        let catalog = LocalAppTaskCatalog(
-            taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
-            availabilityProvider: StaticLocalAppAvailabilityProvider(installedBundleIdentifiers: ["com.apple.Music"])
-        )
-        let runner = LocalAppTaskLiveRunner(
-            catalog: catalog,
-            appController: controller,
-            actionEngineFactory: { _ in
-                ActionEngineGuardrail(
-                    configuration: ActionEngineConfiguration(liveInputEnabled: true),
-                    inputBackend: backend
-                )
-            },
-            permissionPolicy: ToolCallPolicy(deniedCapabilities: [])
-        )
-        var intent = genericLocalAppInteractionIntent(
-            appName: "Music",
-            query: "Viva La Vida Coldplay",
-            planTools: [
-                .openOrFocusApp,
-                .observeApp,
-                .focusSearch,
-                .setText,
-                .pressReturn,
-                .verifyCommand
-            ]
-        )
-        intent.metadata.merge([
-            "appFinder.selectedAppID": "com.apple.Music",
-            "appFinder.selectedCapabilityID": "play_media",
-            "appFinder.controlProfile": "search_then_enter",
-            "mediaSelection.kind": "representative_song",
-            "mediaSelection.seed": "Coldplay",
-            "mediaSelection.selectedTitle": "Viva La Vida"
-        ]) { _, new in new }
-
-        let result = await runner.run(
-            command: "play some cold play",
-            traceID: "trace-generic-play-media-automation",
-            resolution: catalog.resolve(intent: intent),
-            metadata: ["intentParser": "test-model"]
-        )
-
-        #expect(result.status == .completed)
-        #expect(result.resolution.definition?.taskType == "local_app_interaction")
-        #expect(result.metadata["reason"] != "evidencePlanBlocked")
-        #expect(result.metadata["automation.backend"] == nil)
-        #expect(result.metadata["automation.action"] == nil)
-        #expect(result.workflowProgress.state(for: .evidencePlan)?.status == .completed)
-        #expect(result.workflowProgress.state(for: .execute)?.status == .completed)
-        #expect(result.metadata["verification.executedCommandCount"] == "3")
-        #expect(await backend.executedKeys() == ["Command+F", "Viva La Vida Coldplay", "Return"])
-    }
-
-    @Test @MainActor
-    func liveRunnerExecutesGenericShortcutFocusPlanWithoutControlBounds() async throws {
-        let backend = RecordingLocalAppTaskInputBackend()
-        let controller = FakeLocalAppTaskAppController(
-            launchObservation: LocalAppTaskObservation(
-                appIsRunning: true,
-                appIsFocused: true,
-                availableControls: [:],
-                confidence: 0.7
-            ),
-            finalObservation: LocalAppTaskObservation(
-                appIsRunning: true,
-                appIsFocused: true,
-                availableControls: [:],
-                confidence: 0.74
-            )
-        )
-        let catalog = LocalAppTaskCatalog(
-            taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
-            availabilityProvider: StaticLocalAppAvailabilityProvider(installedBundleIdentifiers: ["com.apple.Music"])
-        )
-        let runner = LocalAppTaskLiveRunner(
-            catalog: catalog,
-            appController: controller,
-            actionEngineFactory: { _ in
-                ActionEngineGuardrail(
-                    configuration: ActionEngineConfiguration(liveInputEnabled: true),
-                    inputBackend: backend
-                )
-            },
-            permissionPolicy: ToolCallPolicy(deniedCapabilities: [])
-        )
-        let intent = genericLocalAppInteractionIntent(
-            appName: "Music",
-            query: "Coldplay",
-            planTools: [
-                .openOrFocusApp,
-                .observeApp,
-                .focusSearch,
-                .setText,
-                .pressReturn,
-                .verifyCommand
-            ]
-        )
-
-        let result = await runner.run(
-            command: "play some cold play",
-            traceID: "trace-generic-shortcut-focus",
-            resolution: catalog.resolve(intent: intent),
-            metadata: ["intentParser": "test-model"]
-        )
-
-        #expect(result.status == .completed)
-        #expect(result.metadata["reason"] != "evidencePlanBlocked")
-        #expect(result.workflowProgress.state(for: .evidencePlan)?.status == .completed)
-        #expect(result.workflowProgress.state(for: .execute)?.status == .completed)
-        #expect(await backend.executedKeys() == ["Command+F", "Coldplay", "Return"])
-    }
-
-    @Test @MainActor
-    func liveRunnerDoesNotReportCompletedWhenEvidencePlanBlocks() async throws {
-        let backend = RecordingLocalAppTaskInputBackend()
-        let controller = FakeLocalAppTaskAppController(
-            launchObservation: LocalAppTaskObservation(
-                appIsRunning: true,
-                appIsFocused: true,
-                availableControls: [:],
-                confidence: 0.7
-            ),
-            finalObservation: LocalAppTaskObservation(
-                appIsRunning: true,
-                appIsFocused: true,
-                availableControls: [:],
-                confidence: 0.74
-            )
-        )
-        let catalog = LocalAppTaskCatalog(
-            taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
-            availabilityProvider: StaticLocalAppAvailabilityProvider(installedBundleIdentifiers: ["com.apple.Music"])
-        )
-        let runner = LocalAppTaskLiveRunner(
-            catalog: catalog,
-            appController: controller,
-            actionEngineFactory: { _ in
-                ActionEngineGuardrail(
-                    configuration: ActionEngineConfiguration(liveInputEnabled: true),
-                    inputBackend: backend
-                )
-            },
-            permissionPolicy: ToolCallPolicy(deniedCapabilities: [])
-        )
-        let intent = TaskIntent(
-            intentID: "local_app_interaction-no-focus-evidence",
-            taskType: "local_app_interaction",
-            targetApp: LocalAppTarget(appName: "Music", titleContains: "Music"),
-            entities: [
-                "appName": "Music",
-                "goal": "play media",
-                "query": "Coldplay"
-            ],
-            normalizedEntities: [
-                "appName": "Music",
-                "goal": "play media",
-                "query": "Coldplay"
-            ],
-            confidence: 0.93,
-            parserSource: .localModel,
-            actionPlan: LocalAppActionPlan(
-                tools: [
-                    .openOrFocusApp,
-                    .observeApp,
-                    .focusSearch,
-                    .setText,
-                    .pressReturn,
-                    .verifyCommand
-                ],
-                inputEntity: "query",
-                controlID: "search",
-                focusKey: "",
-                verification: .commandAttempted
-            ),
-            metadata: ["requestedItemName": "Music"]
-        )
-
-        let result = await runner.run(
-            command: "play some cold play",
-            traceID: "trace-blocked-evidence-plan",
-            resolution: catalog.resolve(intent: intent),
-            metadata: ["intentParser": "test-model"]
-        )
-
-        #expect(result.status == .needsUserReview)
-        #expect(result.metadata["reason"] == "evidencePlanBlocked")
-        #expect(result.workflowProgress.state(for: .evidencePlan)?.status == .blocked)
-        #expect(await backend.executedKeys() == [])
-    }
-
-    @Test @MainActor
-    func liveRunnerPublishesCoordinatorEventsForGuardedRun() async throws {
-        let backend = RecordingLocalAppTaskInputBackend()
-        let controller = FakeLocalAppTaskAppController(
-            launchObservation: LocalAppTaskObservation(
-                appIsRunning: true,
-                appIsFocused: true,
-                availableControls: ["search": true],
-                confidence: 0.5,
-                metadata: groundedControlMetadata()
-            ),
-            finalObservation: LocalAppTaskObservation(
-                appIsRunning: true,
-                appIsFocused: true,
-                availableControls: ["search": true],
-                visibleText: ["city": "San Francisco, CA"],
-                confidence: 0.92,
-                metadata: groundedControlMetadata()
-            )
-        )
-        let coordinator = RunCoordinator()
-        let catalog = LocalAppTaskCatalog(
-            taskDefinitions: BuiltInLocalAppTaskDefinitions.benchmarkFixtures,
-            availabilityProvider: StaticLocalAppAvailabilityProvider(installedBundleIdentifiers: ["com.apple.weather"])
-        )
-        let runner = LocalAppTaskLiveRunner(
-            catalog: catalog,
-            appController: controller,
-            actionEngineFactory: { _ in
-                ActionEngineGuardrail(
-                    configuration: ActionEngineConfiguration(liveInputEnabled: true),
-                    inputBackend: backend
-                )
-            },
-            permissionPolicy: ToolCallPolicy(deniedCapabilities: []),
-            coordinator: coordinator
-        )
-        let intent = weatherIntent(rawCity: "SF", city: "San Francisco")
-
-        let result = await runner.run(
-            command: "show me the weather for SF",
-            traceID: "trace-live-task-events",
-            resolution: catalog.resolve(intent: intent),
-            metadata: ["intentParser": "test-model"]
-        )
-        let events = await coordinator.events()
-
-        #expect(result.status == .completed)
-        #expect(events.contains { $0.stream == .lifecycle })
-        #expect(events.contains { $0.stream == .tool && $0.summary == "Launching or focusing local app" })
-        #expect(events.contains { $0.stream == .tool && $0.summary == "Executing guarded keyboard command" })
-        #expect(events.last?.summary == "Run completed")
-    }
-
     @Test
     func screenshotUnderstandingIsOnlyUsedWhenAccessibilityIsInsufficient() {
         let definition = BuiltInLocalAppTaskDefinitions.weatherLookup
@@ -1458,7 +1047,7 @@ struct LocalAppTaskTests {
 
     private func catalog() -> LocalAppTaskCatalog {
         LocalAppTaskCatalog(
-            taskDefinitions: BuiltInLocalAppTaskDefinitions.benchmarkFixtures,
+            taskDefinitions: BuiltInLocalAppTaskDefinitions.testFixtures,
             availabilityProvider: StaticLocalAppAvailabilityProvider(installedBundleIdentifiers: [])
         )
     }

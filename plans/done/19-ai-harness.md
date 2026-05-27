@@ -1,6 +1,6 @@
 # AI Harness Memory And Voice Cleanup
 
-> Active status: implemented. This plan was narrowed to semantic-memory wiring, provider memory write proposals, live voice audio hardening, and focused tests. Those slices are now supported in local code. Benchmarking is out of scope for this plan.
+> Completed. This plan was narrowed to semantic-memory wiring, provider memory write proposals, live voice audio hardening, and focused tests. Those slices are now supported in local code.
 
 ## 1. Wire Real Semantic Memory Retrieval
 

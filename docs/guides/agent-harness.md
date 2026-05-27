@@ -64,6 +64,12 @@ the generic task definitions, generated or user-reviewed app catalog data, and
 memory. The core runtime does not ship app-specific Weather, Music, Notes, or
 Numbers task branches.
 
+The app catalog is part of the model boundary, not a hidden executor shortcut.
+Pointer-prompt turns send the current supported app catalog to planning. If the
+catalog is still refreshing or does not contain a supported entry, the harness
+must surface conversation, clarification, waiting, or failed-safe state instead
+of silently dropping the request or executing an unsupported candidate.
+
 Pointer prompt uses the generic harness as the entrypoint for conversation,
 clarification, planning, and tool selection. Local desktop actions are
 registered harness tools rather than a separate default path.
@@ -173,13 +179,14 @@ observes, acts, verifies, and replans. The planner may propose the next tool
 step, but deterministic Swift owns task state, tool validation, permissions,
 focus checks, execution, and result recording.
 
-Pointer-prompt local-app work is executed through the same tool loop. Hosted
-planning emits local-app tool calls such as `app.openOrFocus`, `app.observe`,
-`ui.setText`, and `app.verifyCommand`; the runtime executes one guarded step,
-records the resulting Accessibility or screenshot-backed observation, and then
-continues only while the next planned tool remains valid. It stops on
-verification failure, missing evidence, permission gates, clarification gates,
-or exhausted plan steps.
+Pointer-prompt local-app work is executed through the same tool loop. Planning
+receives compacted context, tool descriptors, relevant skills, and the current
+supported app catalog, then returns a structured route and plan. A local-app
+route must validate against the catalog before it becomes executable tool
+state. The runtime executes one guarded step, records the resulting
+Accessibility or screenshot-backed observation, and continues only while the
+next planned step remains valid. It stops on verification failure, missing
+evidence, permission gates, clarification gates, or exhausted plan steps.
 
 If the user interrupts a task, the harness classifies whether the turn starts a
 new task, modifies the current task, cancels, pauses, resumes, answers a
@@ -258,9 +265,9 @@ execution checks as other input.
 
 Verification must be backed by task evidence. A local-app command attempt is not
 verified merely because the target app is focused or running after execution;
-post-action verification records guarded command evidence and should use
-available observation evidence, including screenshots when needed, before the
-task can complete or choose a recovery path.
+the harness needs post-action evidence, such as guarded command traces, visible
+text, selected element state, app-reported results, or screenshot-backed
+observations, before the task can complete or choose a recovery path.
 
 ## AppleScript And Scripts
 

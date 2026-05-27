@@ -68,7 +68,9 @@ extension PointerPromptCommandHandling {
 struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
     var catalog: LocalAppTaskCatalog
     var localModelResolver: LocalModelTaskIntentResolver
-    var liveRunner: LocalAppTaskLiveRunner
+    var appController: any LocalAppTaskAppControlling
+    var actionEngineFactory: LocalAppHarnessStepExecutor.ActionEngineFactory
+    var permissionPolicy: ToolCallPolicy
     var redactor: AIHarnessRedactor
     var memoryRetriever: SemanticRunMemoryRetriever
     var coordinatorRegistry: PointerPromptRunCoordinatorRegistry
@@ -78,7 +80,14 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
     init(
         catalog: LocalAppTaskCatalog = .defaultLocal(),
         localModelResolver: LocalModelTaskIntentResolver? = nil,
-        liveRunner: LocalAppTaskLiveRunner? = nil,
+        appController: any LocalAppTaskAppControlling = MacLocalAppTaskController(
+            uiUnderstandingRunner: DonkeyUIUnderstandingRunnerFactory.defaultRunner()
+        ),
+        actionEngineFactory: @escaping LocalAppHarnessStepExecutor.ActionEngineFactory = LocalAppTaskActionEngines.keyboardOrAutomation(for:),
+        permissionPolicy: ToolCallPolicy = ToolCallPolicy(
+            allowedCapabilities: ToolCallPolicy.defaultAllowedCapabilities.union([.input]),
+            deniedCapabilities: []
+        ),
         redactor: AIHarnessRedactor = AIHarnessRedactor(),
         memoryRetriever: SemanticRunMemoryRetriever = SemanticRunMemoryRetriever(),
         coordinatorRegistry: PointerPromptRunCoordinatorRegistry = PointerPromptRunCoordinatorRegistry(),
@@ -88,12 +97,9 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
         self.catalog = catalog
         self.coordinatorRegistry = coordinatorRegistry
         self.localModelResolver = localModelResolver ?? LocalModelTaskIntentResolver(catalog: catalog)
-        self.liveRunner = liveRunner ?? LocalAppTaskLiveRunner(
-            catalog: catalog,
-            appController: MacLocalAppTaskController(
-                uiUnderstandingRunner: DonkeyUIUnderstandingRunnerFactory.defaultRunner()
-            )
-        )
+        self.appController = appController
+        self.actionEngineFactory = actionEngineFactory
+        self.permissionPolicy = permissionPolicy
         self.redactor = redactor
         self.memoryRetriever = memoryRetriever
         self.genericHarnessLifecycle = genericHarnessLifecycle
@@ -164,8 +170,6 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
         }
 
         let coordinator = await coordinatorRegistry.coordinator(for: taskID)
-        var taskLiveRunner = liveRunner
-        taskLiveRunner.coordinator = coordinator
         let modelInput = Self.modelInput(
             for: command,
             context: context,
@@ -348,9 +352,9 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
                 "appHarness.decision": AppHarnessDecisionKind.runLocalTask.rawValue,
                 "genericHarness.taskID": taskID
             ]) { current, _ in current },
-            appController: taskLiveRunner.appController,
-            actionEngineFactory: taskLiveRunner.actionEngineFactory,
-            permissionPolicy: taskLiveRunner.permissionPolicy,
+            appController: appController,
+            actionEngineFactory: actionEngineFactory,
+            permissionPolicy: permissionPolicy,
             coordinator: coordinator
         )
         await localStepExecutor.registerTools(in: registry)
@@ -417,27 +421,17 @@ struct LocalAppPointerPromptCommandHandler: PointerPromptCommandHandling {
     }
 
     func pauseCommand(taskID: String) async -> Bool {
-        let genericPaused = await genericHarnessLifecycle.pauseTask(
+        await genericHarnessLifecycle.pauseTask(
             taskID: taskID,
             reason: "Pointer prompt paused task"
         ) != nil
-        let oldRunnerPaused = await coordinatorRegistry.pause(
-            taskID: taskID,
-            reason: "Pointer prompt paused task"
-        )
-        return genericPaused || oldRunnerPaused
     }
 
     func resumeCommand(taskID: String) async -> Bool {
-        let genericResumed = await genericHarnessLifecycle.resumeTask(
+        await genericHarnessLifecycle.resumeTask(
             taskID: taskID,
             reason: "Pointer prompt resumed task"
         ) != nil
-        let oldRunnerResumed = await coordinatorRegistry.resume(
-            taskID: taskID,
-            reason: "Pointer prompt resumed task"
-        )
-        return genericResumed || oldRunnerResumed
     }
 
     func approvePermissionGate(taskID: String) async -> Bool {

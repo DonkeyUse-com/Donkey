@@ -34,4 +34,4 @@ Supported behavior and engineering guidance belong in `docs/guides/agent-harness
 
 ## Completion
 
-This milestone is complete. Supported behavior and engineering guidance live in `docs/guides/agent-harness.md`; future implementation should continue from the active capture, Accessibility, benchmarking, and off-the-shelf run-loop plans.
+This milestone is complete. Supported behavior and engineering guidance live in `docs/guides/agent-harness.md`; future implementation should start from `plans/master-plan.md`.

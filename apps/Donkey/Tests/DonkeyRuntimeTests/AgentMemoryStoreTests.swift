@@ -110,7 +110,7 @@ struct AgentMemoryStoreTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let store = try SQLiteAgentMemoryStore(baseDirectory: root, cleanupLegacyStores: false)
 
-        store.prewarmTaskDefinitions(BuiltInLocalAppTaskDefinitions.benchmarkFixtures)
+        store.prewarmTaskDefinitions(BuiltInLocalAppTaskDefinitions.testFixtures)
 
         let result = try #require(try store.search(query: AgentMemoryQuery(
             text: "local app interaction",

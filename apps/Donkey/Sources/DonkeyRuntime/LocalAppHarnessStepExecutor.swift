@@ -30,7 +30,7 @@ public actor LocalAppHarnessStepExecutor {
         resolution: LocalAppTaskCatalogResolution,
         metadata: [String: String] = [:],
         appController: any LocalAppTaskAppControlling,
-        actionEngineFactory: @escaping ActionEngineFactory = LocalAppTaskLiveRunner.defaultActionEngine(for:),
+        actionEngineFactory: @escaping ActionEngineFactory = LocalAppTaskActionEngines.keyboardOrAutomation(for:),
         permissionPolicy: ToolCallPolicy = ToolCallPolicy(
             allowedCapabilities: ToolCallPolicy.defaultAllowedCapabilities.union([.input]),
             deniedCapabilities: []
