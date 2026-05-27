@@ -2,400 +2,320 @@
 
 ## What It Is
 
-The agent harness is Donkey's boundary between the user's conversation and the
-systems that can act on the Mac. It owns the question: "What should this turn do
-next?" Sometimes the answer is normal conversation. Sometimes it is a
-clarifying question. Sometimes it is a reviewed plan. Sometimes it is a guarded
-local-app action.
+The agent harness is Donkey's app-agnostic runtime boundary for turning a user
+turn into durable task progress. It owns the lifecycle around intent,
+context-gathering, world modeling, planning, tool execution, verification,
+recovery, permission gates, clarification, pause/resume, interruption, and
+multi-task coordination.
 
-A task is not just an executable command. A task is a durable conversation
-thread with user turns, assistant turns, assets, memory, trace ids, and optional
-action runs attached to it. This matters because a user can say "hi", ask what
-Donkey can do, upload a file, revise a previous request, approve a form-fill
-plan, or ask Donkey to operate another app. Those are all valid task-thread
-turns, but only some of them should touch the action runtime.
+The generic harness contracts live in `apps/Donkey/Sources/DonkeyHarness/`.
+New agent capabilities should plug into that module through tools, skills,
+scripts, plugins, catalogs, or memory. Do not add app-specific branches,
+phrase lists, or one-off workflow conditionals to the core harness.
 
-The harness makes that distinction before execution. Non-actionable turns should
-produce assistant responses. Ambiguous actionable turns should ask for the
-specific missing information. Validated actionable turns may enter the local-app
-runner, review UI, planner, or action engine. A greeting or capability question
-must not become a failed task card.
+The existing pointer-prompt and local-app runner code still exists while the
+product migrates onto the generic harness. New work should build toward the
+generic contracts and avoid expanding the older app-specific paths.
 
-## How A Turn Flows
+## Core Model
 
-Every prompt submission, voice transcript, follow-up, and asset event enters the
-same harness intake path. Intake first attaches the turn to the right durable
-thread, records the event, and builds a compact context packet. From there the
-harness routes the turn by meaning, not by the fact that text was submitted.
+Every task has its own durable state:
 
-The normal flow is:
+- task id and thread id
+- current goal
+- structured intent analysis
+- gathered context
+- world model
+- plan
+- granted permissions
+- tool history
+- pending continuation
+- lifecycle status
 
-1. Receive a turn from the pointer prompt, voice transcription, file drop, or a
-   task follow-up.
-2. Attach it to an existing or new task thread and persist the user-visible
-   event.
-3. Build a bounded context packet for this decision.
-4. Classify the turn as conversation, clarification, review, actionable intent,
-   planning/recovery, memory, or no-op.
-5. Produce a conversational response, ask for missing details, open review, or
-   execute a validated action.
-6. Persist assistant/tool/lifecycle events and update the notch with the thread
-   state and any action state.
+Supported task statuses are:
 
-The harness loop looks like this:
+- `running`
+- `paused`
+- `waitingForUser`
+- `waitingForPermission`
+- `interrupted`
+- `resuming`
+- `completed`
+- `failedSafe`
+- `cancelled`
+
+Multiple tasks may be active at once. Mutable execution state must stay
+task-local unless it is stored in an explicit task-safe service. A pause,
+clarification gate, permission gate, or cancellation affects only the selected
+task; it must not block unrelated active tasks.
+
+## Thread Storage
+
+Threads are the durable conversation record. The generic harness defines a
+thread-store boundary for threads, events, and assets. In tests this is backed
+by an in-memory store; the app should back the same contract with the local
+Donkey database. The older pointer-prompt UI currently persists its tasks and
+events in the user's Application Support directory, but new harness code should
+depend on the generic store contract rather than reaching into that UI-specific
+store directly.
+
+A thread record stores the user-visible conversation and the active task ids.
+Task state stores execution details such as world model, plan, permissions,
+tool history, and pending continuations. Keeping those separate lets one thread
+coordinate multiple active tasks without mixing their execution state.
+
+## Smart Compaction
+
+The harness should never send raw unbounded history to a model. Before a model
+call or planner step, the thread compactor builds a bounded context packet. It
+keeps the current turn, active and waiting task state, pending questions or
+permissions, pinned events, durable summaries, the most recent useful events,
+recent tool summaries, and a bounded asset list.
+
+Large event bodies are truncated. Raw screenshots, full Accessibility trees,
+script source, and long tool outputs should be saved as artifacts or structured
+records and summarized into the prompt. Compaction metadata records what was
+included, dropped, or truncated so the decision remains inspectable.
+
+## Turn Flow
+
+The desired loop is:
 
 ```text
- pointer prompt / file drop / follow-up        voice audio
-                  |                                |
-                  v                                v
-        +-------------------+         +--------------------------+
-        | user-visible turn |         | hosted model call       |
-        +-------------------+         | voice transcription     |
-                  |                   +--------------------------+
-                  |                                |
-                  |                         transcript turn
-                  |                                |
-                  +---------------+----------------+
-                                  |
-                                  v
-                     +------------------------+
-                     | intake + thread attach |
-                     +------------------------+
-                                  |
-                                  v
-                     +------------------------+
-                     | bounded context packet |
-                     +------------------------+
-                                  |
-          +-----------------------+-----------------------+
-          |                       |                       |
-          v                       v                       v
-+--------------------+  +--------------------+  +----------------------+
-| deterministic      |  | hosted model call  |  | provider LLM call    |
-| parser/fallback    |  | intent/follow-up   |  | response/planner/    |
-|                    |  | classifier         |  | memory proposals     |
-+--------------------+  +--------------------+  +----------------------+
-          |                       |                       |
-          +-----------------------+-----------------------+
-                                  |
-                                  v
-                     +------------------------+
-                     | AppHarnessDecision     |
-                     +------------------------+
-                        |                    |
-                        v                    v
-          +-------------------------+  +------------------------+
-          | respond / clarify /     |  | catalog validation     |
-          | review / no-op          |  +------------------------+
-          +-------------------------+             |
-                        |                         v
-                        |             +------------------------+
-                        |             | observe target app     |
-                        |             +------------------------+
-                        |                         |
-                        |                         v
-                        |             +------------------------+
-                        |             | hosted/tool calls      |
-                        |             | screenshot/context     |
-                        |             | understanding          |
-                        |             +------------------------+
-                        |                         |
-                        |                         v
-                        |             +------------------------+
-                        |             | project, approve,      |
-                        |             | execute, verify        |
-                        |             +------------------------+
-                        |                         |
-                        +-------------+-----------+
-                                      |
-                                      v
-                         +------------------------+
-                         | persist events + notch |
-                         +------------------------+
-                                      |
-                                      v
-                                 next turn
+intake
+-> intent analysis
+-> context gathering
+-> world model update
+-> planning
+-> execute one validated tool step
+-> verify
+-> recover, continue, clarify, or complete
 ```
 
-The harness should make conversation feel continuous even when execution happens
-inside the thread. The user should not need to know whether a turn was answered
-by a chat response, a hosted model classifier, a typed runtime artifact, or a
-guarded runtime path.
+The harness should not treat desktop work as a single model completion. It
+should observe, act, verify, and replan. The planner may propose the next tool
+step, but deterministic Swift owns task state, tool validation, permissions,
+focus checks, execution, and result recording.
 
-Model calls live behind typed harness boundaries. Voice transcription,
-task-intent classification, follow-up classification, computer-use decisions,
-and planner/helper calls go through authenticated hosted model routes. The Mac
-app selects only the supported Donkey capability route and sends the typed job
-context; it must not name hosted providers, provider API endpoints, or concrete
-model ids for normal hosted calls. The backend chooses the provider and model
-for that route. Observation helpers inside the local-task branch produce
-evidence, not direct input actions. Any semantic user-intent distinction,
-including whether a turn is a visual-only agent visualization request, belongs
-behind one of these typed model or catalog boundaries.
+If the user interrupts a task, the harness classifies whether the turn starts a
+new task, modifies the current task, cancels, pauses, resumes, answers a
+clarification, grants permission, or is conversation. A course change updates
+the existing task goal/world model/plan and resumes from the checkpoint instead
+of blindly restarting.
 
-Routing outcomes carry a structured `AppHarnessDecision`. The decision names the
-next supported harness action:
-respond, ask for clarification, open review, run a local task, or no-op. This
-keeps model-assisted routing in a typed decision space instead of treating free
-text as an implicit action signal.
+## Stop Points
 
-## Intent Classification Rules
+Waiting states are hard stop points.
 
-The core rule is model-first: never string-match raw user input to infer what
-the user wants. Natural language has too many variations for phrase lists,
-prefixes, suffixes, regexes, greeting classifiers, or app-name checks to be a
-reliable decision boundary. Pass the turn through an LLM or another typed
-model/runtime boundary first. Once structured output exists, deterministic code
-may validate and match typed fields.
+If a tool lacks permission, the task moves to `waitingForPermission`, stores a
+pending continuation, asks for the specific permission, and does not execute
+more tools until approval is recorded.
 
-User intent must not be inferred with ad hoc phrase, prefix, suffix, substring,
-or regex checks against natural-language command text. Donkey has hosted
-classifiers, task definitions, runtime catalogs, and agent memory context for
-this job. Use them.
-The fast classifier may know typed capability buckets such as task ids,
-capability ids, agent memory entry kinds, and model output statuses. It must not
-recover those buckets by reading natural-language words out of the user's
-prompt.
+If required information is missing, the task moves to `waitingForUser`, stores
+the pending continuation, asks a specific question, and resumes only after the
+answer is attached.
 
-Allowed deterministic checks are narrow primitives whose correctness does not
-depend on open-ended language semantics: empty input, exact schema validation,
-explicit metadata flags, and bounded normalization of lookup text after a typed
-decision has already selected a lookup path. These checks must stay generic and
-must not encode app-specific
-or workflow-specific user phrasing.
+Dangerous ambiguity must ask before acting. Safe ambiguity may be inferred.
+Recoverable ambiguity should use available tools first, such as memory, app
+search, screen observation, or skill lookup, and ask only if uncertainty remains
+material.
 
-Disallowed checks include code that decides a user's semantic intent from
-phrases like "show me how", "within", "play", "open", or app names outside a
-declared task definition or model output. If behavior depends on what the user
-means, add or reuse a typed classifier/resolver and test it with structured
-model output. Do not patch another string list.
+## Tools And Plugins
 
-Do not look for words inside user command strings to decide what the user wants.
-This includes local deterministic parser fallbacks, command trigger arrays,
-prefix/suffix tests, and conversation/greeting/help classifiers. A typed model
-or explicit runtime artifact must produce the intent first. Exact string checks
-remain acceptable for non-semantic technical validation such as JSON schema
-fields, CLI arguments, AppleScript syntax/output validation, filesystem paths,
-accessibility constants, colors, and safety metadata.
+Tools are registered through the generic tool registry. A tool descriptor
+declares:
 
-Generic local-item lookup must follow the same rule. Do not add static command
-verb, lookup prefix, or lookup suffix arrays to guess that text means "open this
-app/file/folder." A typed model or catalog artifact selects the local-item
-lookup capability and extracts the requested item name; after that, the runtime
-may normalize that item name and resolve it through agent memory, Spotlight, and
-bounded filesystem lookup.
+- name
+- plugin id
+- summary
+- input/output schema
+- required permissions
+- safety class
+- required context
+- verification hints
+- metadata
 
-Agent action visualization is the canonical example. The harness may show an
-animated overlay cursor after a normal local-app run emits an
-`AgentVisualizationPlan`, or after a model-backed resolver returns the same plan
-shape in `visualOnly` mode. It must not use hardcoded prompt prefixes to decide
-that a turn is visualization-only, and it must not parse app names or goals out
-of text with local string slicing.
+The planner sees tool descriptors and schemas, not Swift implementation
+details. The executor validates every tool call against the registry before
+dispatch. Tool results return structured observations that update the task's
+world model.
 
-## Context Engineering
+Core built-in tools cover conversation, user clarification, permission
+requests, memory lookup, skill lookup, skill-script lifecycle, app discovery,
+screen observation, UI element discovery and action, text and keyboard input,
+AppleScript generation/execution, state verification, and task lifecycle
+control.
 
-The harness builds context deliberately for each job. It should never dump raw,
-unbounded thread history into a model or runtime adapter. Context packets should
-be compact, source-linked, and explicit about what is known, what is missing,
-what can be acted on, and what policies apply.
+Additional plugins should register tools through the same interface. App
+knowledge belongs in plugins, skills, catalogs, or memory, not in core harness
+conditionals.
 
-A useful context packet includes the current turn, a bounded summary of recent
-thread events, relevant assets, active action state, selected app/window facts
-when available, task definitions, app-finder catalog entries, supported
-capabilities, permission policy, safety state, and trace ids. The packet should
-be shaped for the consumer:
-conversation response, intent classification, planner hint, review-plan
-creation, memory retrieval, observation, and recovery do not need the same
-fields. Query-matched memory for natural-language prompt text should not be
-added before intent classification; retrieve memory after the typed model
-output provides a structured target or scope.
+## Computer Use
 
-Remote-bound context must be redacted before provider calls. Local-only context
-can include richer app and observation facts, but should still stay bounded and
-inspectable. Memory retrieval should use target/scope/kind filters, FTS/vector
-relevance thresholds, and prompt-character budgets before summaries are added.
+Computer use is one tool family inside the harness.
 
-Context compaction is typed and inspectable. Current turns, policy, active
-target state, runtime capabilities, and trace identifiers are preserved first.
-Transient retry/correction events are dropped before durable thread events,
-and packet metadata records what was included, dropped, or truncated by item
-kind.
+Accessibility is the primary source for actionable UI elements. Screenshots,
+vision, OCR, and hover evidence can enrich the world model, labels, and layout,
+but they must not authorize live input by themselves.
 
-## Routing Outcomes
+Element actions execute only after the harness validates:
 
-Conversation is a first-class outcome. Turns that do not produce a typed local
-task intent stay in the task thread and get an assistant response instead of a
-failed local-app run. Conversation classification may be model-backed or derived
-from explicit runtime/model statuses, but it must not use greeting/help/small
-talk phrase lists.
+- target focus
+- permission policy
+- element eligibility
+- allowed action type
+- rate limits
+- safety class
+- verification criteria
 
-Clarification is for typed actionable intent with missing required information.
-When the model returns a supported task but marks a required entity as missing,
-the harness should ask for that exact entity or invite an upload. The prompt
-should name the missing detail rather than using generic copy like "Need more
-detail".
+Models should choose semantic targets and tool calls. They should not
+micromanage pixels. Coordinate input is fallback evidence only and must pass the
+same guarded execution checks as other input.
 
-Action execution is for validated, supported tasks. The hosted model classifier
-or explicit runtime metadata produces a `TaskIntent`. Execution may only
-continue after catalog validation confirms the target app/task, required
-entities, app availability, and safety policy. The default runtime
-capabilities are generic local-item open plus generic model-planned local-app
-interaction; the latter materializes a transient task definition from an
-allowlisted typed `actionPlan` before execution. Typed focus-control steps with
-declared keyboard shortcuts may execute after the target app is focused;
-pointer/control targeting still requires grounded bounds. Weather lookup, media
-playback, and document form-fill are benchmark fixtures for tests and replay
-evaluation, not runtime defaults. Runtime defaults come from the SQLite-backed
-agent memory store, which is seeded with generic capabilities and enriched by
-model-generated or user-reviewed task definition files.
+## AppleScript And Scripts
 
-Review is required when the harness can propose work but should not perform it
-blindly. Document form-fill is the main supported example: Donkey can inspect
-fields and propose mappings, but only user-approved fields are sent to guarded
-Accessibility execution.
+AppleScript is a tool path, not a hardcoded helper path.
 
-Planning and recovery are advisory. Slow planner output can help with app
-knowledge lookup or recovery, but planner text must not become direct input.
-Planner hints expire, validate against known actions, and remain separate from
-task-intent parsing.
+AppleScript generation gathers the resolved app, goal, entities, allowed
+actions, and verification criteria, then passes that bounded request through a
+model/script-generation boundary. It returns a script artifact for validation or
+review. It does not execute the script.
 
-## Execution Boundary
+AppleScript execution may run only a validated, generated, or user-reviewed
+artifact through the guarded automation backend, with target app, permissions,
+action metadata, and verification evidence attached.
 
-The harness is allowed to coordinate execution, but it should not bypass the
-runtime safety model. Local-app work flows through typed contracts, catalog
-resolution, observation, evidence-backed action planning, guardrails, and
-verification before or during live control.
+Do not add app-named Swift helpers such as `musicPlaybackScript` or
+`openFooScript`. If an app needs automation knowledge, put it in a skill,
+plugin, catalog entry, generated artifact, or user-reviewed definition.
 
-Local-app workflow progress is tracked outside prompt/context text. Each run
-records typed stage state for intent parsing, task/app resolution, observation,
-internal planning, approval/review, guarded execution, and verification.
-Evidence planning remains a background runtime concern: the handler should not
-publish a pre-execution visualization for normal live work. The runner derives
-agent visualization steps from observed evidence and action traces, and cursor
-playback requires Accessibility or action-trace targets. The model can be told
-about this state, but the runner owns it.
+## Skills
 
-Live input remains guarded. The action engine checks permission policy, target
-focus, rate limits, hold duration, and backend evidence before issuing input.
-The macOS AppleScript, keyboard, and Accessibility backends are intentionally
-narrow. They exist for validated local-app workflows, not arbitrary UI
-automation. Prefer app-native AppleScript for scriptable app tasks before
-falling back to Accessibility or keyboard input. AppleScript commands may be
-generated from task metadata or compact model-provided source/templates, but
-they still run only after catalog validation and through the guarded controller
-backend.
+Skills are reusable harness extensions. A skill can be registered directly or
+discovered from configured roots by finding `SKILL.md` files. The skill
+registry indexes:
 
-App automation scripts must be generated artifacts, not product code fixtures.
-Do not add hardcoded app-specific AppleScript bodies, UI-scripting sequences, or
-workflow scripts to Swift as static strings. The harness may keep generic
-rendering/execution utilities such as string escaping, template interpolation,
-schema validation, AppleScript syntax/language validation, and guarded backend
-dispatch. The actual app-control script for a task must come from a typed
-model/script-generation step, agent memory metadata, or a user-reviewed task
-definition, and it must be logged with the model/schema/action metadata that
-produced it.
+- id
+- name
+- summary and description
+- source kind
+- instruction path
+- tags
+- provided tools
+- scripts
+- required permissions
+- metadata
 
-If an app task needs AppleScript, the supported shape is: classify the task,
-resolve the target app and entities, ask the model or task-definition layer for
-a bounded script or template, validate that it matches the resolved task and
-allowed backend, then execute it through the AppleScript backend. Adding a
-`musicPlaybackScript`, `openFooScript`, or similar app-named helper is a harness
-bug, even if the script happens to work on one machine.
+Skill lookup lets the planner find relevant instructions by structured task
+need. Loading a skill adds selected instructions to bounded planning context.
 
-Observation prefers Accessibility and app/window metadata. Bounded screenshots
-are fallback observation context only; they do not emit direct input actions.
-The local UI element detection service keeps this boundary explicit: it merges
-Accessibility candidates with optional hover-probe evidence, then marks each
-element as overlay-only, read-only evidence, cursor-visualization evidence, or
-guarded-action eligible. Native screenshot CV remains a local experimental
-detector, but it is not part of the live Donkey Vision overlay pipeline and
-does not authorize live clicks or text entry.
-The off-the-shelf vision pipeline remains stubbed and must not produce OCR,
-shape, color, layout, segmentation, or tap-target candidates until a new
-measured implementation replaces it. Hover-only evidence can guide debug
-overlays or visualization, but it does not authorize live clicks or text entry.
-Captured screenshots, Accessibility snapshots, and manual capture artifacts are
-trace evidence, not a general live vision loop.
-Verification and screenshot fallback behavior should be derived from task
-metadata and runtime item metadata, not one-off branches for individual apps.
+Skills are shared infrastructure. They should be reusable by any future agent
+or task, not private scratch memory for one run.
 
-Prompt understanding is hosted by default. The Mac app sends redacted,
-bounded context to the Donkey backend Responses proxy and never stores provider
-API keys locally. Supported prompt handling must not depend on local model
-packages, local model weights, or `DONKEY_LOCAL_LLM_RUNNER`. Provider-backed
-planners and memory proposals remain helper paths that write through
-deterministic approval into agent memory and must fail without stopping local
-control on existing validated state.
+## Skill Scripts
 
-Computer-use decisions are hosted too. Browser interaction and Mac desktop
-interaction are separate backend tool registrations with different hosted
-providers: `donkey_gemini_browser_interaction` for browser environments through
-Gemini, and `donkey_openai_mac_desktop_interaction` for guarded macOS desktop
-actions through OpenAI's Responses `computer` tool. General inference and
-browser computer-use use Gemini; macOS desktop computer-use uses OpenAI. Hosted
-models may propose UI actions, but the Mac client still owns execution,
-confirmation gates, focus checks, permission policy, screenshots, and
-tool-output feedback.
+Skill packs may include generated scripts under a skill-local `scripts/`
+directory. Supported script descriptors include AppleScript, shell/Bash,
+Python, JavaScript, Swift, and future language types.
 
-The developer UI inspection overlay is not an action workflow. It is enabled by
-the repo-tracked `apps/Donkey/dev-overlay.json` during debug runs or by a local
-`dev-overlay.json` file under Donkey's Application Support directory. Production
-builds do not bundle the repo config. When enabled, Donkey Vision always fuses
-local Accessibility evidence with hosted AI enrichment and renders distinct
-source badges. It only inspects safe visible windows on the selected screen;
-optional target filters can narrow it to matching apps, and
-`"activeWindowOnly": true` can keep it blank unless a matching app owns the
-focused frontmost window. The overlay tracker stabilizes small geometry jitter,
-brief disappearances, and one-sample label/source changes before redrawing so
-the debugger reflects durable UI changes instead of sampler noise. The hosted AI
-path sends app/window-scoped screenshots to the read-only inspection route and
-accepts strict JSON element metadata only. If hosted AI returns a
-computer/function action for this route, the client rejects the frame and
-performs no interaction.
+Each script descriptor records:
 
-## State And Observability
+- id
+- language
+- purpose
+- skill-relative path
+- generator provenance
+- validation status
+- required permissions
+- safety class
+- metadata
 
-Task-thread state and action-run state are related but distinct. A thread can be
-chatting, waiting for clarification, waiting for review, running an action,
-completed, or failed. The notch should communicate that distinction so normal
-conversation does not look like a broken command.
+Script generation, validation, and execution are separate steps. Generation
+creates a reusable artifact through a model boundary and stores it as pending
+validation. Validation records whether the script is allowed. Execution may run
+only validated scripts through the appropriate guarded backend with normal
+permission and verification gates.
 
-The coordinator owns lifecycle and event ordering for action runs. It records
-assistant, tool, lifecycle, and reflex events; handles start, pause, resume,
-completion, abort, timeout, and failure; and marks aborts/timeouts that require
-held-input release. Run artifacts, screenshots, Accessibility captures, latency
-reports, memory records, and model-call traces should remain source-linked and
-inspectable.
+A learned application skill can therefore carry instructions, app maps,
+workflow recipes, evidence notes, and generated scripts together.
 
-Latency claims must come from monotonic trace data. Provider calls, planner
-work, and slow recovery should not be counted as reflex-loop latency unless they
-actually block that path.
+## Learning Applications
+
+"Learn an application" should be implemented as a skill-producing harness task.
+It explores an app safely, observes each state, distills durable knowledge, and
+saves a reusable application skill pack.
+
+For each meaningful state, the learner should gather:
+
+- screenshot evidence
+- Accessibility tree
+- focused app/window metadata
+- visible text
+- actionable elements
+- menus, buttons, fields, panels, and tabs
+- navigation path
+- what changed from the previous state
+
+The learner should default to safe exploration: open menus, inspect tabs,
+focus fields, navigate panels, and avoid destructive/send/purchase/save-overwrite
+actions unless the user explicitly approves.
+
+The reusable output should be distilled, not just raw captures:
+
+- `SKILL.md` for human/model instructions
+- structured app profile JSON
+- workflow recipes
+- generated scripts in `scripts/`
+- verification rules
+- safety notes
+- optional redacted evidence artifacts
+
+Future agents use the learned app skill by searching for the relevant skill,
+loading its bounded instructions, and then using any validated scripts or
+workflow tools exposed by that skill.
+
+## Intent Rules
+
+Never infer semantic user intent by string matching raw user input. Do not add
+phrase lists, prefixes, suffixes, regexes, app-name checks, greeting/help
+classifiers, or natural-language command-text matching to decide what the user
+wants.
+
+Pass the turn through an LLM or another typed model/runtime boundary first. Once
+structured output exists, deterministic code may validate typed fields, schema
+values, tool names, permissions, app identifiers, filesystem paths,
+Accessibility constants, and other non-semantic technical data.
 
 ## Verification
 
-Use `swift test` from `apps/Donkey/` for the supported runtime and harness
-coverage.
+Use `swift test` from `apps/Donkey/`.
 
-Harness tests should prove that non-actionable turns receive conversational
-responses, ambiguous actionable turns ask specific clarification questions,
-validated actions still run through catalog and guardrail checks, follow-ups get
-the right thread context, and context packets stay bounded and redacted where
-needed.
+Generic harness tests should cover:
 
-Runtime tests should continue covering coordinator lifecycle ordering, event
-persistence, task-intent validation, local-app catalog resolution, observation,
-Accessibility control discovery, guarded input, review-first document form-fill,
-model routing, memory retrieval, redaction, latency reports, artifacts, window
-resolution, and manual capture.
+- tool registration and unknown-tool rejection
+- permission stop/resume
+- clarification stop/resume
+- pause, resume, interrupt, cancel, complete, and fail-safe states
+- multiple active tasks with isolated state
+- one-tool-at-a-time execution loops
+- skill registration, search, loading, and filesystem discovery
+- script discovery, generation metadata, validation gates, and execution gates
 
-Manual smoke checks remain useful for window enumeration, manual capture, local
-runtime setup/status, and dry-run latency reports, but they should support the
-documented behavior rather than becoming the behavior definition.
+Computer-use tests should cover app search, element retrieval, guarded element
+actions, screenshot/Accessibility evidence boundaries, and verification failure
+recovery.
 
 ## Source Entry Points
 
-Start in `apps/Donkey/Sources/Donkey/` for pointer-prompt integration,
-`apps/Donkey/Sources/DonkeyContracts/` for shared contracts,
-`apps/Donkey/Sources/DonkeyRuntime/` for runtime execution and guardrails, and
-`apps/Donkey/Sources/DonkeyAI/` for model routing and adapters. Tests live in
-`apps/Donkey/Tests/DonkeyRuntimeTests/`.
+Start in:
+
+- `apps/Donkey/Sources/DonkeyHarness/` for generic harness lifecycle, tool
+  registry, skill discovery, and script descriptors.
+- `apps/Donkey/Sources/DonkeyContracts/` for shared contracts that cross module
+  boundaries.
+- `apps/Donkey/Sources/DonkeyRuntime/` for guarded runtime execution,
+  Accessibility, app/window observation, and input backends.
+- `apps/Donkey/Sources/DonkeyAI/` for hosted model routing and adapters.
+- `apps/Donkey/Sources/Donkey/` for pointer-prompt integration.
+
+Tests live in `apps/Donkey/Tests/DonkeyRuntimeTests/`.

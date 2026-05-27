@@ -19,6 +19,10 @@ let package = Package(
         .library(
             name: "DonkeyContracts",
             targets: ["DonkeyContracts"]
+        ),
+        .library(
+            name: "DonkeyHarness",
+            targets: ["DonkeyHarness"]
         )
     ],
     dependencies: [
@@ -27,6 +31,10 @@ let package = Package(
     targets: [
         .target(
             name: "DonkeyContracts"
+        ),
+        .target(
+            name: "DonkeyHarness",
+            dependencies: ["DonkeyContracts"]
         ),
         .target(
             name: "DonkeyRuntime",
@@ -79,6 +87,7 @@ let package = Package(
             dependencies: [
                 "DonkeyAI",
                 "DonkeyContracts",
+                "DonkeyHarness",
                 "DonkeyRuntime",
                 "DonkeyUI"
             ],

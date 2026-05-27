@@ -1,0 +1,464 @@
+import DonkeyContracts
+import DonkeyHarness
+import Foundation
+import Testing
+
+@Suite
+struct GenericHarnessTests {
+    @Test
+    func builtInRegistryContainsGenericToolsAndAppleScriptAutomationTools() async {
+        let descriptors = BuiltInHarnessToolCatalog.descriptors
+        let names = Set(descriptors.map(\.name))
+
+        #expect(names.contains("app.search"))
+        #expect(names.contains("elements.get"))
+        #expect(names.contains("element.perform"))
+        #expect(names.contains("skill.search"))
+        #expect(names.contains("skill.load"))
+        #expect(names.contains("skill.script.generate"))
+        #expect(names.contains("skill.script.validate"))
+        #expect(names.contains("skill.script.execute"))
+        #expect(names.contains("automation.applescript.generate"))
+        #expect(names.contains("automation.applescript.execute"))
+
+        let generate = descriptors.first { $0.name == "automation.applescript.generate" }
+        #expect(generate?.metadata["modelBoundary"] == "required")
+        #expect(generate?.metadata["directExecution"] == "false")
+        #expect(generate?.requiredContext.contains("structured intent") == true)
+
+        let execute = descriptors.first { $0.name == "automation.applescript.execute" }
+        #expect(execute?.metadata["requiresGeneratedArtifact"] == "true")
+        #expect(execute?.requiredPermissions == [.appControl, .input])
+
+        let skillSearch = descriptors.first { $0.name == "skill.search" }
+        #expect(skillSearch?.requiredPermissions == [.skillLookup])
+        #expect(skillSearch?.pluginID == "core.skills")
+
+        let scriptGenerate = descriptors.first { $0.name == "skill.script.generate" }
+        #expect(scriptGenerate?.metadata["modelBoundary"] == "required")
+        #expect(scriptGenerate?.metadata["directExecution"] == "false")
+
+        let scriptExecute = descriptors.first { $0.name == "skill.script.execute" }
+        #expect(scriptExecute?.metadata["requiresValidatedScript"] == "true")
+        #expect(scriptExecute?.requiredPermissions == [.appControl, .input])
+    }
+
+    @Test
+    func skillRegistryCanRegisterAndSearchSkills() async {
+        let registry = HarnessSkillRegistry()
+        await registry.register(
+            HarnessSkillDescriptor(
+                id: "desktop-browser",
+                name: "Desktop Browser",
+                summary: "Operate browser tabs and inspect web pages.",
+                description: "Use for browser automation, screenshots, forms, and navigation.",
+                sourceKind: .plugin,
+                tags: ["browser", "computer-use"],
+                providedToolNames: ["screen.observe", "element.perform"],
+                scripts: [
+                    HarnessSkillScriptDescriptor(
+                        id: "open-devtools",
+                        language: .appleScript,
+                        purpose: "Open browser developer tools",
+                        relativePath: "scripts/open-devtools.applescript",
+                        generatedBy: "skill.script.generate",
+                        validationStatus: .validated,
+                        requiredPermissions: [.appControl, .input],
+                        safetyClass: .guardedInput
+                    )
+                ]
+            )
+        )
+
+        let results = await registry.search(query: "browser automation")
+
+        #expect(results.first?.descriptor.id == "desktop-browser")
+        #expect(results.first?.matchedFields.contains("name") == true || results.first?.matchedFields.contains("summary") == true)
+        #expect(results.first?.descriptor.providedToolNames.contains("element.perform") == true)
+        #expect(results.first?.descriptor.scripts.first?.id == "open-devtools")
+    }
+
+    @Test
+    func skillFileSystemSourceDiscoversSkillMarkdownFiles() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("donkey-harness-skill-test-\(UUID().uuidString)", isDirectory: true)
+        let skillDirectory = root.appendingPathComponent("spreadsheet-helper", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: skillDirectory,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: skillDirectory.appendingPathComponent("scripts", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try """
+        id: spreadsheet-helper
+        description: Build and inspect spreadsheet documents.
+        tags: sheets, documents
+        tools: memory.retrieve, automation.applescript.generate
+
+        # Spreadsheet Helper
+
+        Use when a task needs spreadsheet reasoning or document automation.
+        """.write(
+            to: skillDirectory.appendingPathComponent("SKILL.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try """
+        tell application "Numbers"
+            activate
+        end tell
+        """.write(
+            to: skillDirectory.appendingPathComponent("scripts/open-numbers.applescript"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try """
+        #!/usr/bin/env bash
+        echo preparing
+        """.write(
+            to: skillDirectory.appendingPathComponent("scripts/prepare.sh"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try """
+        print("inspect")
+        """.write(
+            to: skillDirectory.appendingPathComponent("scripts/inspect.py"),
+            atomically: true,
+            encoding: .utf8
+        )
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let source = HarnessSkillFileSystemSource(roots: [root])
+        let skills = source.discover()
+
+        #expect(skills.count == 1)
+        #expect(skills.first?.id == "spreadsheet-helper")
+        #expect(skills.first?.name == "Spreadsheet Helper")
+        #expect(skills.first?.tags == ["documents", "sheets"])
+        #expect(skills.first?.providedToolNames == ["automation.applescript.generate", "memory.retrieve"])
+        #expect(skills.first?.scripts.count == 3)
+        let scriptsByID = Dictionary(uniqueKeysWithValues: (skills.first?.scripts ?? []).map { ($0.id, $0) })
+        #expect(scriptsByID["scripts-open-numbers"]?.language == .appleScript)
+        #expect(scriptsByID["scripts-open-numbers"]?.validationStatus == .pendingValidation)
+        #expect(scriptsByID["scripts-open-numbers"]?.requiredPermissions == [.appControl, .input])
+        #expect(scriptsByID["scripts-prepare"]?.language == .shell)
+        #expect(scriptsByID["scripts-inspect"]?.language == .python)
+        #expect(skills.first?.instructionPath?.hasSuffix("SKILL.md") == true)
+    }
+
+    @Test
+    func unknownToolIsRejectedByRegistry() async {
+        let registry = BuiltInHarnessToolCatalog.registryWithStubExecutors()
+        let result = await registry.execute(
+            HarnessToolCall(id: "call-1", name: "missing.tool"),
+            taskID: "task-1",
+            worldModel: HarnessWorldModel(),
+            grantedPermissions: []
+        )
+
+        #expect(result.status == .unknownTool)
+        #expect(result.metadata["reason"] == "unknownTool")
+    }
+
+    @Test
+    func missingPermissionStopsTaskAndStoresContinuation() async {
+        let coordinator = HarnessTaskCoordinator()
+        let runtime = GenericHarnessRuntime(
+            coordinator: coordinator,
+            registry: BuiltInHarnessToolCatalog.registryWithStubExecutors()
+        )
+        let task = await coordinator.createTask(
+            id: "task-permission",
+            threadID: "thread-1",
+            goal: "click a button"
+        )
+
+        let call = HarnessToolCall(
+            id: "call-click",
+            name: "element.perform",
+            input: ["elementID": "button-1", "action": "press"]
+        )
+        let result = await runtime.executeToolCall(taskID: task.id, call: call)
+
+        #expect(result?.stoppedForGate == true)
+        #expect(result?.task.status == .waitingForPermission)
+        #expect(result?.task.pendingContinuation?.stage == .permissionGate)
+        #expect(result?.task.pendingContinuation?.pendingToolCall?.id == "call-click")
+        #expect(result?.task.pendingContinuation?.missingPermissions == [.accessibility, .input])
+        #expect(result?.toolResult?.status == .permissionDenied)
+    }
+
+    @Test
+    func permissionApprovalResumesFromCheckpointAndAllowsToolExecution() async {
+        let coordinator = HarnessTaskCoordinator()
+        let runtime = GenericHarnessRuntime(
+            coordinator: coordinator,
+            registry: BuiltInHarnessToolCatalog.registryWithStubExecutors()
+        )
+        let task = await coordinator.createTask(
+            id: "task-resume-permission",
+            threadID: "thread-1",
+            goal: "click a button"
+        )
+        let call = HarnessToolCall(
+            id: "call-click",
+            name: "element.perform",
+            input: ["elementID": "button-1", "action": "press"]
+        )
+
+        _ = await runtime.executeToolCall(taskID: task.id, call: call)
+        let resumed = await coordinator.grantPermissions(
+            taskID: task.id,
+            permissions: [.accessibility, .input]
+        )
+        let executed = await runtime.executeToolCall(taskID: task.id, call: call)
+
+        #expect(resumed?.status == .resuming)
+        #expect(resumed?.pendingContinuation == nil)
+        #expect(executed?.stoppedForGate == false)
+        #expect(executed?.toolResult?.status == .succeeded)
+        #expect(executed?.task.worldModel.facts["lastAcceptedTool"] == "element.perform")
+        #expect(executed?.task.toolHistory.count == 1)
+    }
+
+    @Test
+    func clarificationStopsTaskAndUserResponseResumesIt() async {
+        let coordinator = HarnessTaskCoordinator()
+        let runtime = GenericHarnessRuntime(
+            coordinator: coordinator,
+            registry: BuiltInHarnessToolCatalog.registryWithStubExecutors()
+        )
+        let task = await coordinator.createTask(
+            id: "task-clarify",
+            threadID: "thread-1",
+            goal: "send a message",
+            grantedPermissions: [.userPrompt]
+        )
+        let call = HarnessToolCall(
+            id: "call-clarify",
+            name: "user.clarify",
+            input: ["question": "Which Alex should I message?"]
+        )
+
+        let stopped = await runtime.executeToolCall(taskID: task.id, call: call)
+        let resumed = await coordinator.provideUserResponse(
+            taskID: task.id,
+            response: "Alex Chen"
+        )
+
+        #expect(stopped?.task.status == .waitingForUser)
+        #expect(stopped?.task.pendingContinuation?.question == "Which Alex should I message?")
+        #expect(stopped?.toolResult?.status == .waitingForUser)
+        #expect(resumed?.status == .resuming)
+        #expect(resumed?.pendingContinuation == nil)
+        #expect(resumed?.worldModel.facts["lastUserClarification"] == "Alex Chen")
+    }
+
+    @Test
+    func multipleTasksKeepSeparateWorldModelsPlansAndToolHistory() async {
+        let coordinator = HarnessTaskCoordinator()
+        let runtime = GenericHarnessRuntime(
+            coordinator: coordinator,
+            registry: BuiltInHarnessToolCatalog.registryWithStubExecutors()
+        )
+        let first = await coordinator.createTask(
+            id: "task-a",
+            threadID: "thread-a",
+            goal: "search apps",
+            grantedPermissions: [.appLookup]
+        )
+        let second = await coordinator.createTask(
+            id: "task-b",
+            threadID: "thread-b",
+            goal: "observe screen",
+            grantedPermissions: [.screenCapture]
+        )
+
+        _ = await runtime.executeToolCall(
+            taskID: first.id,
+            call: HarnessToolCall(id: "call-a", name: "app.search", input: ["query": "Calendar"])
+        )
+        _ = await runtime.executeToolCall(
+            taskID: second.id,
+            call: HarnessToolCall(id: "call-b", name: "screen.observe")
+        )
+
+        let updatedFirst = await coordinator.task(id: first.id)
+        let updatedSecond = await coordinator.task(id: second.id)
+        let active = await coordinator.activeTasks()
+
+        #expect(active.map(\.id).contains("task-a"))
+        #expect(active.map(\.id).contains("task-b"))
+        #expect(updatedFirst?.worldModel.facts["lastAcceptedTool"] == "app.search")
+        #expect(updatedSecond?.worldModel.facts["lastAcceptedTool"] == "screen.observe")
+        #expect(updatedFirst?.toolHistory.first?.call.id == "call-a")
+        #expect(updatedSecond?.toolHistory.first?.call.id == "call-b")
+    }
+
+    @Test
+    func interruptChangesCourseWithoutLosingTaskIdentity() async {
+        let coordinator = HarnessTaskCoordinator()
+        let task = await coordinator.createTask(
+            id: "task-interrupt",
+            threadID: "thread-1",
+            goal: "draft an email"
+        )
+
+        let interrupted = await coordinator.interrupt(
+            taskID: task.id,
+            newGoal: "draft a shorter email",
+            turn: AppHarnessTurn(text: "actually make it short", source: .followUp, taskID: task.id, isFollowUp: true)
+        )
+
+        #expect(interrupted?.id == task.id)
+        #expect(interrupted?.status == .interrupted)
+        #expect(interrupted?.goal == "draft a shorter email")
+        #expect(interrupted?.plan == nil)
+        #expect(interrupted?.pendingContinuation?.metadata["newGoal"] == "draft a shorter email")
+        #expect(interrupted?.context.turn?.text == "actually make it short")
+    }
+
+    @Test
+    func plannedLoopExecutesOneToolAtATime() async {
+        let coordinator = HarnessTaskCoordinator()
+        let runtime = GenericHarnessRuntime(
+            coordinator: coordinator,
+            registry: BuiltInHarnessToolCatalog.registryWithStubExecutors()
+        )
+        let task = await coordinator.createTask(
+            id: "task-loop",
+            threadID: "thread-1",
+            goal: "observe then verify",
+            grantedPermissions: [.screenCapture, .verification]
+        )
+        let plan = HarnessPlan(
+            goal: "observe then verify",
+            steps: [
+                HarnessPlanStep(
+                    id: "observe",
+                    summary: "Observe screen",
+                    toolCall: HarnessToolCall(id: "observe-call", name: "screen.observe")
+                ),
+                HarnessPlanStep(
+                    id: "verify",
+                    summary: "Verify state",
+                    toolCall: HarnessToolCall(id: "verify-call", name: "state.verify")
+                )
+            ]
+        )
+        _ = await coordinator.updatePlan(taskID: task.id, plan: plan)
+
+        let first = await runtime.executeNextPlannedStep(taskID: task.id)
+        let second = await runtime.executeNextPlannedStep(taskID: task.id)
+
+        #expect(first?.toolResult?.toolName == "screen.observe")
+        #expect(second?.toolResult?.toolName == "state.verify")
+        #expect(second?.task.toolHistory.map(\.call.id) == ["observe-call", "verify-call"])
+    }
+
+    @Test
+    func threadStorePersistsThreadsEventsAndAssetsByThreadID() async {
+        let store = InMemoryHarnessThreadStore()
+        let thread = HarnessThread(
+            id: "thread-1",
+            title: "Plan a desktop task",
+            activeTaskIDs: ["task-1"]
+        )
+        await store.upsertThread(thread)
+        await store.appendEvent(
+            HarnessThreadEvent(
+                threadID: thread.id,
+                taskID: "task-1",
+                role: .user,
+                text: "learn this app",
+                sequence: 1
+            )
+        )
+        await store.appendAsset(
+            HarnessThreadAsset(
+                threadID: thread.id,
+                taskID: "task-1",
+                displayName: "screen.png",
+                contentType: "image/png",
+                urlString: "file:///tmp/screen.png"
+            )
+        )
+
+        let loadedThread = await store.thread(id: thread.id)
+        let events = await store.events(threadID: thread.id)
+        let assets = await store.assets(threadID: thread.id)
+
+        #expect(loadedThread?.title == "Plan a desktop task")
+        #expect(events.map(\.text) == ["learn this app"])
+        #expect(assets.first?.displayName == "screen.png")
+    }
+
+    @Test
+    func smartCompactionPreservesPinnedSummariesRecentEventsAndWaitingTaskState() async {
+        let thread = HarnessThread(id: "thread-compact", title: "Long task")
+        let events = (1...20).map { index in
+            HarnessThreadEvent(
+                id: "event-\(index)",
+                threadID: thread.id,
+                role: index == 2 ? .summary : (index.isMultiple(of: 5) ? .tool : .user),
+                text: index == 20 ? String(repeating: "latest ", count: 200) : "event \(index)",
+                sequence: index,
+                isPinned: index == 1
+            )
+        }
+        let waitingTask = HarnessTaskState(
+            id: "task-waiting",
+            threadID: thread.id,
+            goal: "learn app",
+            status: .waitingForUser,
+            pendingContinuation: HarnessPendingContinuation(
+                stage: .clarification,
+                reason: "Need scope",
+                question: "Which part of the app should I learn first?"
+            )
+        )
+        let completedTask = HarnessTaskState(
+            id: "task-complete",
+            threadID: thread.id,
+            goal: "old task",
+            status: .completed
+        )
+        let compactor = HarnessThreadCompactor(
+            policy: HarnessCompactionPolicy(
+                maxEvents: 4,
+                maxPinnedEvents: 2,
+                maxToolEvents: 1,
+                maxAssets: 1,
+                maxEventCharacters: 40,
+                maxPromptCharacters: 1_200
+            )
+        )
+
+        let compacted = compactor.compact(
+            thread: thread,
+            currentTurn: AppHarnessTurn(text: "continue", source: .followUp, taskID: waitingTask.id, isFollowUp: true),
+            events: events,
+            assets: [
+                HarnessThreadAsset(threadID: thread.id, displayName: "old.png", contentType: "image/png", urlString: "file:///tmp/old.png"),
+                HarnessThreadAsset(threadID: thread.id, displayName: "new.png", contentType: "image/png", urlString: "file:///tmp/new.png")
+            ],
+            activeTasks: [waitingTask, completedTask]
+        )
+
+        #expect(compacted.events.contains { $0.id == "event-1" })
+        #expect(compacted.events.contains { $0.role == .summary })
+        #expect(compacted.events.contains { $0.id == "event-20" })
+        #expect(compacted.events.first(where: { $0.id == "event-20" })?.text.count == 40)
+        #expect(compacted.assets.count == 1)
+        #expect(compacted.activeTasks.map(\.id) == ["task-waiting"])
+        #expect(compacted.promptText.contains("waitingForUser"))
+        #expect(compacted.promptText.contains("Which part of the app should I learn first?"))
+        #expect(compacted.metadata["compactor"] == "smart-priority-v1")
+        #expect(compacted.compactionRecords.contains { $0.itemKind == .recentEvent && $0.droppedCount > 0 })
+    }
+}
