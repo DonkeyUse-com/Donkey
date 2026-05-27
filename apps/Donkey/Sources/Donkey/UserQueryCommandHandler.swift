@@ -67,7 +67,7 @@ extension UserQueryCommandHandling {
 
 struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
     var catalog: LocalAppTaskCatalog
-    var localModelResolver: LocalModelTaskIntentResolver
+    var taskIntentAdapter: any TaskIntentParsingAdapter
     var appController: any LocalAppTaskAppControlling
     var actionEngineFactory: LocalAppHarnessStepExecutor.ActionEngineFactory
     var permissionPolicy: ToolCallPolicy
@@ -79,7 +79,7 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
 
     init(
         catalog: LocalAppTaskCatalog = .defaultLocal(),
-        localModelResolver: LocalModelTaskIntentResolver? = nil,
+        taskIntentAdapter: (any TaskIntentParsingAdapter)? = nil,
         appController: any LocalAppTaskAppControlling = MacLocalAppTaskController(
             uiUnderstandingRunner: DonkeyUIUnderstandingRunnerFactory.defaultRunner()
         ),
@@ -96,7 +96,7 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
     ) {
         self.catalog = catalog
         self.coordinatorRegistry = coordinatorRegistry
-        self.localModelResolver = localModelResolver ?? LocalModelTaskIntentResolver(catalog: catalog)
+        self.taskIntentAdapter = taskIntentAdapter ?? HostedTaskIntentParsingAdapter()
         self.appController = appController
         self.actionEngineFactory = actionEngineFactory
         self.permissionPolicy = permissionPolicy
@@ -187,35 +187,35 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
             decidedAt: Self.now()
         )) ?? []
         let parseStartedAt = Self.uptimeMilliseconds()
-        let localModelResult = await localModelResolver.resolve(
+        let taskIntentResult = await resolveTaskIntent(
             command: commandRedaction.redactedText,
             contextSnippets: redactedContextSnippets,
             availableToolNames: Self.genericHarnessToolNames(),
             sourceTraceID: traceID
         )
-        let resolution = localModelResult.resolution
+        let resolution = taskIntentResult.resolution
         let parseLatencyMS = Self.uptimeMilliseconds() - parseStartedAt
         logModelResolution(
             command: commandRedaction.redactedText,
             traceID: traceID,
             resolution: resolution,
-            trace: localModelResult.trace,
+            trace: taskIntentResult.trace,
             latencyMS: parseLatencyMS
         )
         let semanticMemoryResults = await retrieveSemanticMemory(
             command: commandRedaction.redactedText,
             resolution: resolution
         )
-        let modelObservability = AIModelObservabilityReportBuilder.build(from: [localModelResult.trace])
+        let modelObservability = AIModelObservabilityReportBuilder.build(from: [taskIntentResult.trace])
         let modelMetadata = [
             "appHarness.router": "genericHarnessPlanner",
             "appHarness.context.promptCharacters": String(genericPreparedTurn.compactedContext.promptText.count),
             "appHarness.context.redactionCount": String(redactionCount),
             "intentParser": "hostedHarnessPlanner",
             "latency.commandParseMS": Self.formatLatency(parseLatencyMS),
-            "modelCallID": localModelResult.trace.id,
-            "modelCallStatus": localModelResult.trace.status.rawValue,
-            "modelValidationStatus": localModelResult.trace.validationStatus,
+            "modelCallID": taskIntentResult.trace.id,
+            "modelCallStatus": taskIntentResult.trace.status.rawValue,
+            "modelValidationStatus": taskIntentResult.trace.validationStatus,
             "modelObservability.callCount": String(modelObservability.callCount),
             "modelObservability.acceptedCount": String(modelObservability.acceptedCount),
             "modelObservability.recoverySuccessCount": String(modelObservability.recoverySuccessCount),
@@ -235,9 +235,9 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
             summary: "Planned user query turn",
             traceID: traceID,
             metadata: [
-                "modelCallID": localModelResult.trace.id,
-                "modelCallStatus": localModelResult.trace.status.rawValue,
-                "modelValidationStatus": localModelResult.trace.validationStatus
+                "modelCallID": taskIntentResult.trace.id,
+                "modelCallStatus": taskIntentResult.trace.status.rawValue,
+                "modelValidationStatus": taskIntentResult.trace.validationStatus
             ]
         )
 
@@ -570,6 +570,71 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
         )
     }
 
+    private func resolveTaskIntent(
+        command: String,
+        contextSnippets: [String],
+        availableToolNames: [String],
+        sourceTraceID: String
+    ) async -> (resolution: LocalAppTaskCatalogResolution, trace: AIModelCallTrace) {
+        let request = TaskIntentAdapterRequest(
+            command: command,
+            taskDefinitions: catalog.taskDefinitions,
+            contextSnippets: contextSnippets,
+            appFinderCatalog: catalog.appFinderCatalogEntries(),
+            availableToolNames: availableToolNames,
+            sourceTraceID: sourceTraceID
+        )
+        let result = await taskIntentAdapter.parseTaskIntent(request)
+
+        guard let intent = result.intent else {
+            var metadata = [
+                "reason": "hostedModelIntentUnavailable",
+                "modelCallStatus": result.trace.status.rawValue,
+                "modelValidationStatus": result.trace.validationStatus
+            ]
+            if result.trace.validationStatus == "noTaskIntent" {
+                metadata["reason"] = "noSupportedTaskIntent"
+                metadata["responseMode"] = "conversation"
+                metadata["assistantResponse"] = "I'm here. What would you like to work on?"
+            }
+            for key in ["responseMode", "assistantResponse"] {
+                if let value = result.trace.metadata[key], !value.isEmpty {
+                    metadata[key] = value
+                }
+            }
+            for key in [
+                "reason",
+                "detail",
+                "error",
+                "backend.provider",
+                "http.status",
+                "http.bodyPreview",
+                "modelOutput.empty",
+                "modelOutput.preview",
+                "fallback.status",
+                "fallback.validation",
+                "fallback.reason",
+                "fallback.http.status",
+                "fallback.http.bodyPreview",
+                "provider",
+                "privacy.store"
+            ] {
+                if let value = result.trace.metadata[key], !value.isEmpty {
+                    metadata["model.\(key)"] = value
+                }
+            }
+            return (
+                LocalAppTaskCatalogResolution(
+                    status: .needsConfirmation,
+                    metadata: metadata
+                ),
+                result.trace
+            )
+        }
+
+        return (catalog.resolve(intent: intent), result.trace)
+    }
+
     private func logModelResolution(
         command: String,
         traceID: String,
@@ -729,8 +794,7 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
         guard resolution.status == .needsConfirmation else { return false }
         if resolution.intent == nil {
             let reason = resolution.metadata["reason"]
-            if reason == "localModelIntentUnavailable"
-                || reason == "hostedModelIntentUnavailable" {
+            if reason == "hostedModelIntentUnavailable" {
                 return true
             }
         }
@@ -772,13 +836,6 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
         if let assistantResponse = resolution.metadata["assistantResponse"],
            !assistantResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return assistantResponse
-        }
-        if resolution.metadata["reason"] == "localModelIntentUnavailable" {
-            let modelStatus = resolution.metadata["modelCallStatus"] ?? ""
-            if modelStatus == AIModelCallStatus.providerOutage.rawValue
-                || modelStatus == AIModelCallStatus.timeout.rawValue {
-                return "The local command parser is not available right now, so I couldn't safely run that local action."
-            }
         }
         if resolution.metadata["reason"] == "hostedModelIntentUnavailable" {
             let modelStatus = resolution.metadata["modelCallStatus"] ?? ""
@@ -849,7 +906,7 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
             return "Needs review"
         case .needsConfirmation:
             if let reason = result.resolution.metadata["reason"] {
-                guard reason != "localModelIntentUnavailable",
+                guard reason != "hostedModelIntentUnavailable",
                       reason != "needsConfirmation"
                 else {
                     return "Need more detail"
