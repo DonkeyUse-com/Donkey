@@ -3,16 +3,20 @@ import { NextResponse } from "next/server";
 import {
   creditUsageHeaders,
   inferenceUsageRoutes,
+  recordFailedInferenceUsage,
   recordInferenceUsage,
   requireInferenceCredits,
 } from "@/lib/credits/inference";
 import { createProviderRegistry } from "@/lib/inference/router";
 import {
+  inferenceErrorCode,
+  inferenceProviderErrorResponse,
   requireInferenceClientId,
   validationErrorResponse,
 } from "@/lib/inference/responses";
 import { chatCompletionRequestSchema } from "@/lib/inference/schemas";
 import { withDonkeyAuth } from "@/lib/donkey-api-auth";
+import { InferenceProviderError } from "@/lib/inference/providers";
 
 export const dynamic = "force-dynamic";
 
@@ -51,15 +55,73 @@ export const POST = withDonkeyAuth(async (request) => {
     return credits.response;
   }
 
-  const registry = createProviderRegistry();
-  const provider = registry.textProvider(parsed.data.stream);
+  let failedUsageProvider = "default";
 
-  if (parsed.data.stream) {
-    const result = await provider.streamCompletion?.(parsed.data);
+  try {
+    const registry = createProviderRegistry();
+    const provider = registry.textProvider(parsed.data.stream);
+    failedUsageProvider = provider.id;
+
+    if (parsed.data.stream) {
+      const result = await provider.streamCompletion?.(parsed.data);
+      if (!result) {
+        await recordFailedInferenceUsage({
+          clientId: client.clientId,
+          errorCode: "streaming_unavailable",
+          model: requestedModel,
+          provider: failedUsageProvider,
+          requestKind: "chat_completions",
+          route: inferenceUsageRoutes.chatCompletions,
+          userId: request.donkey.userId,
+        });
+
+        return NextResponse.json(
+          {
+            error: "Streaming unavailable",
+          },
+          { status: 503 },
+        );
+      }
+
+      const recordedUsage = await recordInferenceUsage({
+        clientId: client.clientId,
+        model: result.model,
+        provider: result.provider,
+        requestKind: "chat_completions",
+        route: inferenceUsageRoutes.chatCompletions,
+        status: "succeeded",
+        userId: request.donkey.userId,
+      });
+
+      return new Response(result.response.body, {
+        status: result.response.status,
+        headers: {
+          "Content-Type":
+            result.response.headers.get("content-type") ?? "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "X-Donkey-Inference-Provider": result.provider,
+          "X-Donkey-Inference-Model": result.model,
+          ...creditUsageHeaders(recordedUsage),
+        },
+      });
+    }
+
+    const result = await provider.completeText?.(parsed.data);
     if (!result) {
+      await recordFailedInferenceUsage({
+        clientId: client.clientId,
+        errorCode: "completion_unavailable",
+        model: requestedModel,
+        provider: failedUsageProvider,
+        requestKind: "chat_completions",
+        route: inferenceUsageRoutes.chatCompletions,
+        userId: request.donkey.userId,
+      });
+
       return NextResponse.json(
         {
-          error: "Streaming unavailable",
+          error: "Completion unavailable",
         },
         { status: 503 },
       );
@@ -72,49 +134,31 @@ export const POST = withDonkeyAuth(async (request) => {
       requestKind: "chat_completions",
       route: inferenceUsageRoutes.chatCompletions,
       status: "succeeded",
+      usage: result.usage,
       userId: request.donkey.userId,
     });
 
-    return new Response(result.response.body, {
-      status: result.response.status,
+    return NextResponse.json(result.body, {
       headers: {
-        "Content-Type":
-          result.response.headers.get("content-type") ?? "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
         "X-Donkey-Inference-Provider": result.provider,
         "X-Donkey-Inference-Model": result.model,
         ...creditUsageHeaders(recordedUsage),
       },
     });
+  } catch (error) {
+    await recordFailedInferenceUsage({
+      clientId: client.clientId,
+      errorCode: inferenceErrorCode(error),
+      model: requestedModel,
+      provider: failedUsageProvider,
+      requestKind: "chat_completions",
+      route: inferenceUsageRoutes.chatCompletions,
+      userId: request.donkey.userId,
+    });
+    if (error instanceof InferenceProviderError) {
+      return inferenceProviderErrorResponse(error);
+    }
+
+    throw error;
   }
-
-  const result = await provider.completeText?.(parsed.data);
-  if (!result) {
-    return NextResponse.json(
-      {
-        error: "Completion unavailable",
-      },
-      { status: 503 },
-    );
-  }
-
-  const recordedUsage = await recordInferenceUsage({
-    clientId: client.clientId,
-    model: result.model,
-    provider: result.provider,
-    requestKind: "chat_completions",
-    route: inferenceUsageRoutes.chatCompletions,
-    status: "succeeded",
-    usage: result.usage,
-    userId: request.donkey.userId,
-  });
-
-  return NextResponse.json(result.body, {
-    headers: {
-      "X-Donkey-Inference-Provider": result.provider,
-      "X-Donkey-Inference-Model": result.model,
-      ...creditUsageHeaders(recordedUsage),
-    },
-  });
 });

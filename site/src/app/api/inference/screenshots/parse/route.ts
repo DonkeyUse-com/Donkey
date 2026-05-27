@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import {
   creditUsageHeaders,
   inferenceUsageRoutes,
+  recordFailedInferenceUsage,
   recordInferenceUsage,
   requireInferenceCredits,
 } from "@/lib/credits/inference";
@@ -14,6 +15,8 @@ import {
 } from "@/lib/inference/rate-limit";
 import { readLimitedJsonBody } from "@/lib/inference/request-body";
 import {
+  inferenceErrorCode,
+  inferenceProviderErrorResponse,
   requireInferenceClientId,
   validationErrorResponse,
 } from "@/lib/inference/responses";
@@ -99,15 +102,20 @@ export const POST = withDonkeyAuth(async (request) => {
       },
     });
   } catch (error) {
+    await recordFailedInferenceUsage({
+      clientId: client.clientId,
+      errorCode: inferenceErrorCode(error),
+      metadata: {
+        parserProvider: "gemini-flash",
+      },
+      model,
+      provider: "gemini",
+      requestKind: "screenshot_parse",
+      route: inferenceUsageRoutes.screenshotParse,
+      userId: request.donkey.userId,
+    });
     if (error instanceof InferenceProviderError) {
-      return NextResponse.json(
-        {
-          error: error.code,
-          message: error.message,
-          details: error.details,
-        },
-        { status: error.statusCode },
-      );
+      return inferenceProviderErrorResponse(error);
     }
 
     throw error;

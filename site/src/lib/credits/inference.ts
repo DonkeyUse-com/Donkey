@@ -353,6 +353,33 @@ export async function recordInferenceUsage(input: InferenceUsageInput) {
   );
 }
 
+export async function recordFailedInferenceUsage(input: {
+  userId: string;
+  clientId: string | null;
+  route: string;
+  requestKind: string;
+  provider: string;
+  model: string;
+  errorCode: string;
+  metadata?: JsonObject;
+}) {
+  try {
+    await recordInferenceUsage({
+      ...input,
+      status: "failed",
+    });
+  } catch (error) {
+    console.error("[inference-usage] failed to record failed inference usage", {
+      error,
+      errorCode: input.errorCode,
+      model: input.model,
+      provider: input.provider,
+      requestKind: input.requestKind,
+      route: input.route,
+    });
+  }
+}
+
 export async function getCreditBalance(userId: string) {
   await ensureCreditAccount(userId);
   await expireCredits(userId);

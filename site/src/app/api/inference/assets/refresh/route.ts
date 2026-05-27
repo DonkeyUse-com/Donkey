@@ -3,17 +3,21 @@ import { NextResponse } from "next/server";
 import {
   creditUsageHeaders,
   inferenceUsageRoutes,
+  recordFailedInferenceUsage,
   recordInferenceUsage,
   requireInferenceCredits,
 } from "@/lib/credits/inference";
 import { refreshedAssetGenerationResponse } from "@/lib/inference/assets";
 import { createProviderRegistry } from "@/lib/inference/router";
 import {
+  inferenceErrorCode,
+  inferenceProviderErrorResponse,
   requireInferenceClientId,
   validationErrorResponse,
 } from "@/lib/inference/responses";
 import { storedGenerationForProviderSchema } from "@/lib/inference/schemas";
 import { withDonkeyAuth } from "@/lib/donkey-api-auth";
+import { InferenceProviderError } from "@/lib/inference/providers";
 
 export const dynamic = "force-dynamic";
 
@@ -38,29 +42,49 @@ export const POST = withDonkeyAuth(async (request) => {
     return credits.response;
   }
 
-  const registry = createProviderRegistry();
-  const result = await registry.refresh(parsed.data);
-  const recordedUsage = await recordInferenceUsage({
-    clientId: client.clientId,
-    metadata: {
-      assetKind: parsed.data.kind,
-    },
-    model: result.model,
-    provider: result.provider,
-    requestKind: "asset_refresh",
-    route: inferenceUsageRoutes.assetsRefresh,
-    status: "succeeded",
-    usage: result.usage,
-    userId: request.donkey.userId,
-  });
+  try {
+    const registry = createProviderRegistry();
+    const result = await registry.refresh(parsed.data);
+    const recordedUsage = await recordInferenceUsage({
+      clientId: client.clientId,
+      metadata: {
+        assetKind: parsed.data.kind,
+      },
+      model: result.model,
+      provider: result.provider,
+      requestKind: "asset_refresh",
+      route: inferenceUsageRoutes.assetsRefresh,
+      status: "succeeded",
+      usage: result.usage,
+      userId: request.donkey.userId,
+    });
 
-  return NextResponse.json(
-    refreshedAssetGenerationResponse({
-      generation: parsed.data,
-      result,
-    }),
-    {
-      headers: creditUsageHeaders(recordedUsage),
-    },
-  );
+    return NextResponse.json(
+      refreshedAssetGenerationResponse({
+        generation: parsed.data,
+        result,
+      }),
+      {
+        headers: creditUsageHeaders(recordedUsage),
+      },
+    );
+  } catch (error) {
+    await recordFailedInferenceUsage({
+      clientId: client.clientId,
+      errorCode: inferenceErrorCode(error),
+      metadata: {
+        assetKind: parsed.data.kind,
+      },
+      model: parsed.data.model,
+      provider: parsed.data.provider,
+      requestKind: "asset_refresh",
+      route: inferenceUsageRoutes.assetsRefresh,
+      userId: request.donkey.userId,
+    });
+    if (error instanceof InferenceProviderError) {
+      return inferenceProviderErrorResponse(error);
+    }
+
+    throw error;
+  }
 });

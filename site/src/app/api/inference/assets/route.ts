@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import {
   creditUsageHeaders,
   inferenceUsageRoutes,
+  recordFailedInferenceUsage,
   recordInferenceUsage,
   requireInferenceCredits,
 } from "@/lib/credits/inference";
@@ -12,11 +13,14 @@ import {
 } from "@/lib/inference/assets";
 import { createProviderRegistry } from "@/lib/inference/router";
 import {
+  inferenceErrorCode,
+  inferenceProviderErrorResponse,
   requireInferenceClientId,
   validationErrorResponse,
 } from "@/lib/inference/responses";
 import { assetGenerationRequestSchema } from "@/lib/inference/schemas";
 import { withDonkeyAuth } from "@/lib/donkey-api-auth";
+import { InferenceProviderError } from "@/lib/inference/providers";
 
 export const dynamic = "force-dynamic";
 
@@ -41,43 +45,79 @@ export const POST = withDonkeyAuth(async (request) => {
     return credits.response;
   }
 
-  const generationId = generationIDForRequest(parsed.data);
-  const generation = {
-    id: generationId,
-    kind: parsed.data.kind,
-  };
-  const registry = createProviderRegistry();
-  const provider = registry.assetProvider(parsed.data);
-  const result = await provider.generateAsset?.({
-    generationId,
-    request: parsed.data,
-  });
+  let failedUsageProvider = parsed.data.provider ?? "default";
 
-  if (!result) {
-    return NextResponse.json(
-      {
-        error: "Asset generation unavailable",
+  try {
+    const generationId = generationIDForRequest(parsed.data);
+    const generation = {
+      id: generationId,
+      kind: parsed.data.kind,
+    };
+    const registry = createProviderRegistry();
+    const provider = registry.assetProvider(parsed.data);
+    failedUsageProvider = provider.id;
+    const result = await provider.generateAsset?.({
+      generationId,
+      request: parsed.data,
+    });
+
+    if (!result) {
+      await recordFailedInferenceUsage({
+        clientId: client.clientId,
+        errorCode: "asset_generation_unavailable",
+        metadata: {
+          assetKind: parsed.data.kind,
+        },
+        model: parsed.data.model,
+        provider: failedUsageProvider,
+        requestKind: "asset_generation",
+        route: inferenceUsageRoutes.assets,
+        userId: request.donkey.userId,
+      });
+
+      return NextResponse.json(
+        {
+          error: "Asset generation unavailable",
+        },
+        { status: 503 },
+      );
+    }
+
+    const recordedUsage = await recordInferenceUsage({
+      clientId: client.clientId,
+      metadata: {
+        assetKind: parsed.data.kind,
       },
-      { status: 503 },
-    );
+      model: result.model,
+      provider: result.provider,
+      requestKind: "asset_generation",
+      route: inferenceUsageRoutes.assets,
+      status: "succeeded",
+      usage: result.usage,
+      userId: request.donkey.userId,
+    });
+
+    return NextResponse.json(assetGenerationResponse({ generation, result }), {
+      headers: creditUsageHeaders(recordedUsage),
+      status: 201,
+    });
+  } catch (error) {
+    await recordFailedInferenceUsage({
+      clientId: client.clientId,
+      errorCode: inferenceErrorCode(error),
+      metadata: {
+        assetKind: parsed.data.kind,
+      },
+      model: parsed.data.model,
+      provider: failedUsageProvider,
+      requestKind: "asset_generation",
+      route: inferenceUsageRoutes.assets,
+      userId: request.donkey.userId,
+    });
+    if (error instanceof InferenceProviderError) {
+      return inferenceProviderErrorResponse(error);
+    }
+
+    throw error;
   }
-
-  const recordedUsage = await recordInferenceUsage({
-    clientId: client.clientId,
-    metadata: {
-      assetKind: parsed.data.kind,
-    },
-    model: result.model,
-    provider: result.provider,
-    requestKind: "asset_generation",
-    route: inferenceUsageRoutes.assets,
-    status: "succeeded",
-    usage: result.usage,
-    userId: request.donkey.userId,
-  });
-
-  return NextResponse.json(assetGenerationResponse({ generation, result }), {
-    headers: creditUsageHeaders(recordedUsage),
-    status: 201,
-  });
 });

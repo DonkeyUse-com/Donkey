@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 
+import { InferenceProviderError } from "@/lib/inference/providers";
+
 export function requireInferenceClientId(clientId: string | null) {
   if (clientId) {
     return {
@@ -31,5 +33,22 @@ export function validationErrorResponse(error: ZodError) {
       })),
     },
     { status: 400 },
+  );
+}
+
+export function inferenceErrorCode(error: unknown) {
+  return error instanceof InferenceProviderError
+    ? error.code
+    : "unexpected_error";
+}
+
+export function inferenceProviderErrorResponse(error: InferenceProviderError) {
+  return NextResponse.json(
+    {
+      error: error.code,
+      message: error.message,
+      details: error.details,
+    },
+    { status: error.statusCode },
   );
 }

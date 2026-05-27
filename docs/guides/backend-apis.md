@@ -92,6 +92,8 @@ checks, provider/model rates, debits, and audit rows.
   charges, and adjustments behind it.
 - Provider-invoking inference routes check credits before calling a hosted
   model, then charge after provider success. Model listing remains uncharged.
+  Provider/config/runtime failures after a successful credit preflight are
+  recorded as zero-cost failed usage events with sanitized error codes.
 - Manual whole-dollar credit grants are available at `POST /api/credits/grants/`.
   The caller must be authenticated and have `user.superUser = true`; the target
   user is addressed by internal `user.id`. The route treats `$1` as `1` hosted
