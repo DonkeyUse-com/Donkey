@@ -17,7 +17,7 @@ local-task requests stay conversational or ask for a specific missing detail.
 
 ## Model Boundary
 
-Pointer prompt turns are routed through bounded harness context. Semantic
+User-query turns are routed through bounded harness context. Semantic
 decisions go through typed model boundaries; the supported hosted path uses the
 authenticated Donkey backend Responses proxy with `store=false`, and the
 backend chooses the concrete model.
@@ -50,14 +50,6 @@ When an app-finder catalog is supplied, executable app choices must resolve to a
 `supported` catalog entry with a declared capability and control profile.
 Candidate, unsupported, or denied entries are not executable targets.
 
-Supported generic plan tools are:
-
-```text
-app.openOrFocus, app.observe, ui.newDocument, ui.focusSearch,
-ui.focusAddressBar, ui.focusTextEntry, ui.setText, ui.pressReturn,
-app.verifyCommand, app.verifyVisibleText
-```
-
 Plans that type text must provide the text as structured entity data, usually
 `query`. Document-writing requests must contain meaningful final text; short
 unquoted labels and copied prompt placeholders are not enough to open a writing
@@ -68,7 +60,8 @@ concrete playable song, album, or playlist before execution.
 
 Before execution, Donkey validates model confidence, required entities,
 app-finder metadata, target availability, allowed tools, permissions, and whether
-the plan can be represented as guarded workflow steps.
+the plan can be represented as guarded workflow steps. Verification can combine
+input evidence and observed result evidence when a capability requires it.
 
 The live runner owns launch/focus, observation, evidence-backed planning,
 guarded input, verification, and recovery. Accessibility and keyboard input run
@@ -93,7 +86,7 @@ control profiles before they can influence executable planning.
 
 ## Source Entry Points
 
-- Prompt handling: `apps/Donkey/Sources/Donkey/PointerPromptCommandHandler.swift`
+- Prompt handling: `apps/Donkey/Sources/Donkey/UserQueryCommandHandler.swift`
 - Hosted decision adapter: `apps/Donkey/Sources/DonkeyAI/HostedTaskIntentParsingAdapter.swift`
 - Catalog validation: `apps/Donkey/Sources/DonkeyRuntime/LocalAppTaskCatalog.swift`
 - Generic lifecycle bridge: `apps/Donkey/Sources/DonkeyRuntime/AppHarnessGenericLifecycle.swift`

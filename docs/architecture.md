@@ -11,7 +11,7 @@ source of truth for behavior and boundaries remains
 |                                  Donkey.app                                    |
 |                                                                                |
 |  +----------------------+      +----------------------+      +---------------+ |
-|  | Pointer Prompt UI    |      | Runtime Setup UI     |      | Debug CLI     | |
+|  | User Query UI        |      | Runtime Setup UI     |      | Debug CLI     | |
 |  | text/voice/assets    |      | install runtimes     |      | smoke tools   | |
 |  +----------+-----------+      +----------+-----------+      +-------+-------+ |
 |             |                             |                          |         |
@@ -53,7 +53,7 @@ memory, and per-task runtime coordination. Capture, observation, hosted model
 adapters, task adaptation, and input execution stay behind narrow runtime
 boundaries.
 
-## Pointer Prompt Task Threads
+## User Query Task Threads
 
 ```text
 +--------------------------------------------------------------------------------+

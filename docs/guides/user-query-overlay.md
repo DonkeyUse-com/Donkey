@@ -1,4 +1,4 @@
-# Pointer Prompt Overlay
+# User Query Overlay
 
 ## Supported Behavior
 
@@ -51,7 +51,7 @@ quick local-app actions:
 
 ## Technical Guidelines
 
-- `PointerPromptOverlayController` owns AppKit surfaces, placement, hover tracking, focus, keyboard shortcut recognition, dismissal, file-drop routing, and microphone level capture.
+- `UserQueryOverlayController` owns AppKit surfaces, placement, hover tracking, focus, keyboard shortcut recognition, dismissal, file-drop routing, and microphone level capture.
 - `DonkeyAuthCoordinator` and `DonkeyLoginWindowController` own the Mac sign-in
   gate. `MacPermissionSetupWindowController` owns the post-auth core permission
   gate. App startup should create the overlay controller only after a stored
@@ -59,10 +59,10 @@ quick local-app actions:
   and stores a Better Auth cookie in the app cookie jar, and the permission
   setup has completed.
 - SwiftUI rendering lives in `DonkeyUI` and consumes state/contracts from `DonkeyContracts`. It should not perform command parsing, model calls, input execution, screen capture, or microphone capture.
-- `PointerPromptOverlayModel` owns product state. Durable task data is persisted through Core Data in Application Support.
+- `UserQueryOverlayModel` owns product state. Durable task data is persisted through Core Data in Application Support.
 - Spawn display state is typed state. The model emits progress, target hints, and current selection; the overlay controller resolves hints against safe visible windows and keeps voice capture on the centered prompt; SwiftUI renders the notch cue, cursors, labels, label-to-editor transition, and selection state.
 - Notch geometry comes from the active `NSScreen`, preferring safe-area and auxiliary-top metrics over hardcoded notch sizes. Content must stay out of the physical notch void; displays without a physical notch should use the same top-center composition without reserving unavailable space.
-- `PointerPromptNotchLayout` is the shared source for notch surface frames, content frames, corner radii, and notch-safe offsets. `canRenderTextInTopRow` describes whether text can draw in the top row, not whether that row exists.
+- `UserQueryNotchLayout` is the shared source for notch surface frames, content frames, corner radii, and notch-safe offsets. `canRenderTextInTopRow` describes whether text can draw in the top row, not whether that row exists.
 - The prompt is a compact black composer: single-line text is pill-shaped, multiline text becomes a bounded rounded rectangle, Return submits, Shift-Return inserts a newline, Escape and outside clicks dismiss, and non-input capsule areas can drag the modal.
 - The centered composer keeps text and voice modes on the same input surface. Double-Command release opens focused text input, double-Command hold opens the same input with voice active, and typed text promotes the send button while the microphone affordance becomes secondary.
 - Voice capture and transcription remain separate. The controller records bounded local audio and publishes levels; transcription is model-backed through the hosted agent-harness boundary before transcript text enters the turn path.
@@ -78,7 +78,7 @@ quick local-app actions:
   executed. Hover-only detections are visualization/read-only evidence and must
   not become live input authority.
 - Task actions in the notch, including follow-up submission and pause/resume, must cross the model/controller command boundary with the selected task ID.
-- Pointer prompt command handling should emit actionable `com.donkey.app` route/result logs for submitted commands, routing decisions, intent resolution, local action traces, unsupported requests, unavailable apps, and final task status. Action trace logs should state the backend, input mode, whether an element click happened, the control or bounds target, and that the overlay pointer is visual-only.
+- User-query command handling should emit actionable `com.donkey.app` route/result logs for submitted commands, routing decisions, intent resolution, local action traces, unsupported requests, unavailable apps, and final task status. Action trace logs should state the backend, input mode, whether an element click happened, the control or bounds target, and that the overlay pointer is visual-only.
 
 ## Verification
 
@@ -105,5 +105,5 @@ Manually verify:
 ## Source Entry Points
 
 - App orchestration starts in `apps/Donkey/Sources/Donkey/`.
-- Typed prompt command handling lives in `apps/Donkey/Sources/Donkey/PointerPromptCommandHandler.swift`.
+- Typed prompt command handling lives in `apps/Donkey/Sources/Donkey/UserQueryCommandHandler.swift`.
 - Reusable SwiftUI rendering lives in `apps/Donkey/Sources/DonkeyUI/`.

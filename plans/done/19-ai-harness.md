@@ -4,7 +4,7 @@
 
 ## 1. Wire Real Semantic Memory Retrieval
 
-Original gap: `SemanticRunMemoryRetriever` existed, but the live pointer-prompt path called it with no records. Retrieval needed to search actual run/target memory and feed the selected results into planner or command context.
+Original gap: `SemanticRunMemoryRetriever` existed, but the live user-query path called it with no records. Retrieval needed to search actual run/target memory and feed the selected results into planner or command context.
 
 Implemented:
 
@@ -42,7 +42,7 @@ Done:
 
 ## 3. Harden Live Voice Transcription Audio
 
-Original gap: pointer-prompt voice capture fed `LocalVoiceTranscriptionAdapter` and `ProcessBackedParakeetTranscriptionRuntime`, but the captured audio format could differ from the Parakeet runtime expectation.
+Original gap: user-query voice capture fed `LocalVoiceTranscriptionAdapter` and `ProcessBackedParakeetTranscriptionRuntime`, but the captured audio format could differ from the Parakeet runtime expectation.
 
 Original risk:
 
@@ -53,7 +53,7 @@ Original risk:
 
 Implemented:
 
-- convert pointer-prompt audio to a supported Parakeet input format before transcription
+- convert user-query audio to a supported Parakeet input format before transcription
 - normalize to mono 16 kHz where required
 - prefer a small local conversion utility with explicit metadata over implicit sidecar assumptions
 - surface clear failure metadata when conversion or transcription is unavailable
@@ -61,7 +61,7 @@ Implemented:
 
 Done:
 
-- live pointer-prompt voice input sends Parakeet-compatible audio
+- live user-query voice input sends Parakeet-compatible audio
 - tests cover PCM input conversion metadata, empty audio fallback, runtime unavailable fallback, and successful transcript-to-command flow
 
 ## 4. Verification

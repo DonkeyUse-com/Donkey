@@ -4,12 +4,12 @@
 
 ## Goal
 
-Add the production macOS SwiftUI pointer prompt UI while keeping the future real-time run loop and AI harness decoupled behind explicit integration boundaries.
+Add the production macOS SwiftUI user query UI while keeping the future real-time run loop and AI harness decoupled behind explicit integration boundaries.
 
 ## Completed Shape
 
 - SwiftPM macOS app lives under `apps/Donkey/`.
-- UI renders the supported pointer prompt as a floating SwiftUI/AppKit overlay.
+- UI renders the supported user query as a floating SwiftUI/AppKit overlay.
 - Command-click anywhere activates the agent pointer and focuses the prompt input.
 - The prompt follows the mouse at bottom right by default, flips to the opposite side near screen edges, and stays clamped inside the visible screen.
 - The active pointer renders with a shadow and supports theme-color customization.
@@ -25,4 +25,4 @@ Add the production macOS SwiftUI pointer prompt UI while keeping the future real
 
 ## Guide
 
-- Product support guide: `docs/guides/pointer-prompt-overlay.md`
+- Product support guide: `docs/guides/user-query-overlay.md`

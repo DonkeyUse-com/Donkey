@@ -2,7 +2,7 @@
 
 ```text
 +-----------+       +----------------+       +---------------------------+
-| User turn | ----> | Pointer prompt | ----> | Generic harness lifecycle |
+| User turn | ----> | User query | ----> | Generic harness lifecycle |
 +-----------+       +----------------+       +-------------+-------------+
                                                             |
                                                             v
@@ -65,16 +65,16 @@ memory. The core runtime does not ship app-specific Weather, Music, Notes, or
 Numbers task branches.
 
 The app catalog is part of the model boundary, not a hidden executor shortcut.
-Pointer-prompt turns send the current supported app catalog to planning. If the
+User-query turns send the current supported app catalog to planning. If the
 catalog is still refreshing or does not contain a supported entry, the harness
 must surface conversation, clarification, waiting, or failed-safe state instead
 of silently dropping the request or executing an unsupported candidate.
 
-Pointer prompt uses the generic harness as the entrypoint for conversation,
+User query uses the generic harness as the entrypoint for conversation,
 clarification, planning, and tool selection. Local desktop actions are
 registered harness tools rather than a separate default path.
 
-Pointer-prompt turns enter the generic lifecycle before any local-app executor
+User-query turns enter the generic lifecycle before any local-app executor
 is selected. The hosted planning boundary emits the
 `generic_harness_planning` packet: structured intent, ambiguity/risk, context
 needs, plan steps, verification criteria, fallbacks, and clarification policy.
@@ -153,7 +153,7 @@ ad hoc thread snippets. Slow planner calls consume a compacted run context,
 including bounded world-state, failure, hint, memory, and semantic memory
 summaries.
 
-The pointer-prompt notch mirrors generic task stop states. Permission gates
+The user-query notch mirrors generic task stop states. Permission gates
 show the pending tool and missing permissions, and the approval control grants
 those exact permissions through the generic lifecycle. Follow-up course changes
 surface as typed interrupted/changed-course task state instead of generic
@@ -429,6 +429,6 @@ Start in:
 - `apps/Donkey/Sources/DonkeyRuntime/` for guarded runtime execution,
   Accessibility, app/window observation, and input backends.
 - `apps/Donkey/Sources/DonkeyAI/` for hosted model routing and adapters.
-- `apps/Donkey/Sources/Donkey/` for pointer-prompt integration.
+- `apps/Donkey/Sources/Donkey/` for user-query integration.
 
 Tests live in `apps/Donkey/Tests/DonkeyRuntimeTests/`.
