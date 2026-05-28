@@ -181,6 +181,7 @@ public struct GenericHarnessRuntime: Sendable {
 
     public func executeNextPlannedStep(taskID: String) async -> HarnessStepExecutionResult? {
         guard let task = await coordinator.task(id: taskID),
+              task.status.canExecuteTools,
               let step = task.plan?.steps.first(where: { step in
                   guard let call = step.toolCall else { return false }
                   return !task.toolHistory.contains { $0.call.id == call.id }

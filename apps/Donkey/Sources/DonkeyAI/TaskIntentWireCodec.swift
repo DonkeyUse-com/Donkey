@@ -578,14 +578,15 @@ enum TaskIntentWireCodec {
     }
 
     private static func actionPlan(from wire: GenericHarnessPlanningWire) -> LocalAppActionPlan {
-        let tools = wire.planSteps.compactMap { step -> LocalAppActionPlanTool? in
+        let planSteps = normalizedPlanSteps(from: wire)
+        let tools = planSteps.compactMap { step -> LocalAppActionPlanTool? in
             let toolName = step.toolName.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !toolName.isEmpty else { return nil }
             return LocalAppActionPlanTool(rawValue: toolName)
         }
-        let inputEntity = firstNonEmpty(wire.planSteps.map(\.inputEntity)) ?? ""
-        let controlID = firstNonEmpty(wire.planSteps.map(\.controlID)) ?? ""
-        let focusKey = firstNonEmpty(wire.planSteps.map(\.focusKey)) ?? ""
+        let inputEntity = firstNonEmpty(planSteps.map(\.inputEntity)) ?? ""
+        let controlID = firstNonEmpty(planSteps.map(\.controlID)) ?? ""
+        let focusKey = firstNonEmpty(planSteps.map(\.focusKey)) ?? ""
         var verificationTools = tools.filter(LocalAppActionPlan.isVerificationTool)
         if verificationTools.isEmpty {
             verificationTools = wire.verificationCriteria.contains { criterion in
@@ -602,8 +603,37 @@ enum TaskIntentWireCodec {
         )
     }
 
+    private static func normalizedPlanSteps(from wire: GenericHarnessPlanningWire) -> [GenericHarnessPlanStepWire] {
+        guard wire.metadata["appFinder.selectedCapabilityID"] == "play_media" else {
+            return wire.planSteps
+        }
+
+        var steps = wire.planSteps.filter { step in
+            step.toolName != LocalAppActionPlanTool.verifyCommand.rawValue
+                || !wire.planSteps.contains { $0.toolName == LocalAppActionPlanTool.verifyVisibleText.rawValue }
+        }
+        let pressReturnCount = steps.filter { $0.toolName == LocalAppActionPlanTool.pressReturn.rawValue }.count
+        if pressReturnCount == 1,
+           let submitIndex = steps.lastIndex(where: { $0.toolName == LocalAppActionPlanTool.pressReturn.rawValue }) {
+            steps.insert(
+                GenericHarnessPlanStepWire(
+                    id: "activate-top-result",
+                    summary: "Activate the top playable media result.",
+                    toolName: LocalAppActionPlanTool.pressReturn.rawValue,
+                    inputEntity: "",
+                    controlID: "",
+                    focusKey: "",
+                    expectedObservation: "Top playable media result is activated."
+                ),
+                at: steps.index(after: submitIndex)
+            )
+        }
+        return steps
+    }
+
     private static func hostedPlanningMetadata(from wire: GenericHarnessPlanningWire) -> [String: String] {
         var metadata = wire.metadata
+        let planSteps = normalizedPlanSteps(from: wire)
         metadata["genericHarness.schemaVersion"] = wire.schemaVersion
         metadata["genericHarness.intent.route"] = wire.structuredIntent.route
         metadata["genericHarness.intent.goal"] = wire.structuredIntent.goal
@@ -613,7 +643,7 @@ enum TaskIntentWireCodec {
         metadata["genericHarness.missingInformationJSON"] = jsonString(wire.ambiguityRisk.missingInformation)
         metadata["genericHarness.contextNeedsJSON"] = jsonString(wire.contextNeeds)
         metadata["genericHarness.planStepsJSON"] = jsonString(
-            wire.planSteps.map { step in
+            planSteps.map { step in
                 [
                     "id": step.id,
                     "summary": step.summary,

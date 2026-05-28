@@ -89,6 +89,14 @@ public enum LocalAppTaskActionEngines {
             inputBackend: MacAccessibilityActionEngineInputBackend()
         )
     }
+
+    public static func appleScriptAutomation(for definition: LocalAppTaskDefinition) -> ActionEngineGuardrail {
+        ActionEngineGuardrail(
+            configuration: ActionEngineConfiguration(liveInputEnabled: true),
+            focusGuard: AlwaysSafeActionEngineFocusGuard(),
+            inputBackend: MacAppleScriptActionEngineInputBackend()
+        )
+    }
 }
 
 public struct MacLocalAppFocusGuard: ActionEngineFocusGuard {
@@ -529,4 +537,3 @@ public struct MacLocalAppTaskController: LocalAppTaskAppControlling {
         return nil
     }
 }
-

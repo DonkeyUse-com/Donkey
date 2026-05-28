@@ -549,9 +549,12 @@ struct AIHarnessAdapterTests {
             .focusSearch,
             .setText,
             .pressReturn,
-            .verifyCommand,
+            .pressReturn,
             .verifyVisibleText
         ])
+        let planStepsJSON = try #require(result.intent?.metadata["genericHarness.planStepsJSON"])
+        #expect(planStepsJSON.contains(#""id":"activate-top-result""#))
+        #expect(planStepsJSON.contains(#""toolName":"app.verifyCommand""#) == false)
     }
 
     @Test

@@ -713,9 +713,10 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
             let appleScriptAction = trace.metadata["appleScript.action"] ?? command.metadata["appleScript.action"] ?? ""
             let appleScriptOutput = trace.metadata["appleScript.output"] ?? ""
             let accessibilityResult = trace.metadata["accessibility.result"] ?? ""
+            let overlayPointer = backend == "mac-apple-script" ? "fallbackOnly" : "visualOnly"
 
             UserQueryLog.commands.notice(
-                "local action traceID=\(result.traceID, privacy: .public) commandID=\(command.id, privacy: .public) workflowStepID=\(workflowStepID, privacy: .public) kind=\(command.kind.rawValue, privacy: .public) backend=\(backend, privacy: .public) inputMode=\(inputMode, privacy: .public) executed=\(String(trace.executed), privacy: .public) decision=\(decisionDescription(trace.decision), privacy: .public) elementClick=\(String(elementClick), privacy: .public) controlID=\(controlID, privacy: .public) target=\(target, privacy: .public) overlayPointer=visualOnly appleScriptAction=\(appleScriptAction, privacy: .public) appleScriptOutput=\(appleScriptOutput, privacy: .public) accessibilityResult=\(accessibilityResult, privacy: .public)"
+                "local action traceID=\(result.traceID, privacy: .public) commandID=\(command.id, privacy: .public) workflowStepID=\(workflowStepID, privacy: .public) kind=\(command.kind.rawValue, privacy: .public) backend=\(backend, privacy: .public) inputMode=\(inputMode, privacy: .public) executed=\(String(trace.executed), privacy: .public) decision=\(decisionDescription(trace.decision), privacy: .public) elementClick=\(String(elementClick), privacy: .public) controlID=\(controlID, privacy: .public) target=\(target, privacy: .public) overlayPointer=\(overlayPointer, privacy: .public) appleScriptAction=\(appleScriptAction, privacy: .public) appleScriptOutput=\(appleScriptOutput, privacy: .public) accessibilityResult=\(accessibilityResult, privacy: .public)"
             )
         }
     }
@@ -731,6 +732,11 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
 
     private func runHint(for result: LocalAppTaskLiveRunResult) -> String {
         if let reason = result.metadata["reason"], !reason.isEmpty {
+            if reason == "missingModelPlannedCommand",
+               let missingTool = result.metadata["missingTool"],
+               !missingTool.isEmpty {
+                return "Run reason: \(reason) at \(missingTool)."
+            }
             return "Run reason: \(reason)."
         }
         if let automationBackend = result.metadata["automation.backend"],

@@ -1081,6 +1081,352 @@ struct LocalAppTaskTests {
     }
 
     @Test @MainActor
+    func currentModelStepCanDriveTextEntryWhenPlanTemplateDoesNotMatch() async throws {
+        let catalog = LocalAppTaskCatalog(
+            taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
+            availabilityProvider: StaticLocalAppAvailabilityProvider(
+                installedBundleIdentifiers: ["com.apple.Music"]
+            )
+        )
+        let intent = TaskIntent(
+            intentID: "local_app_interaction-justin-bieber",
+            taskType: "local_app_interaction",
+            targetApp: LocalAppTarget(appName: "Music", titleContains: "Music"),
+            entities: [
+                "appName": "Music",
+                "goal": "play media",
+                "query": "Justin Bieber"
+            ],
+            normalizedEntities: [
+                "appName": "Music",
+                "goal": "play media",
+                "query": "Justin Bieber"
+            ],
+            confidence: 0.93,
+            parserSource: .localModel,
+            actionPlan: LocalAppActionPlan(
+                tools: [.openOrFocusApp, .observeApp, .focusSearch, .setText, .pressReturn, .verifyCommand],
+                inputEntity: "query",
+                controlID: "model-search",
+                focusKey: "Command+F"
+            ),
+            metadata: ["requestedItemName": "Music"]
+        )
+        let resolution = catalog.resolve(intent: intent)
+        var metadata = LocalAppObservationGeometry.targetBoundsMetadata(
+            WindowTargetBounds(x: 100, y: 200, width: 500, height: 300)
+        )
+        metadata.merge(LocalAppObservationGeometry.controlMetadata(
+            controlID: "search",
+            frame: HotLoopRect(x: 50, y: 60, width: 100, height: 40, space: .window),
+            source: .localUIUnderstanding,
+            label: "Search",
+            kind: .searchField,
+            confidence: 0.82,
+            extra: ["directInputActionsAllowed": "true"]
+        )) { current, _ in current }
+        let observation = LocalAppTaskObservation(
+            appIsRunning: true,
+            appIsFocused: true,
+            availableControls: ["search": true],
+            visibleText: ["visibleText": "Search"],
+            confidence: 0.82,
+            metadata: metadata
+        )
+        let backend = RecordingLocalAppTaskInputBackend()
+        let executor = LocalAppHarnessStepExecutor(
+            command: "play some justin bieber",
+            traceID: "trace-model-step-fallback",
+            resolution: resolution,
+            appController: FakeLocalAppTaskAppController(
+                launchObservation: observation,
+                finalObservation: observation
+            ),
+            actionEngineFactory: { _ in
+                ActionEngineGuardrail(
+                    configuration: ActionEngineConfiguration(liveInputEnabled: true),
+                    inputBackend: backend
+                )
+            }
+        )
+        let registry = HarnessToolRegistry()
+        await executor.registerTools(in: registry)
+
+        _ = await registry.execute(
+            HarnessToolCall(id: "observe", name: LocalAppActionPlanTool.observeApp.rawValue),
+            taskID: "task-model-step-fallback",
+            worldModel: HarnessWorldModel(),
+            grantedPermissions: [.screenCapture, .accessibility, .input]
+        )
+        _ = await registry.execute(
+            HarnessToolCall(
+                id: "focus",
+                name: LocalAppActionPlanTool.focusSearch.rawValue,
+                input: [
+                    "controlID": "search",
+                    "focusKey": "Command+F",
+                    "modelStepID": "focus-search"
+                ]
+            ),
+            taskID: "task-model-step-fallback",
+            worldModel: HarnessWorldModel(),
+            grantedPermissions: [.screenCapture, .accessibility, .input]
+        )
+        let setTextResult = await registry.execute(
+            HarnessToolCall(
+                id: "set-text",
+                name: LocalAppActionPlanTool.setText.rawValue,
+                input: [
+                    "inputEntity": "query",
+                    "controlID": "search",
+                    "modelStepID": "set-query"
+                ]
+            ),
+            taskID: "task-model-step-fallback",
+            worldModel: HarnessWorldModel(),
+            grantedPermissions: [.screenCapture, .accessibility, .input]
+        )
+        let submitResult = await registry.execute(
+            HarnessToolCall(
+                id: "submit",
+                name: LocalAppActionPlanTool.pressReturn.rawValue,
+                input: [
+                    "controlID": "search",
+                    "focusKey": "search",
+                    "modelStepID": "submit"
+                ]
+            ),
+            taskID: "task-model-step-fallback",
+            worldModel: HarnessWorldModel(),
+            grantedPermissions: [.screenCapture, .accessibility, .input]
+        )
+
+        let commands = await backend.executedCommands()
+        #expect(setTextResult.status == .succeeded)
+        #expect(submitResult.status == .succeeded)
+        #expect(commands.map(\.kind) == [.tap, .key, .key])
+        #expect(commands[1].key == "Justin Bieber")
+        #expect(commands[1].metadata["inputStrategy"] == "model-planned-tool-call")
+        #expect(commands[1].metadata["workflowStepID"] == "set-query")
+        #expect(commands[1].metadata["controlID"] == "search")
+        #expect(commands[2].key == "Return")
+        #expect(commands[2].metadata["workflowStepID"] == "submit")
+    }
+
+    @Test @MainActor
+    func musicPlaybackTriesAppleScriptBeforeVisionPointerFallback() async throws {
+        let catalog = LocalAppTaskCatalog(
+            taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
+            availabilityProvider: StaticLocalAppAvailabilityProvider(
+                installedBundleIdentifiers: ["com.apple.Music"]
+            )
+        )
+        let intent = TaskIntent(
+            intentID: "local_app_interaction-justin-bieber",
+            taskType: "local_app_interaction",
+            targetApp: LocalAppTarget(appName: "Music", titleContains: "Music"),
+            entities: [
+                "appName": "Music",
+                "goal": "play media",
+                "query": "Justin Bieber"
+            ],
+            normalizedEntities: [
+                "appName": "Music",
+                "goal": "play media",
+                "query": "Justin Bieber"
+            ],
+            confidence: 0.93,
+            parserSource: .localModel,
+            actionPlan: LocalAppActionPlan(
+                tools: [.openOrFocusApp, .observeApp, .focusSearch, .setText, .pressReturn, .verifyVisibleText],
+                inputEntity: "query",
+                controlID: "search",
+                focusKey: "Command+F",
+                verificationTools: [.verifyVisibleText]
+            ),
+            metadata: [
+                "requestedItemName": "Music",
+                "appFinder.selectedCapabilityID": "play_media"
+            ]
+        )
+        let resolution = catalog.resolve(intent: intent)
+        let observation = LocalAppTaskObservation(
+            appIsRunning: true,
+            appIsFocused: true,
+            availableControls: ["search": true],
+            visibleText: ["query": "Justin Bieber"],
+            confidence: 0.82,
+            metadata: ["observer": "test"]
+        )
+        let keyboardBackend = RecordingLocalAppTaskInputBackend()
+        let appleScriptRunner = RecordingLocalAppTaskAppleScriptRunner(
+            result: AppleScriptExecutionResult(succeeded: true, output: "played")
+        )
+        let executor = LocalAppHarnessStepExecutor(
+            command: "play some justin bieber",
+            traceID: "trace-apple-script-first",
+            resolution: resolution,
+            appController: FakeLocalAppTaskAppController(
+                launchObservation: observation,
+                finalObservation: observation
+            ),
+            actionEngineFactory: { _ in
+                ActionEngineGuardrail(
+                    configuration: ActionEngineConfiguration(liveInputEnabled: true),
+                    inputBackend: keyboardBackend
+                )
+            },
+            automationActionEngineFactory: { _ in
+                ActionEngineGuardrail(
+                    configuration: ActionEngineConfiguration(liveInputEnabled: true),
+                    focusGuard: AlwaysSafeActionEngineFocusGuard(),
+                    inputBackend: MacAppleScriptActionEngineInputBackend(runner: appleScriptRunner)
+                )
+            }
+        )
+        let registry = HarnessToolRegistry()
+        await executor.registerTools(in: registry)
+
+        let result = await registry.execute(
+            HarnessToolCall(
+                id: "focus-search",
+                name: LocalAppActionPlanTool.focusSearch.rawValue,
+                input: [
+                    "controlID": "search",
+                    "focusKey": "Command+F",
+                    "modelStepID": "focus-search"
+                ]
+            ),
+            taskID: "task-apple-script-first",
+            worldModel: HarnessWorldModel(),
+            grantedPermissions: [.screenCapture, .accessibility, .input]
+        )
+        let liveResult = await executor.currentResult()
+        let keyboardCommands = await keyboardBackend.executedCommands()
+        let scripts = await appleScriptRunner.scripts()
+
+        #expect(result.status == .succeeded)
+        #expect(liveResult.status == .completed)
+        #expect(liveResult.metadata["reason"] == "appleScriptAutomationCompleted")
+        #expect(liveResult.actionTraces.first?.metadata["liveInputBackend"] == "mac-apple-script")
+        #expect(keyboardCommands.isEmpty)
+        #expect(scripts.count == 1)
+        #expect(scripts.first?.contains("tell application \"System Events\"") == true)
+        #expect(scripts.first?.contains("key code 36") == true)
+    }
+
+    @Test @MainActor
+    func musicPlaybackFallsBackToVisionPointerWhenAppleScriptFails() async throws {
+        let catalog = LocalAppTaskCatalog(
+            taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
+            availabilityProvider: StaticLocalAppAvailabilityProvider(
+                installedBundleIdentifiers: ["com.apple.Music"]
+            )
+        )
+        let intent = TaskIntent(
+            intentID: "local_app_interaction-justin-bieber",
+            taskType: "local_app_interaction",
+            targetApp: LocalAppTarget(appName: "Music", titleContains: "Music"),
+            entities: ["appName": "Music", "goal": "play media", "query": "Justin Bieber"],
+            normalizedEntities: ["appName": "Music", "goal": "play media", "query": "Justin Bieber"],
+            confidence: 0.93,
+            parserSource: .localModel,
+            actionPlan: LocalAppActionPlan(
+                tools: [.openOrFocusApp, .observeApp, .focusSearch, .setText, .pressReturn, .verifyVisibleText],
+                inputEntity: "query",
+                controlID: "search",
+                focusKey: "Command+F",
+                verificationTools: [.verifyVisibleText]
+            ),
+            metadata: [
+                "requestedItemName": "Music",
+                "appFinder.selectedCapabilityID": "play_media"
+            ]
+        )
+        let resolution = catalog.resolve(intent: intent)
+        var metadata = LocalAppObservationGeometry.targetBoundsMetadata(
+            WindowTargetBounds(x: 100, y: 200, width: 500, height: 300)
+        )
+        metadata.merge(LocalAppObservationGeometry.controlMetadata(
+            controlID: "search",
+            frame: HotLoopRect(x: 50, y: 60, width: 100, height: 40, space: .window),
+            source: .localUIUnderstanding,
+            label: "Search",
+            kind: .searchField,
+            confidence: 0.82,
+            extra: ["directInputActionsAllowed": "true"]
+        )) { current, _ in current }
+        let observation = LocalAppTaskObservation(
+            appIsRunning: true,
+            appIsFocused: true,
+            availableControls: ["search": true],
+            visibleText: ["query": "Justin Bieber"],
+            confidence: 0.82,
+            metadata: metadata
+        )
+        let keyboardBackend = RecordingLocalAppTaskInputBackend()
+        let appleScriptRunner = RecordingLocalAppTaskAppleScriptRunner(
+            result: AppleScriptExecutionResult(succeeded: false, error: "Not authorized to send Apple events")
+        )
+        let executor = LocalAppHarnessStepExecutor(
+            command: "play some justin bieber",
+            traceID: "trace-apple-script-fallback",
+            resolution: resolution,
+            appController: FakeLocalAppTaskAppController(
+                launchObservation: observation,
+                finalObservation: observation
+            ),
+            actionEngineFactory: { _ in
+                ActionEngineGuardrail(
+                    configuration: ActionEngineConfiguration(liveInputEnabled: true),
+                    inputBackend: keyboardBackend
+                )
+            },
+            automationActionEngineFactory: { _ in
+                ActionEngineGuardrail(
+                    configuration: ActionEngineConfiguration(liveInputEnabled: true),
+                    focusGuard: AlwaysSafeActionEngineFocusGuard(),
+                    inputBackend: MacAppleScriptActionEngineInputBackend(runner: appleScriptRunner)
+                )
+            }
+        )
+        let registry = HarnessToolRegistry()
+        await executor.registerTools(in: registry)
+
+        _ = await registry.execute(
+            HarnessToolCall(id: "observe", name: LocalAppActionPlanTool.observeApp.rawValue),
+            taskID: "task-apple-script-fallback",
+            worldModel: HarnessWorldModel(),
+            grantedPermissions: [.screenCapture, .accessibility, .input]
+        )
+        let result = await registry.execute(
+            HarnessToolCall(
+                id: "focus-search",
+                name: LocalAppActionPlanTool.focusSearch.rawValue,
+                input: [
+                    "controlID": "search",
+                    "focusKey": "Command+F",
+                    "modelStepID": "focus-search"
+                ]
+            ),
+            taskID: "task-apple-script-fallback",
+            worldModel: HarnessWorldModel(),
+            grantedPermissions: [.screenCapture, .accessibility, .input]
+        )
+        let liveResult = await executor.currentResult()
+        let keyboardCommands = await keyboardBackend.executedCommands()
+
+        #expect(result.status == .succeeded)
+        #expect(liveResult.status == .needsUserReview)
+        #expect(liveResult.actionTraces.map { $0.metadata["liveInputBackend"] ?? "" } == [
+            "mac-apple-script",
+            "recording-local-app-task"
+        ])
+        #expect(liveResult.metadata["appleScriptFirst.fallback"] == "visionPointer")
+        #expect(keyboardCommands.first?.kind == .tap)
+    }
+
+    @Test @MainActor
     func documentApprovalRunnerExecutesOnlyApprovedFields() async throws {
         let backend = RecordingLocalAppTaskInputBackend()
         let controller = FakeLocalAppTaskAppController(
@@ -1374,5 +1720,23 @@ private actor RecordingLocalAppTaskInputBackend: ActionEngineInputBackend {
 
     func executedCommands() -> [ActionEngineCommand] {
         commands
+    }
+}
+
+private actor RecordingLocalAppTaskAppleScriptRunner: AppleScriptRunning {
+    private let result: AppleScriptExecutionResult
+    private var recordedScripts: [String] = []
+
+    init(result: AppleScriptExecutionResult) {
+        self.result = result
+    }
+
+    func run(_ script: String) async -> AppleScriptExecutionResult {
+        recordedScripts.append(script)
+        return result
+    }
+
+    func scripts() -> [String] {
+        recordedScripts
     }
 }
