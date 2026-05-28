@@ -578,7 +578,7 @@ enum TaskIntentWireCodec {
     }
 
     private static func actionPlan(from wire: GenericHarnessPlanningWire) -> LocalAppActionPlan {
-        let planSteps = normalizedPlanSteps(from: wire)
+        let planSteps = wire.planSteps
         let tools = planSteps.compactMap { step -> LocalAppActionPlanTool? in
             let toolName = step.toolName.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !toolName.isEmpty else { return nil }
@@ -603,37 +603,8 @@ enum TaskIntentWireCodec {
         )
     }
 
-    private static func normalizedPlanSteps(from wire: GenericHarnessPlanningWire) -> [GenericHarnessPlanStepWire] {
-        guard wire.metadata["appFinder.selectedCapabilityID"] == "play_media" else {
-            return wire.planSteps
-        }
-
-        var steps = wire.planSteps.filter { step in
-            step.toolName != LocalAppActionPlanTool.verifyCommand.rawValue
-                || !wire.planSteps.contains { $0.toolName == LocalAppActionPlanTool.verifyVisibleText.rawValue }
-        }
-        let pressReturnCount = steps.filter { $0.toolName == LocalAppActionPlanTool.pressReturn.rawValue }.count
-        if pressReturnCount == 1,
-           let submitIndex = steps.lastIndex(where: { $0.toolName == LocalAppActionPlanTool.pressReturn.rawValue }) {
-            steps.insert(
-                GenericHarnessPlanStepWire(
-                    id: "activate-top-result",
-                    summary: "Activate the top playable media result.",
-                    toolName: LocalAppActionPlanTool.pressReturn.rawValue,
-                    inputEntity: "",
-                    controlID: "",
-                    focusKey: "",
-                    expectedObservation: "Top playable media result is activated."
-                ),
-                at: steps.index(after: submitIndex)
-            )
-        }
-        return steps
-    }
-
     private static func hostedPlanningMetadata(from wire: GenericHarnessPlanningWire) -> [String: String] {
         var metadata = wire.metadata
-        let planSteps = normalizedPlanSteps(from: wire)
         metadata["genericHarness.schemaVersion"] = wire.schemaVersion
         metadata["genericHarness.intent.route"] = wire.structuredIntent.route
         metadata["genericHarness.intent.goal"] = wire.structuredIntent.goal
@@ -643,7 +614,7 @@ enum TaskIntentWireCodec {
         metadata["genericHarness.missingInformationJSON"] = jsonString(wire.ambiguityRisk.missingInformation)
         metadata["genericHarness.contextNeedsJSON"] = jsonString(wire.contextNeeds)
         metadata["genericHarness.planStepsJSON"] = jsonString(
-            planSteps.map { step in
+            wire.planSteps.map { step in
                 [
                     "id": step.id,
                     "summary": step.summary,
@@ -776,10 +747,6 @@ enum TaskIntentWireCodec {
         guard let capability else {
             return nil
         }
-        guard capabilityMetadataIsValid(wire: wire, capability: capability) else {
-            return nil
-        }
-
         let requestedControlProfile = appFinderMetadataValue(
             "appFinder.controlProfile",
             fallback: "controlProfile",
@@ -831,57 +798,6 @@ enum TaskIntentWireCodec {
                     || candidate == entry.bundleIdentifier
             }
         }
-    }
-
-    private static func capabilityMetadataIsValid(
-        wire: TaskIntentWire,
-        capability: LocalAppFinderCapability
-    ) -> Bool {
-        switch capability.id {
-        case "play_media":
-            return playMediaMetadataIsValid(wire)
-        default:
-            return true
-        }
-    }
-
-    private static func playMediaMetadataIsValid(_ wire: TaskIntentWire) -> Bool {
-        guard wire.actionPlan.verificationTools.contains(.verifyVisibleText) else {
-            return false
-        }
-
-        let kind = nonEmpty(wire.metadata["mediaSelection.kind"]) ?? ""
-        let allowedKinds: Set<String> = [
-            "explicit_song",
-            "explicit_album",
-            "explicit_playlist",
-            "representative_song",
-            "representative_album"
-        ]
-        guard allowedKinds.contains(kind) else {
-            return false
-        }
-
-        guard kind.hasPrefix("representative_") else {
-            return true
-        }
-
-        guard let seed = nonEmpty(wire.metadata["mediaSelection.seed"]),
-              let selectedTitle = nonEmpty(wire.metadata["mediaSelection.selectedTitle"]),
-              nonEmpty(wire.metadata["mediaSelection.reason"]) != nil
-        else {
-            return false
-        }
-
-        let query = nonEmpty(wire.normalizedEntities["query"])
-            ?? nonEmpty(wire.entities["query"])
-            ?? ""
-        let normalizedQuery = LocalAppTextNormalizer.normalizedPhrase(query)
-        let normalizedSeed = LocalAppTextNormalizer.normalizedPhrase(seed)
-        let normalizedSelectedTitle = LocalAppTextNormalizer.normalizedPhrase(selectedTitle)
-        return !normalizedQuery.isEmpty
-            && normalizedQuery != normalizedSeed
-            && normalizedQuery.contains(normalizedSelectedTitle)
     }
 
     private static func appFinderMetadataValue(

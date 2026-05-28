@@ -81,17 +81,13 @@ public extension LocalAppTaskAppControlling {
 
 public enum LocalAppTaskActionEngines {
     public static func keyboardOrAutomation(for definition: LocalAppTaskDefinition) -> ActionEngineGuardrail {
-        let inputBackend: any ActionEngineInputBackend = definition.metadata["automationBackend"] == "appleScript"
-            ? MacAppleScriptActionEngineInputBackend()
-            : MacKeyboardActionEngineInputBackend()
-
         return ActionEngineGuardrail(
             configuration: ActionEngineConfiguration(liveInputEnabled: true),
             focusGuard: MacLocalAppFocusGuard(
                 targetID: LocalAppTaskAdapter(definition: definition).targetID,
                 bundleIdentifier: definition.targetApp.bundleIdentifier
             ),
-            inputBackend: inputBackend
+            inputBackend: MacKeyboardActionEngineInputBackend()
         )
     }
 

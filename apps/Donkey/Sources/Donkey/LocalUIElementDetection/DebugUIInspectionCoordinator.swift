@@ -256,9 +256,6 @@ final class DebugUIInspectionCoordinator {
         }
 
         let snapshot = Self.screenPointSnapshot(screen: screen, fingerprint: fingerprint)
-        DebugUIInspectionLog.overlay.info(
-            "debug inspection rendering source=\(stage, privacy: .public) screenID=\(screen.screenID, privacy: .public) elements=\(trackedFrame.elements.count, privacy: .public)"
-        )
         lastFingerprints[screen.screenID] = fingerprint
         lastRenderedFrames[screen.screenID] = trackedFrame
         lastSnapshots[screen.screenID] = snapshot
@@ -562,9 +559,6 @@ final class DebugUIInspectionCoordinator {
                     screen: screen,
                     fingerprint: updatesFingerprint ? fingerprint : "\(fingerprint)-\(stage)-\(Self.frameSignature(trackedFrame))"
                 )
-                DebugUIInspectionLog.overlay.info(
-                    "debug inspection rendering source=\(stage, privacy: .public) screenID=\(screen.screenID, privacy: .public) windows=\(screenCaptures.count, privacy: .public) localEvidenceElements=\(localEvidenceFrame.elements.count, privacy: .public) geminiElements=\(geminiFrame.elements.count, privacy: .public) elements=\(trackedFrame.elements.count, privacy: .public)"
-                )
                 logLayoutDiagnostics(stage: stage, screen: screen, frame: trackedFrame, captures: screenCaptures)
                 if updatesFingerprint {
                     lastFingerprints[screen.screenID] = fingerprint
@@ -791,9 +785,6 @@ final class DebugUIInspectionCoordinator {
                 )
                 continue
             }
-            DebugUIInspectionLog.overlay.info(
-                "debug inspection rendering source=accessibility screenID=\(snapshot.screenID, privacy: .public) elements=\(trackedFrame.elements.count, privacy: .public)"
-            )
             lastRenderedFrames[snapshot.screenID] = trackedFrame
             if let screen = try? screenSurfaces(scope: currentConfig.screenScope).first(where: { $0.screenID == snapshot.screenID }) {
                 logLayoutDiagnostics(stage: "accessibility", screen: screen, frame: trackedFrame, captures: [])

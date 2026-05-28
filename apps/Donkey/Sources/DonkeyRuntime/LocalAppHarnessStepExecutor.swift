@@ -23,7 +23,6 @@ public actor LocalAppHarnessStepExecutor {
     private var finalActionPlan: LocalAppEvidenceBackedActionPlan?
     private var actionTraces: [ActionEngineCommandTrace] = []
     private var executedWorkflowStepIDs: Set<String> = []
-    private var appleScriptFirstAttempted = false
     private var latestStatus: LocalAppTaskLiveRunStatus = .failedSafe
     private var latestStatusReason = "notStarted"
     private var latestFailureFacts: [String: String] = [:]
@@ -296,15 +295,6 @@ public actor LocalAppHarnessStepExecutor {
         intent: TaskIntent,
         availability: LocalAppAvailability
     ) async -> HarnessToolResult {
-        if let automationResult = await executeAppleScriptFirstIfEligible(
-            context,
-            tool: tool,
-            definition: definition,
-            intent: intent
-        ) {
-            return automationResult
-        }
-
         let adapter = LocalAppTaskAdapter(definition: definition)
         let command = commandTemplate(
             tool: tool,
@@ -410,81 +400,6 @@ public actor LocalAppHarnessStepExecutor {
                 "localApp.lastStep": context.call.name
             ],
             metadata: actionTraceMetadata()
-        )
-    }
-
-    private func executeAppleScriptFirstIfEligible(
-        _ context: HarnessToolExecutionContext,
-        tool: LocalAppActionPlanTool,
-        definition: LocalAppTaskDefinition,
-        intent: TaskIntent
-    ) async -> HarnessToolResult? {
-        guard !appleScriptFirstAttempted,
-              tool != .pressReturn,
-              let command = appleScriptFirstCommand(
-                context: context,
-                tool: tool,
-                definition: definition,
-                intent: intent
-              )
-        else {
-            return nil
-        }
-
-        appleScriptFirstAttempted = true
-        await coordinator?.recordToolEvent(
-            capability: .input,
-            decision: permissionPolicy.decision(for: .input),
-            toolName: "mac-applescript-action-engine",
-            summary: "Trying app automation before visual fallback",
-            traceID: traceID,
-            metadata: [
-                "commandID": command.id,
-                "workflowStepID": command.metadata["workflowStepID"] ?? "",
-                "modelToolName": context.call.name,
-                "fallback": "visionPointer"
-            ]
-        )
-
-        let engine = automationActionEngineFactory(definition)
-        let trace = await engine.handle(command, permissionPolicy: permissionPolicy)
-        actionTraces.append(trace)
-        guard trace.executed else {
-            latestFailureFacts.merge([
-                "appleScriptFirst.attempted": "true",
-                "appleScriptFirst.executed": "false",
-                "appleScriptFirst.reason": decisionReason(trace.decision),
-                "appleScriptFirst.error": trace.metadata["appleScript.error"] ?? "",
-                "appleScriptFirst.fallback": "visionPointer"
-            ]) { _, new in new }
-            return nil
-        }
-
-        try? await Task.sleep(nanoseconds: 700_000_000)
-        let observation = await observeAppState(definition: definition, intent: intent, reason: "appleScriptCompleted")
-        latestObservation = observationWithActionEvidence(observation)
-        latestStatus = .completed
-        latestStatusReason = "appleScriptAutomationCompleted"
-        finalActionPlan = LocalAppTaskAdapter(definition: definition)
-            .evidenceBackedActionPlan(for: intent, observation: latestObservation)
-        await coordinator?.complete(reason: "Local app task completed by AppleScript automation")
-        return observationResult(
-            context,
-            observation: latestObservation,
-            summary: "AppleScript automation completed the local app task.",
-            status: .succeeded,
-            extraFacts: [
-                "localApp.status": latestStatus.rawValue,
-                "localApp.reason": latestStatusReason,
-                "localApp.lastStep": context.call.name,
-                "localApp.automationPrimary": "appleScript"
-            ],
-            metadata: actionTraceMetadata().merging([
-                "reason": latestStatusReason,
-                "appleScriptFirst.attempted": "true",
-                "appleScriptFirst.executed": "true",
-                "appleScriptFirst.fallback": "notNeeded"
-            ]) { current, _ in current }
         )
     }
 
@@ -728,48 +643,6 @@ public actor LocalAppHarnessStepExecutor {
             issuedAt: Self.now(),
             key: key,
             metadata: metadata
-        )
-    }
-
-    private func appleScriptFirstCommand(
-        context: HarnessToolExecutionContext,
-        tool: LocalAppActionPlanTool,
-        definition: LocalAppTaskDefinition,
-        intent: TaskIntent
-    ) -> ActionEngineCommand? {
-        guard definition.taskType == "local_app_interaction",
-              intent.metadata["appFinder.selectedCapabilityID"] == "play_media",
-              definition.targetApp.bundleIdentifier == "com.apple.Music",
-              let query = intent.normalizedEntities["query"] ?? intent.entities["query"],
-              !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
-            return nil
-        }
-
-        let adapter = LocalAppTaskAdapter(definition: definition)
-        return ActionEngineCommand(
-            id: "\(intent.intentID)-apple-script-play-media",
-            traceID: intent.metadata["traceID"] ?? intent.intentID,
-            targetID: adapter.targetID,
-            kind: .controller,
-            issuedAt: Self.now(),
-            key: query,
-            metadata: [
-                "taskIntentID": intent.intentID,
-                "taskType": intent.taskType,
-                "targetApp": definition.targetApp.appName,
-                "bundleIdentifier": definition.targetApp.bundleIdentifier ?? "",
-                "workflowStepID": context.call.input["modelStepID"] ?? "apple-script-play-media",
-                "workflowStepRole": role(for: tool),
-                "plan.tool": tool.rawValue,
-                "automationBackend": "appleScript",
-                "automationPrimary": "true",
-                "automationFallback": "visionPointer",
-                "appleScript.action": "music.playMediaBySearch",
-                "appleScript.query": query,
-                "appleScript.successOutputs": "played",
-                "appleScript.template": Self.musicPlayMediaAppleScriptTemplate
-            ]
         )
     }
 
@@ -1072,28 +945,6 @@ public actor LocalAppHarnessStepExecutor {
         String(format: "%.3f", max(0, milliseconds))
     }
 
-    private static let musicPlayMediaAppleScriptTemplate = """
-set donkeyQuery to {query}
-tell application id {bundleIdentifier}
-    activate
-end tell
-delay 0.4
-tell application "System Events"
-    tell process {targetApp}
-        set frontmost to true
-        keystroke "f" using command down
-        delay 0.2
-        keystroke "a" using command down
-        delay 0.05
-        keystroke donkeyQuery
-        delay 0.15
-        key code 36
-        delay 1.2
-        key code 36
-    end tell
-end tell
-return "played"
-"""
 }
 
 private extension ActionEngineCommand {

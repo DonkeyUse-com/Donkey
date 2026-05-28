@@ -524,9 +524,7 @@ private struct HostedPlanningRepairContext {
             "The previous localAppTask JSON decoded but failed runtime validation, so it cannot be executed.",
             "Return one corrected strict JSON object using the same schema.",
             "If no supported executable action is possible, return a conversation or clarification route.",
-            "For play_media, entities.query and normalizedEntities.query must be a concrete playable search string, not only an artist or genre seed.",
-            "For play_media, include both app.verifyCommand and app.verifyVisibleText verification steps.",
-            "For play_media representative selections, include metadata.mediaSelection.kind, metadata.mediaSelection.seed, metadata.mediaSelection.selectedTitle, and metadata.mediaSelection.reason."
+            "Use the relevant app skill and catalog metadata to repair app-specific workflow fields instead of inventing unsupported behavior."
         ].joined(separator: " ")
     }
 }
