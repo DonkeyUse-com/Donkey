@@ -84,7 +84,17 @@ final class UserQueryOverlayController {
     }
 
     private func makeInputHostingView(size: CGSize) -> NSHostingView<UserQueryOverlayRootView> {
-        let hostingView = NSHostingView(rootView: UserQueryOverlayRootView(model: model))
+        let hostingView = NSHostingView(
+            rootView: UserQueryOverlayRootView(
+                model: model,
+                voiceInputRequested: { [weak self] in
+                    self?.activateVoiceInputAtScreenCenter()
+                },
+                voiceInputFinished: { [weak self] in
+                    self?.finishVoiceInput()
+                }
+            )
+        )
         hostingView.frame = CGRect(origin: .zero, size: size)
         hostingView.autoresizingMask = [.width, .height]
         hostingView.wantsLayer = true
@@ -398,7 +408,6 @@ final class UserQueryOverlayController {
                 activateForKeyboardInput(inputPanel)
             }
             focusComposerTextInput()
-            microphoneWaveformMeter.start()
             return
         }
 
@@ -424,7 +433,6 @@ final class UserQueryOverlayController {
         guard let inputPanel else { return }
 
         model.activate()
-        microphoneWaveformMeter.start()
         centerInputPanel()
 
         activateForKeyboardInput(inputPanel)

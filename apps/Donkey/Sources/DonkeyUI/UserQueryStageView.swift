@@ -11,6 +11,8 @@ public struct UserQueryStageView: View {
     private let isInputExpanded: Bool
     private let placement: UserQueryPlacement
     private weak var intentSink: (any UserQueryIntentSink)?
+    private let voiceInputRequested: @MainActor () -> Void
+    private let voiceInputFinished: @MainActor () -> Void
 
     public init(
         state: UserQueryState,
@@ -18,7 +20,9 @@ public struct UserQueryStageView: View {
         inputTextHeight: CGFloat = UserQueryLayout.composerInputTextMinimumHeight,
         isInputExpanded: Bool = false,
         placement: UserQueryPlacement = .bottomRight,
-        intentSink: any UserQueryIntentSink
+        intentSink: any UserQueryIntentSink,
+        voiceInputRequested: @escaping @MainActor () -> Void = {},
+        voiceInputFinished: @escaping @MainActor () -> Void = {}
     ) {
         self.state = state
         self._messageText = messageText
@@ -26,6 +30,8 @@ public struct UserQueryStageView: View {
         self.isInputExpanded = isInputExpanded
         self.placement = placement
         self.intentSink = intentSink
+        self.voiceInputRequested = voiceInputRequested
+        self.voiceInputFinished = voiceInputFinished
     }
 
     public var body: some View {
@@ -75,6 +81,8 @@ public struct UserQueryStageView: View {
             submit: {
                 intentSink?.handle(.messageSubmitted(text: messageText))
             },
+            voiceInputRequested: voiceInputRequested,
+            voiceInputFinished: voiceInputFinished,
             inputTextHeightChanged: { height in
                 intentSink?.handle(.inputTextHeightChanged(height))
             },
@@ -109,6 +117,8 @@ struct UserQueryComposer: View {
     let toolbarStyle: UserQueryComposerToolbarStyle
     let sizeProfile: UserQueryComposerSizeProfile
     let submit: @MainActor () -> Void
+    let voiceInputRequested: @MainActor () -> Void
+    let voiceInputFinished: @MainActor () -> Void
     let inputTextHeightChanged: @MainActor (CGFloat) -> Void
     let inputExpansionChanged: @MainActor (Bool) -> Void
 
@@ -122,6 +132,8 @@ struct UserQueryComposer: View {
         toolbarStyle: UserQueryComposerToolbarStyle = .waveformOnly,
         sizeProfile: UserQueryComposerSizeProfile = .standard,
         submit: @escaping @MainActor () -> Void,
+        voiceInputRequested: @escaping @MainActor () -> Void = {},
+        voiceInputFinished: @escaping @MainActor () -> Void = {},
         inputTextHeightChanged: @escaping @MainActor (CGFloat) -> Void,
         inputExpansionChanged: @escaping @MainActor (Bool) -> Void
     ) {
@@ -134,6 +146,8 @@ struct UserQueryComposer: View {
         self.toolbarStyle = toolbarStyle
         self.sizeProfile = sizeProfile
         self.submit = submit
+        self.voiceInputRequested = voiceInputRequested
+        self.voiceInputFinished = voiceInputFinished
         self.inputTextHeightChanged = inputTextHeightChanged
         self.inputExpansionChanged = inputExpansionChanged
     }
@@ -252,11 +266,7 @@ struct UserQueryComposer: View {
     private var composerTrailingControls: some View {
         HStack(spacing: UserQueryLayout.composerTrailingControlsSpacing) {
             if state.isVoiceInputActive {
-                VoiceWaveformView(levels: state.voiceWaveformLevels)
-                    .frame(
-                        width: UserQueryLayout.composerWaveformSize.width,
-                        height: UserQueryLayout.composerWaveformSize.height
-                    )
+                waveformButton
             } else {
                 microphoneIcon
                 sendButton(size: UserQueryLayout.composerSendButtonSize)
@@ -270,28 +280,44 @@ struct UserQueryComposer: View {
     }
 
     private var microphoneIcon: some View {
-        Image(systemName: "mic")
-            .font(.system(size: 24, weight: .ultraLight))
-            .symbolRenderingMode(.monochrome)
-            .foregroundStyle(Color.white.opacity(microphoneOpacity))
-            .frame(
-                width: UserQueryLayout.composerMicrophoneIconSize,
-                height: UserQueryLayout.composerMicrophoneIconSize
-            )
-            .background {
-                if isMicrophoneEmphasized {
-                    Circle()
-                        .fill(Color.white.opacity(0.14))
+        Button(action: voiceInputRequested) {
+            Image(systemName: "mic")
+                .font(.system(size: 24, weight: .ultraLight))
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(Color.white.opacity(microphoneOpacity))
+                .frame(
+                    width: UserQueryLayout.composerMicrophoneIconSize,
+                    height: UserQueryLayout.composerMicrophoneIconSize
+                )
+                .background {
+                    if isMicrophoneEmphasized {
+                        Circle()
+                            .fill(Color.white.opacity(0.14))
+                    }
                 }
-            }
-            .overlay {
-                if isMicrophoneEmphasized {
-                    Circle()
-                        .stroke(Color.white.opacity(0.42), lineWidth: 1)
+                .overlay {
+                    if isMicrophoneEmphasized {
+                        Circle()
+                            .stroke(Color.white.opacity(0.42), lineWidth: 1)
+                    }
                 }
-            }
-            .accessibilityLabel(state.isVoiceInputActive ? "Voice input active" : "Voice input")
-            .help(state.isVoiceInputActive ? "Voice input active" : "Voice input")
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Voice input")
+        .help("Voice input")
+    }
+
+    private var waveformButton: some View {
+        Button(action: voiceInputFinished) {
+            VoiceWaveformView(levels: state.voiceWaveformLevels)
+                .frame(
+                    width: UserQueryLayout.composerWaveformSize.width,
+                    height: UserQueryLayout.composerWaveformSize.height
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Finish voice input")
+        .help("Finish voice input")
     }
 
     private var followUpTrailingControls: some View {

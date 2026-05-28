@@ -5,7 +5,7 @@ import Foundation
 
 @MainActor
 final class MicrophoneWaveformMeter {
-    private let engine = AVAudioEngine()
+    private var engine: AVAudioEngine?
     private let barCount = UserQueryState.defaultVoiceWaveformLevels.count
     private var levels = UserQueryState.defaultVoiceWaveformLevels
     private var isRunning = false
@@ -27,6 +27,7 @@ final class MicrophoneWaveformMeter {
 
                 guard isGranted else {
                     self?.isStarting = false
+                    self?.isRecordingAudio = false
                     self?.publishSilence()
                     return
                 }
@@ -37,10 +38,11 @@ final class MicrophoneWaveformMeter {
     }
 
     func stop() {
-        guard isRunning || isStarting else { return }
+        guard isRunning || isStarting || isRecordingAudio || engine != nil else { return }
 
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        engine?.inputNode.removeTap(onBus: 0)
+        engine?.stop()
+        engine = nil
         isRunning = false
         isStarting = false
         isRecordingAudio = false
@@ -51,7 +53,7 @@ final class MicrophoneWaveformMeter {
 
     func startAudioCapture() {
         capturedSamples.removeAll(keepingCapacity: true)
-        capturedSampleRateHz = Int(engine.inputNode.outputFormat(forBus: 0).sampleRate)
+        capturedSampleRateHz = currentInputSampleRateHz()
         capturedStartedAt = Date()
         isRecordingAudio = true
         start()
@@ -91,8 +93,13 @@ final class MicrophoneWaveformMeter {
             return
         }
 
+        let engine = engine ?? AVAudioEngine()
+        self.engine = engine
         let inputNode = engine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
+        if isRecordingAudio, capturedSampleRateHz == 0 {
+            capturedSampleRateHz = Int(format.sampleRate)
+        }
         levels = UserQueryState.defaultVoiceWaveformLevels
         publishLevels()
 
@@ -112,10 +119,18 @@ final class MicrophoneWaveformMeter {
             isStarting = false
         } catch {
             inputNode.removeTap(onBus: 0)
+            self.engine = nil
             isRunning = false
             isStarting = false
+            isRecordingAudio = false
             publishSilence()
         }
+    }
+
+    private func currentInputSampleRateHz() -> Int {
+        guard let engine else { return 0 }
+
+        return Int(engine.inputNode.outputFormat(forBus: 0).sampleRate)
     }
 
     private func append(_ level: Double) {
