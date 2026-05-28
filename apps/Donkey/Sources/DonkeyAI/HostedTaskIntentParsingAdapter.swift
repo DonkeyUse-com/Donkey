@@ -181,7 +181,10 @@ public struct HostedTaskIntentParsingAdapter: TaskIntentParsingAdapter {
                     "type": .string("json_schema"),
                     "name": .string(Self.schemaID),
                     "strict": .bool(true),
-                    "schema": Self.jsonValue(TaskIntentWireCodec.genericHarnessPlanningJsonSchema(taskDefinitions: adapterRequest.taskDefinitions))
+                    "schema": Self.jsonValue(TaskIntentWireCodec.genericHarnessPlanningJsonSchema(
+                        taskDefinitions: adapterRequest.taskDefinitions,
+                        availableToolNames: adapterRequest.availableToolNames
+                    ))
                 ])
             ],
             metadata: [
@@ -352,12 +355,12 @@ public struct HostedTaskIntentParsingAdapter: TaskIntentParsingAdapter {
         "Use the generic local_app_interaction task type for executable local app requests that need a model-planned app workflow and do not have a more specific provided task type.",
         "Use ambiguityRisk for safe, recoverable, or dangerous ambiguity. Dangerous ambiguity and missing required details must set structuredIntent.needsConfirmation true, ambiguityRisk.shouldAskBeforeActing true, and clarificationPolicy.shouldAsk true with a specific question.",
         "Use contextNeeds for app lookup, memory lookup, screen observation, element discovery, or skill lookup needed before or during execution.",
-        "Use planSteps for the generic harness plan. Each executable step must name one allowed toolName, with inputEntity/controlID/focusKey filled when that tool needs them. Non-executable reasoning steps should use an empty toolName.",
+        "Use planSteps for the generic harness plan. Each executable step must name one available toolName, with toolInputs filled from structured entities and tool schemas. Keep inputEntity/controlID/focusKey for local UI compatibility when those tools need them. Non-executable reasoning steps should use an empty toolName.",
         "Use verificationCriteria for what proves success, fallbacks for safe recovery choices, and clarificationPolicy for when Donkey should stop and ask.",
         "Apply App skill guidance for app-specific workflows, control strategies, required metadata, and output shapes. Do not invent app-specific behavior that is absent from task definitions, catalog data, memory, or loaded skill guidance.",
         "When App finder catalog JSON is non-empty and you use local_app_interaction, choose the target app only from a catalog entry with supportStatus supported and a matching capability. Set metadata.appFinder.selectedAppID to the exact appID, metadata.appFinder.selectedCapabilityID to the capability id, and metadata.appFinder.controlProfile to one declared control profile. Never select candidate, unsupported, or denied entries for execution.",
         "For local_app_interaction, select the most likely local app, set targetAppName and entities.appName to the human app name, set entities.goal, and when text must be entered set entities.query plus normalizedEntities.query.",
-        "For local_app_interaction, fill planSteps with allowed toolName values only: app.openOrFocus, app.observe, ui.newDocument, ui.focusSearch, ui.focusAddressBar, ui.focusTextEntry, ui.setText, ui.clickTarget, ui.pressReturn, app.verifyCommand, app.verifyVisibleText.",
+        "For local_app_interaction, use available local UI tools for UI workflows and available skill tools for skill-backed workflows. When a loaded app skill provides a validated script for the selected capability, prefer skill.load then skill.script.execute with structured toolInputs over repeated screenshot-driven keyboard fallback.",
         "Use ui.clickTarget when the intended action is to click or submit a visible control by Accessibility or AI visual evidence instead of pressing Return. Put the semantic or observed visual target id in controlID.",
         "Verification may be a set of verifier steps. Use app.verifyCommand for guarded command evidence, app.verifyVisibleText for observed result text, and include both when both kinds of evidence are needed.",
         "When ui.setText is present, entities.query and normalizedEntities.query must be non-empty, the step inputEntity should usually be query, and controlID/focusKey should describe the guarded UI strategy.",

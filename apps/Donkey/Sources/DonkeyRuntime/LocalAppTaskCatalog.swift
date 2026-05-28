@@ -977,11 +977,22 @@ public struct LocalAppTaskCatalog: Sendable {
             )
         }
 
+        let hasGenericExecutablePlan = Self.hasGenericExecutablePlan(intent.metadata)
+        let availability = availabilityProvider.availability(namedApp: cleanedRequestedAppName)
         guard let plan = intent.actionPlan else {
+            let definition = hasGenericExecutablePlan
+                ? Self.genericLocalAppInteractionDefinition(
+                    target: availability.target,
+                    plan: LocalAppActionPlan(tools: [], inputEntity: "query", focusKey: "")
+                )
+                : Self.genericLocalAppInteractionDefinition
             return LocalAppTaskCatalogResolution(
-                status: .needsConfirmation,
+                status: hasGenericExecutablePlan && availability.isInstalled
+                    ? .resolved
+                    : (hasGenericExecutablePlan ? .appUnavailable : .needsConfirmation),
                 intent: intent,
-                definition: Self.genericLocalAppInteractionDefinition,
+                definition: definition,
+                availability: hasGenericExecutablePlan ? availability : nil,
                 metadata: [
                     "reason": "missingActionPlan",
                     "taskType": Self.genericLocalAppInteractionTaskType,
@@ -989,7 +1000,7 @@ public struct LocalAppTaskCatalog: Sendable {
                 ]
             )
         }
-        guard plan.isExecutable else {
+        guard plan.isExecutable || hasGenericExecutablePlan else {
             return LocalAppTaskCatalogResolution(
                 status: .needsConfirmation,
                 intent: intent,
@@ -1018,7 +1029,6 @@ public struct LocalAppTaskCatalog: Sendable {
             )
         }
 
-        let availability = availabilityProvider.availability(namedApp: cleanedRequestedAppName)
         let target = availability.target
         let definition = Self.genericLocalAppInteractionDefinition(
             target: target,
@@ -1062,6 +1072,20 @@ public struct LocalAppTaskCatalog: Sendable {
                 "plan.tools": plan.tools.map(\.rawValue).joined(separator: ",")
             ]
         )
+    }
+
+    private static func hasGenericExecutablePlan(_ metadata: [String: String]) -> Bool {
+        guard let text = metadata["genericHarness.planStepsJSON"],
+              let data = text.data(using: .utf8),
+              let steps = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else {
+            return false
+        }
+        return steps.contains { step in
+            guard let toolName = step["toolName"] as? String else { return false }
+            return toolName == "skill.script.execute"
+                || toolName == "automation.applescript.execute"
+        }
     }
 
     public static var genericLocalItemOpenDefinition: LocalAppTaskDefinition {

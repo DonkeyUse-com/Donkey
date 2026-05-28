@@ -495,6 +495,29 @@ public enum BuiltInHarnessToolExecutors {
         }
 
         let outcome = await executor(artifact, context)
+        if outcome.metadata["clarification.required"] == "true" {
+            let question = trimmed(outcome.metadata["clarification.question"])
+                ?? "What should I try next?"
+            return HarnessToolResult(
+                callID: context.call.id,
+                toolName: context.call.name,
+                status: .waitingForUser,
+                summary: outcome.summary,
+                observations: HarnessObservationDelta(
+                    facts: [
+                        "script.executed.id": scriptID,
+                        "script.executed.succeeded": String(outcome.succeeded),
+                        "script.executed.output": bounded(outcome.output, limit: 500),
+                        "lastAcceptedTool": context.call.name
+                    ]
+                ),
+                question: question,
+                metadata: outcome.metadata.merging([
+                    "scriptArtifactID": scriptID,
+                    "executor": "guardedScriptBackend"
+                ]) { current, _ in current }
+            )
+        }
         let status: HarnessToolResultStatus = outcome.succeeded ? .succeeded : .failed
         return HarnessToolResult(
             callID: context.call.id,

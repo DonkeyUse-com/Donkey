@@ -3,6 +3,7 @@ id: music-media
 description: Plan low-risk media playback in Apple Music or another supported media app.
 tags: media, music, playback, local-app
 tools: app.openOrFocus, app.observe, ui.focusSearch, ui.setText, ui.pressReturn, app.verifyVisibleText
+scripts: scripts-play-media-by-search
 
 Use this skill for play or listen requests when a supported media app or a `play_media` catalog capability is available.
 
@@ -14,14 +15,14 @@ For vague artist, mood, or genre playback requests, choose one concrete represen
 
 Set `metadata.mediaSelection.kind` to `explicit_song`, `explicit_album`, `explicit_playlist`, or `representative_song`, and always set `metadata.mediaSelection.source` to `streaming` or `local_library`. For representative choices, also set `metadata.mediaSelection.seed`, `metadata.mediaSelection.selectedTitle`, and a short `metadata.mediaSelection.reason`. The `query` must include the selected song title and artist, not only the artist, album, genre, or mood seed.
 
-Also return a bounded AppleScript artifact for Apple Music playback when the selected catalog entry has bundle identifier `com.apple.Music`. Put it in metadata, not in free text:
+Prefer the validated skill script path when the selected catalog entry supports it:
 
-- `metadata.automationBackend=appleScript`
-- `metadata.appleScript.action=music.playMediaBySearch`
-- `metadata.appleScript.entityName=query`
-- `metadata.appleScript.query` equal to the same structured `query`
-- `metadata.appleScript.source` containing AppleScript that uses only the structured `query`, targets `application id "com.apple.Music"`, opens/focuses Music, searches for the query, activates a playable result, and returns compact status text
+- Load this skill with `skill.load` using `toolInputs.skillID=music-media`.
+- Execute `skill.script.execute` with `toolInputs.skillID=music-media`, `toolInputs.scriptID=scripts-play-media-by-search`, and `inputEntity=query`.
+- Verify the structured script evidence with `state.verify`; do not use screenshot verification unless the script cannot provide evidence.
+- The script input must be the same structured `query`; never pass raw user text separately.
+- Treat script output as structured evidence. `status=played` means the script submitted playback. `clarification.required=true` means stop and ask the included `clarification.question`.
 
-The AppleScript must be bounded and deterministic. It must not use raw user text, shell commands, files, deletion, quitting apps, network commands, or unrelated applications. Keep the UI plan below as the fallback path even when AppleScript metadata is present.
+The AppleScript script is bounded and deterministic. It must not use raw user text, shell commands, files, deletion, quitting apps, network commands, or unrelated applications. Keep the UI plan below as the fallback path when the skill script cannot execute or does not produce enough evidence.
 
-When planning generic `local_app_interaction`, use `targetAppName` and `entities.appName` from the supported catalog entry. Use `goal=play media`, `inputEntity=query`, `controlID=search`, `focusKey=Command+F`, and tools `app.openOrFocus`, `app.observe`, `ui.focusSearch`, `ui.setText`, `ui.pressReturn`, a second `ui.pressReturn`, and `app.verifyVisibleText`. The first Return submits the search; the second Return activates the top playable result. If visible results are present, prefer a playable song row matching the requested seed over artist, playlist, category, or unrelated rows.
+When planning generic `local_app_interaction`, use `targetAppName` and `entities.appName` from the supported catalog entry. For the preferred script flow, use `skill.load`, `skill.script.execute`, and `state.verify`. For UI fallback, use `goal=play media`, `inputEntity=query`, `controlID=search`, `focusKey=Command+F`, and tools `app.openOrFocus`, `app.observe`, `ui.focusSearch`, `ui.setText`, `ui.pressReturn`, a second `ui.pressReturn`, and `app.verifyVisibleText`. The first Return submits the search; the second Return activates the top playable result. If visible results are present, prefer a playable song row matching the requested seed over artist, playlist, category, or unrelated rows.

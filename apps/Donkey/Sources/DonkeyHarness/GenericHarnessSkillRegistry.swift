@@ -405,12 +405,13 @@ public struct HarnessSkillFileSystemSource: Sendable {
                 language: language,
                 purpose: titleCased(basename),
                 relativePath: relativePath,
-                validationStatus: .pendingValidation,
+                validationStatus: sourceKind == .builtIn ? .validated : .pendingValidation,
                 requiredPermissions: requiredPermissions(for: language),
                 safetyClass: language == .appleScript ? .guardedInput : .sensitive,
                 metadata: [
                     "source": "filesystem",
-                    "scriptDirectory": scriptsDirectory.path
+                    "scriptDirectory": scriptsDirectory.path,
+                    "validation.provenance": sourceKind == .builtIn ? "bundleResource" : ""
                 ]
             )
         }

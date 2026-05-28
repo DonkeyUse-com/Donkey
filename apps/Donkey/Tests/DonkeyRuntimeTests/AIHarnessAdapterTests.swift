@@ -406,6 +406,66 @@ struct AIHarnessAdapterTests {
     }
 
     @Test
+    func hostedTaskIntentAdapterPreservesSkillToolPlanInputs() async throws {
+        let httpClient = FakeAIHTTPClient(
+            data: responseData(
+                outputText: hostedPlanningOutput(
+                    goal: "play a selected song in Music",
+                    taskType: "local_app_interaction",
+                    targetAppName: "Music",
+                    entitiesJSON: #"{"appName":"Music","goal":"play media","query":"Yellow Coldplay"}"#,
+                    normalizedEntitiesJSON: #"{"appName":"Music","goal":"play media","query":"Yellow Coldplay"}"#,
+                    confidence: 0.91,
+                    planStepsJSON: #"[{"id":"load-music-skill","summary":"Load the media skill.","toolName":"skill.load","inputEntity":"","controlID":"","focusKey":"","toolInputs":{"skillID":"music-media"},"expectedObservation":"Music skill is loaded."},{"id":"play-media","summary":"Run the validated media script.","toolName":"skill.script.execute","inputEntity":"query","controlID":"","focusKey":"","toolInputs":{"skillID":"music-media","scriptID":"scripts-play-media-by-search"},"expectedObservation":"status=played"},{"id":"verify-played","summary":"Verify script evidence.","toolName":"state.verify","inputEntity":"","controlID":"","focusKey":"","toolInputs":{"criteria":"status=played"},"expectedObservation":"Script reported playback."}]"#,
+                    verificationCriteriaJSON: #"["status=played"]"#,
+                    fallbacksJSON: #"["Ask if the script reports clarification.required=true."]"#,
+                    metadataJSON: #"{"appFinder.selectedAppID":"com.apple.Music","appFinder.selectedCapabilityID":"play_media","appFinder.controlProfile":"search_then_enter"}"#
+                )
+            ),
+            statusCode: 200
+        )
+        let adapter = HostedTaskIntentParsingAdapter(
+            configuration: DonkeyBackendInferenceConfiguration(
+                baseURL: URL(string: "https://donkey.example")!,
+                clientID: "client-1"
+            ),
+            httpClient: httpClient
+        )
+
+        let result = await adapter.parseTaskIntent(
+            TaskIntentAdapterRequest(
+                command: "play some coldplay",
+                taskDefinitions: LocalAppTaskDefinitionLoader.runtimeSeedDefinitions,
+                availableToolNames: [
+                    "skill.load",
+                    "skill.script.execute",
+                    "state.verify"
+                ],
+                sourceTraceID: "trace-skill-intent"
+            )
+        )
+
+        #expect(result.intent?.taskType == "local_app_interaction")
+        #expect(result.intent?.actionPlan != nil)
+        #expect(result.intent?.metadata["genericHarness.planStepsJSON"]?.contains("\"toolName\":\"skill.script.execute\"") == true)
+        #expect(result.intent?.metadata["genericHarness.planStepsJSON"]?.contains("\"scriptID\":\"scripts-play-media-by-search\"") == true)
+
+        let request = try #require(httpClient.requests.first)
+        let body = try #require(request.httpBodyJSONObject)
+        let text = try #require(body["text"] as? [String: Any])
+        let format = try #require(text["format"] as? [String: Any])
+        let schema = try #require(format["schema"] as? [String: Any])
+        let properties = try #require(schema["properties"] as? [String: Any])
+        let planSteps = try #require(properties["planSteps"] as? [String: Any])
+        let items = try #require(planSteps["items"] as? [String: Any])
+        let stepProperties = try #require(items["properties"] as? [String: Any])
+        #expect(stepProperties["toolInputs"] != nil)
+        let toolName = try #require(stepProperties["toolName"] as? [String: Any])
+        let toolEnums = try #require(toolName["enum"] as? [String])
+        #expect(toolEnums.contains("skill.script.execute"))
+    }
+
+    @Test
     func hostedTaskIntentAdapterPreservesNoTaskConversationResponse() async throws {
         let httpClient = FakeAIHTTPClient(
             data: responseData(

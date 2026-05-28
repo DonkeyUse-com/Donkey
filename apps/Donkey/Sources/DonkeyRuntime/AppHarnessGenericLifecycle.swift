@@ -136,7 +136,8 @@ public struct AppHarnessGenericLifecycle: Sendable {
         taskID: String,
         resolution: LocalAppTaskCatalogResolution,
         fallbackGoal: String,
-        traceID: String
+        traceID: String,
+        availableToolNames: [String] = AppHarnessGenericLifecycleToolNames.localAppTools
     ) async -> HarnessTaskState? {
         let intent = Self.intentAnalysis(
             for: resolution,
@@ -146,7 +147,10 @@ public struct AppHarnessGenericLifecycle: Sendable {
         let plannedStepMetadata = resolution.intent?.metadata ?? [:]
         let modelPlanSteps = Self.modelPlanningSteps(
             from: plannedStepMetadata,
-            traceID: traceID
+            traceID: traceID,
+            availableToolNames: availableToolNames,
+            normalizedEntities: resolution.intent?.normalizedEntities ?? [:],
+            entities: resolution.intent?.entities ?? [:]
         )
         let plan = HarnessPlan(
             goal: intent.goal,
@@ -427,31 +431,40 @@ public struct AppHarnessGenericLifecycle: Sendable {
 
     private static func modelPlanningSteps(
         from metadata: [String: String],
-        traceID: String
+        traceID: String,
+        availableToolNames: [String],
+        normalizedEntities: [String: String],
+        entities: [String: String]
     ) -> [HarnessPlanStep] {
         guard let text = metadata["genericHarness.planStepsJSON"],
               let data = text.data(using: .utf8),
-              let values = try? JSONSerialization.jsonObject(with: data) as? [[String: String]]
+              let values = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
         else {
             return []
         }
+        let allowedToolNames = Set(availableToolNames)
 
         return values.enumerated().map { index, value in
-            let id = nonEmpty(value["id"]) ?? "model-plan-step-\(index + 1)"
-            let toolName = nonEmpty(value["toolName"])
+            let id = nonEmpty(stringValue(value["id"])) ?? "model-plan-step-\(index + 1)"
+            let toolName = nonEmpty(stringValue(value["toolName"]))
             let toolCall = toolName.flatMap { toolName -> HarnessToolCall? in
-                guard LocalAppActionPlanTool(rawValue: toolName) != nil else { return nil }
+                guard allowedToolNames.contains(toolName) else { return nil }
+                let input = toolInput(
+                    from: value,
+                    normalizedEntities: normalizedEntities,
+                    entities: entities
+                )
                 return HarnessToolCall(
                     id: "local-app-step-\(traceID)-\(index + 1)",
                     name: toolName,
-                    input: [
-                        "inputEntity": value["inputEntity"] ?? "",
-                        "controlID": value["controlID"] ?? "",
-                        "focusKey": value["focusKey"] ?? "",
-                        "expectedObservation": value["expectedObservation"] ?? "",
+                    input: input.merging([
+                        "inputEntity": stringValue(value["inputEntity"]) ?? "",
+                        "controlID": stringValue(value["controlID"]) ?? "",
+                        "focusKey": stringValue(value["focusKey"]) ?? "",
+                        "expectedObservation": stringValue(value["expectedObservation"]) ?? "",
                         "modelStepID": id,
                         "modelStepIndex": String(index)
-                    ],
+                    ]) { current, _ in current },
                     metadata: [
                         "adapter": "userQuery",
                         "traceID": traceID,
@@ -461,18 +474,36 @@ public struct AppHarnessGenericLifecycle: Sendable {
             }
             return HarnessPlanStep(
                 id: "model-\(id)",
-                summary: nonEmpty(value["summary"]) ?? "Model-planned harness step",
+                summary: nonEmpty(stringValue(value["summary"])) ?? "Model-planned harness step",
                 toolCall: toolCall,
-                expectedObservation: nonEmpty(value["expectedObservation"]),
+                expectedObservation: nonEmpty(stringValue(value["expectedObservation"])),
                 metadata: [
                     "source": "hostedGenericHarnessPlanning",
                     "toolName": toolName ?? "",
-                    "inputEntity": value["inputEntity"] ?? "",
-                    "controlID": value["controlID"] ?? "",
-                    "focusKey": value["focusKey"] ?? ""
+                    "inputEntity": stringValue(value["inputEntity"]) ?? "",
+                    "controlID": stringValue(value["controlID"]) ?? "",
+                    "focusKey": stringValue(value["focusKey"]) ?? ""
                 ]
             )
         }
+    }
+
+    private static func toolInput(
+        from value: [String: Any],
+        normalizedEntities: [String: String],
+        entities: [String: String]
+    ) -> [String: String] {
+        var input = value["toolInputs"] as? [String: String] ?? [:]
+        let inputEntity = nonEmpty(input["inputEntity"] ?? stringValue(value["inputEntity"]))
+        if let inputEntity {
+            input["inputEntity"] = inputEntity
+        }
+        if input["input"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
+           let inputEntity,
+           let entityValue = normalizedEntities[inputEntity] ?? entities[inputEntity] {
+            input["input"] = entityValue
+        }
+        return input
     }
 
     private static func clarificationPolicy(from metadata: [String: String]) -> [String] {
@@ -505,6 +536,10 @@ public struct AppHarnessGenericLifecycle: Sendable {
     private static func nonEmpty(_ value: String?) -> String? {
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func stringValue(_ value: Any?) -> String? {
+        value as? String
     }
 }
 

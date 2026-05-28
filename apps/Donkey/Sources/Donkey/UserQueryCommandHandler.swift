@@ -341,9 +341,12 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
             taskID: taskID,
             resolution: resolution,
             fallbackGoal: commandRedaction.redactedText,
-            traceID: traceID
+            traceID: traceID,
+            availableToolNames: Self.genericHarnessToolNames()
         )
-        let registry = BuiltInHarnessToolCatalog.registryWithBuiltInExecutors()
+        let registry = BuiltInHarnessToolCatalog.registryWithBuiltInExecutors(
+            services: LocalAppUserQueryHarnessServices.builtInSkillBackedServices()
+        )
         let localStepExecutor = LocalAppHarnessStepExecutor(
             command: commandRedaction.redactedText,
             traceID: traceID,
@@ -371,7 +374,10 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
             step.toolResult?.toolName == LocalAppActionPlanTool.verifyCommand.rawValue
                 || step.toolResult?.toolName == LocalAppActionPlanTool.verifyVisibleText.rawValue
         }
-        let result = await localStepExecutor.currentResult()
+        let result = Self.integratingGenericToolOutcome(
+            into: await localStepExecutor.currentResult(),
+            runSteps: runSteps
+        )
         let finalized = await finalizeGenericHarnessTask(
             taskID: taskID,
             result: result,
@@ -541,6 +547,51 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
             return true
         case .succeeded, nil:
             return false
+        }
+    }
+
+    private static func integratingGenericToolOutcome(
+        into result: LocalAppTaskLiveRunResult,
+        runSteps: [HarnessStepExecutionResult]
+    ) -> LocalAppTaskLiveRunResult {
+        guard result.actionTraces.isEmpty,
+              result.status == .failedSafe
+        else {
+            return result
+        }
+
+        let toolResults = runSteps.compactMap(\.toolResult)
+        guard let toolResult = toolResults.last else {
+            return result
+        }
+        let completedGenericAction = toolResults.last { result in
+            result.status == .succeeded
+                && (
+                    result.toolName == "skill.script.execute"
+                        || result.toolName == "automation.applescript.execute"
+                )
+        }
+
+        switch toolResult.status {
+        case .succeeded where completedGenericAction != nil:
+            var completed = result
+            let actionResult = completedGenericAction ?? toolResult
+            completed.status = .completed
+            completed.metadata = result.metadata
+                .merging(actionResult.metadata) { current, _ in current }
+                .merging(toolResult.metadata) { current, _ in current }
+            completed.metadata["reason"] = "genericToolCompleted"
+            completed.metadata["genericTool.completed"] = actionResult.toolName
+            return completed
+        case .waitingForUser:
+            var waiting = result
+            waiting.status = .needsConfirmation
+            waiting.metadata = result.metadata.merging(toolResult.metadata) { current, _ in current }
+            waiting.metadata["reason"] = "genericToolNeedsUser"
+            waiting.metadata["genericTool.waiting"] = toolResult.toolName
+            return waiting
+        default:
+            return result
         }
     }
 
@@ -1104,6 +1155,7 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
             .lifecycle,
             .appLookup,
             .appControl,
+            .skillLookup,
             .screenCapture,
             .accessibility,
             .input
@@ -1112,7 +1164,12 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
 
     private static func genericHarnessToolNames() -> [String] {
         Array(Set(
-            BuiltInHarnessToolCatalog.descriptors.map(\.name)
+            BuiltInHarnessToolCatalog.descriptors
+                .filter { descriptor in
+                    descriptor.safetyClass != .destructive
+                        && descriptor.safetyClass != .sensitive
+                }
+                .map(\.name)
                 + LocalAppHarnessStepExecutor.descriptors.map(\.name)
         )).sorted()
     }

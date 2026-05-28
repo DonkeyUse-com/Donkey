@@ -241,6 +241,13 @@ control.
 Plugins register tools through the same interface. App knowledge belongs in
 plugins, skills, catalogs, or memory, not in core harness conditionals.
 
+Skill-backed local-app actions are first-class generic plan steps. A model plan
+may load a relevant skill, execute a validated skill script with structured
+entity input, and verify the script's structured evidence before falling back to
+Accessibility or screenshot-driven UI actions. Built-in and learned scripts must
+be registered as validated artifacts with provenance before execution; raw user
+text is not passed as script source or used to select app-specific behavior.
+
 ## Computer Use
 
 Computer use is one tool family inside the harness.

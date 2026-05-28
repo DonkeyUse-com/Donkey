@@ -181,6 +181,100 @@ struct GenericHarnessTests {
     }
 
     @Test
+    func userQueryHarnessServicesExposeBuiltInMusicSkillScript() async throws {
+        let services = LocalAppUserQueryHarnessServices.builtInSkillBackedServices()
+        let musicSkill = await services.skillRegistry?.descriptor(id: "music-media")
+        let script = await services.generatedScripts.artifact(id: "scripts-play-media-by-search")
+
+        #expect(musicSkill?.scripts.contains { $0.id == "scripts-play-media-by-search" } == true)
+        #expect(script?.ownerSkillID == "music-media")
+        #expect(script?.validationStatus == .validated)
+        #expect(script?.language == .appleScript)
+    }
+
+    @Test
+    func skillScriptExecuteUsesStructuredOutcomeForSuccessAndClarification() async throws {
+        let generatedScripts = HarnessGeneratedScriptStore(artifacts: [
+            HarnessGeneratedScriptArtifact(
+                id: "scripts-play-media-by-search",
+                language: .appleScript,
+                source: "return \"status=played\"",
+                validationStatus: .validated,
+                createdByToolName: "test",
+                ownerSkillID: "music-media"
+            )
+        ])
+        let registry = BuiltInHarnessToolCatalog.registryWithBuiltInExecutors(
+            services: HarnessBuiltInToolServices(
+                generatedScripts: generatedScripts,
+                skillScriptExecutor: { _, _ in
+                    HarnessScriptExecutionOutcome(
+                        succeeded: true,
+                        summary: "played",
+                        output: "status=played",
+                        metadata: ["status": "played"]
+                    )
+                }
+            )
+        )
+
+        let result = await registry.execute(
+            HarnessToolCall(
+                id: "execute-script",
+                name: "skill.script.execute",
+                input: [
+                    "skillID": "music-media",
+                    "scriptID": "scripts-play-media-by-search",
+                    "input": "Yellow Coldplay"
+                ]
+            ),
+            taskID: "task-script-success",
+            worldModel: HarnessWorldModel(),
+            grantedPermissions: [.appControl, .input]
+        )
+
+        #expect(result.status == .succeeded)
+        #expect(result.metadata["status"] == "played")
+
+        let clarificationRegistry = BuiltInHarnessToolCatalog.registryWithBuiltInExecutors(
+            services: HarnessBuiltInToolServices(
+                generatedScripts: generatedScripts,
+                skillScriptExecutor: { _, _ in
+                    HarnessScriptExecutionOutcome(
+                        succeeded: false,
+                        summary: "not found",
+                        output: "status=not_found",
+                        metadata: [
+                            "status": "not_found",
+                            "clarification.required": "true",
+                            "clarification.question": "What should I try instead?"
+                        ]
+                    )
+                }
+            )
+        )
+
+        let clarification = await clarificationRegistry.execute(
+            HarnessToolCall(
+                id: "execute-script-not-found",
+                name: "skill.script.execute",
+                input: [
+                    "skillID": "music-media",
+                    "scriptID": "scripts-play-media-by-search",
+                    "input": "Unknown song"
+                ]
+            ),
+            taskID: "task-script-clarification",
+            worldModel: HarnessWorldModel(),
+            grantedPermissions: [.appControl, .input]
+        )
+
+        #expect(clarification.status == .waitingForUser)
+        #expect(clarification.question == "What should I try instead?")
+        #expect(clarification.metadata["status"] == "not_found")
+    }
+
+    @Test
     func unknownToolIsRejectedByRegistry() async {
         let registry = BuiltInHarnessToolCatalog.registryWithBuiltInExecutors()
         let result = await registry.execute(
@@ -982,6 +1076,67 @@ struct GenericHarnessTests {
         #expect(result?.task.pendingContinuation?.question == "What should I send?")
         #expect(result?.task.pendingContinuation?.pendingToolCall?.name == LocalAppActionPlanTool.setText.rawValue)
         #expect(result?.toolResult?.status == .waitingForUser)
+    }
+
+    @Test
+    func userQueryLifecyclePlansGenericSkillToolSteps() async throws {
+        let store = InMemoryHarnessThreadStore()
+        let coordinator = HarnessTaskCoordinator()
+        let lifecycle = AppHarnessGenericLifecycle(threadStore: store, coordinator: coordinator)
+        let task = await coordinator.createTask(
+            id: "skill-task",
+            threadID: "skill-thread",
+            goal: "play media"
+        )
+        let intent = TaskIntent(
+            intentID: "intent-skill-music",
+            taskType: "local_app_interaction",
+            targetApp: LocalAppTarget(appName: "Music"),
+            entities: [
+                "appName": "Music",
+                "goal": "play media",
+                "query": "Yellow Coldplay"
+            ],
+            normalizedEntities: [
+                "appName": "Music",
+                "goal": "play media",
+                "query": "Yellow Coldplay"
+            ],
+            confidence: 0.9,
+            parserSource: .onlineModel,
+            actionPlan: LocalAppActionPlan(tools: [], inputEntity: "query", focusKey: ""),
+            metadata: [
+                "genericHarness.schemaVersion": "generic_harness_planning",
+                "genericHarness.planStepsJSON": """
+                [{"id":"load-music-skill","summary":"Load the media skill.","toolName":"skill.load","inputEntity":"","controlID":"","focusKey":"","toolInputs":{"skillID":"music-media"},"expectedObservation":"Skill loaded."},{"id":"play-media","summary":"Run the validated script.","toolName":"skill.script.execute","inputEntity":"query","controlID":"","focusKey":"","toolInputs":{"skillID":"music-media","scriptID":"scripts-play-media-by-search"},"expectedObservation":"status=played"}]
+                """,
+                "genericHarness.verificationCriteriaJSON": #"["status=played"]"#,
+                "genericHarness.fallbacksJSON": #"["Ask for a different query."]"#
+            ]
+        )
+        let resolution = LocalAppTaskCatalogResolution(
+            status: .resolved,
+            intent: intent,
+            definition: LocalAppTaskCatalog.genericLocalAppInteractionDefinition(
+                target: LocalAppTarget(appName: "Music", bundleIdentifier: "com.apple.Music"),
+                plan: LocalAppActionPlan(tools: [], inputEntity: "query", focusKey: "")
+            )
+        )
+
+        let planned = await lifecycle.planLocalTaskRun(
+            taskID: task.id,
+            resolution: resolution,
+            fallbackGoal: "play music",
+            traceID: "trace-skill-plan",
+            availableToolNames: ["skill.load", "skill.script.execute"]
+        )
+
+        let steps = try #require(planned?.plan?.steps)
+        let calls = steps.compactMap(\.toolCall)
+        #expect(calls.map(\.name) == ["skill.load", "skill.script.execute"])
+        #expect(calls[0].input["skillID"] == "music-media")
+        #expect(calls[1].input["scriptID"] == "scripts-play-media-by-search")
+        #expect(calls[1].input["input"] == "Yellow Coldplay")
     }
 
     @Test

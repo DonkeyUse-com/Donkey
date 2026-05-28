@@ -118,7 +118,10 @@ enum TaskIntentWireCodec {
         ]
     }
 
-    static func genericHarnessPlanningJsonSchema(taskDefinitions: [LocalAppTaskDefinition]) -> [String: Any] {
+    static func genericHarnessPlanningJsonSchema(
+        taskDefinitions: [LocalAppTaskDefinition],
+        availableToolNames: [String] = []
+    ) -> [String: Any] {
         let allowsDynamicTargets = taskDefinitions.contains { definition in
             definition.metadata["dynamicTarget"] == "true"
         }
@@ -127,7 +130,16 @@ enum TaskIntentWireCodec {
         let targetAppNameSchema: [String: Any] = allowsDynamicTargets
             ? ["type": "string"]
             : ["type": "string", "enum": appNames]
-        let toolNames = [""] + LocalAppActionPlanTool.allCases.map(\.rawValue)
+        let availableToolNameSet = Set(
+            availableToolNames
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        )
+        let toolNames = [""] + Array(
+            availableToolNameSet.isEmpty
+                ? Set(LocalAppActionPlanTool.allCases.map(\.rawValue))
+                : availableToolNameSet
+        ).sorted()
         let planStepSchema: [String: Any] = [
             "type": "object",
             "additionalProperties": false,
@@ -138,6 +150,7 @@ enum TaskIntentWireCodec {
                 "inputEntity",
                 "controlID",
                 "focusKey",
+                "toolInputs",
                 "expectedObservation"
             ],
             "properties": [
@@ -147,6 +160,10 @@ enum TaskIntentWireCodec {
                 "inputEntity": ["type": "string"],
                 "controlID": ["type": "string"],
                 "focusKey": ["type": "string"],
+                "toolInputs": [
+                    "type": "object",
+                    "additionalProperties": ["type": "string"]
+                ],
                 "expectedObservation": ["type": "string"]
             ]
         ]
@@ -400,7 +417,11 @@ enum TaskIntentWireCodec {
 
         let confidence = wire.confidence
         let needsConfirmation = wire.needsConfirmation || missingRequiredEntity != nil
-        let actionPlan = wire.actionPlan.tools.isEmpty ? nil : wire.actionPlan
+        let hasGenericExecutablePlan = metadata["genericHarness.planStepsJSON"]
+            .map(Self.hasGenericExecutableTool) ?? false
+        let actionPlan = wire.actionPlan.tools.isEmpty && !hasGenericExecutablePlan
+            ? nil
+            : wire.actionPlan
         let primaryEntity = definition.verificationEntityName
             .flatMap { normalizedEntities[$0] }
             ?? normalizedEntities.values.sorted().first
@@ -622,6 +643,7 @@ enum TaskIntentWireCodec {
                     "inputEntity": step.inputEntity,
                     "controlID": step.controlID,
                     "focusKey": step.focusKey,
+                    "toolInputs": step.toolInputs,
                     "expectedObservation": step.expectedObservation
                 ]
             }
@@ -645,6 +667,19 @@ enum TaskIntentWireCodec {
             return "[]"
         }
         return text
+    }
+
+    private static func hasGenericExecutableTool(_ planStepsJSON: String) -> Bool {
+        guard let data = planStepsJSON.data(using: .utf8),
+              let steps = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else {
+            return false
+        }
+        return steps.contains { step in
+            guard let toolName = step["toolName"] as? String else { return false }
+            return toolName == "skill.script.execute"
+                || toolName == "automation.applescript.execute"
+        }
     }
 
     private static func firstNonEmpty(_ values: [String]) -> String? {
@@ -854,7 +889,31 @@ private struct GenericHarnessPlanStepWire: Decodable {
     var inputEntity: String
     var controlID: String
     var focusKey: String
+    var toolInputs: [String: String]
     var expectedObservation: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case summary
+        case toolName
+        case inputEntity
+        case controlID
+        case focusKey
+        case toolInputs
+        case expectedObservation
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.summary = try container.decode(String.self, forKey: .summary)
+        self.toolName = try container.decode(String.self, forKey: .toolName)
+        self.inputEntity = try container.decode(String.self, forKey: .inputEntity)
+        self.controlID = try container.decode(String.self, forKey: .controlID)
+        self.focusKey = try container.decode(String.self, forKey: .focusKey)
+        self.toolInputs = try container.decodeIfPresent([String: String].self, forKey: .toolInputs) ?? [:]
+        self.expectedObservation = try container.decode(String.self, forKey: .expectedObservation)
+    }
 }
 
 private struct GenericHarnessClarificationPolicyWire: Decodable {
