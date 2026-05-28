@@ -20,6 +20,9 @@ the result to the moving `nightly` prerelease.
 - The workflow also uploads `Donkey.dmg.sha256`.
 - The website download URL points to the promoted numeric release asset, not a
   moving `latest` or `-latest` URL.
+- The production release workflow keeps the latest 10 numeric GitHub Releases
+  and deletes older numeric release records after promotion. It does not delete
+  Git tags, aliases, or the nightly prerelease.
 - The public Sparkle appcast is committed at `site/public/appcast.xml` and
   served as `https://donkeyuse.com/appcast.xml`.
 - Sparkle signs and validates update archives; do not add a Donkey-specific
@@ -77,7 +80,8 @@ creates or updates the numeric GitHub Release, uploads the DMG and checksum,
 updates `site/public/appcast.xml`, updates the website download constant,
 commits those site/appcast changes, marks the numeric release as GitHub's latest
 release, and moves the alias tags. When no numeric release tag exists yet, the
-workflow starts at `0.1.0`.
+workflow starts at `0.1.0`. After promotion, it deletes older production
+GitHub Release records so only the latest 10 numeric releases remain.
 
 ## Alias Tags
 
@@ -117,6 +121,8 @@ After the workflow finishes:
 - The website source has `DONKEY_LATEST_VERSION` set to the numeric version.
 - `site/public/appcast.xml` contains one item for that version and an enclosure
   URL under `/releases/download/vMAJOR.MINOR.PATCH/Donkey.dmg`.
+- The GitHub Releases page keeps no more than 10 numeric production releases,
+  plus the separate nightly prerelease when present.
 - `https://donkeyuse.com/appcast.xml` updates after the site deploy completes.
 
 If Sparkle cannot validate an update, first check that the app was packaged with

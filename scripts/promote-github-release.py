@@ -18,7 +18,7 @@ SEMVER_RE = re.compile(r"^v?(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<pa
 LATEST_VERSION_RE = re.compile(r'export const DONKEY_LATEST_VERSION = "[^"]+";')
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, order=True)
 class Version:
     major: int
     minor: int
@@ -53,6 +53,13 @@ class Release:
     html_url: str
     release_id: int
     published_at: str
+
+
+@dataclass(frozen=True)
+class RetentionRelease:
+    version: Version
+    tag_name: str
+    release_id: int
 
 
 def run(command: Sequence[str], *, dry_run: bool = False, mutate: bool = False) -> str:
@@ -112,6 +119,13 @@ def parse_version(raw_version: str) -> Version:
     )
 
 
+def numeric_release_version(tag_name: str) -> Version | None:
+    try:
+        return parse_version(tag_name)
+    except ValueError:
+        return None
+
+
 def load_release(repo: str, tag: str, asset_name: str) -> Release:
     payload = run(["gh", "api", f"repos/{repo}/releases/tags/{tag}"])
     data = json.loads(payload)
@@ -129,6 +143,40 @@ def load_release(repo: str, tag: str, asset_name: str) -> Release:
             )
 
     raise ValueError(f"release {tag} does not have an asset named {asset_name}")
+
+
+def load_retention_releases(repo: str) -> list[RetentionRelease]:
+    payload = run(["gh", "api", "--paginate", "--slurp", f"repos/{repo}/releases"])
+    pages = json.loads(payload)
+    if not isinstance(pages, list):
+        raise ValueError("GitHub releases response was not a list")
+
+    raw_releases: list[dict] = []
+    for page in pages:
+        if isinstance(page, list):
+            raw_releases.extend(item for item in page if isinstance(item, dict))
+        elif isinstance(page, dict):
+            raw_releases.append(page)
+
+    releases: list[RetentionRelease] = []
+    for release in raw_releases:
+        if release.get("prerelease") is True:
+            continue
+
+        tag_name = str(release.get("tag_name") or "")
+        version = numeric_release_version(tag_name)
+        if version is None:
+            continue
+
+        releases.append(
+            RetentionRelease(
+                version=version,
+                tag_name=tag_name,
+                release_id=int(release["id"]),
+            )
+        )
+
+    return sorted(releases, key=lambda release: release.version, reverse=True)
 
 
 def release_pub_date(published_at: str) -> str:
@@ -234,6 +282,36 @@ def mark_release_latest(repo: str, release: Release, dry_run: bool) -> None:
     )
 
 
+def prune_old_releases(repo: str, keep_releases: int, dry_run: bool) -> None:
+    if keep_releases < 1:
+        raise ValueError("keep releases must be at least 1")
+
+    releases = load_retention_releases(repo)
+    stale_releases = releases[keep_releases:]
+    if not stale_releases:
+        print(f"Release retention: found {len(releases)} production releases; nothing to delete.")
+        return
+
+    print(
+        "Release retention: "
+        f"keeping latest {keep_releases} production releases and deleting {len(stale_releases)} older releases."
+    )
+    for release in stale_releases:
+        run(
+            [
+                "gh",
+                "api",
+                "-X",
+                "DELETE",
+                f"repos/{repo}/releases/{release.release_id}",
+            ],
+            dry_run=dry_run,
+            mutate=True,
+        )
+        action = "Would delete" if dry_run else "Deleted"
+        print(f"{action} GitHub Release {release.tag_name}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Promote a numeric Donkey GitHub Release for site downloads and Sparkle.")
     parser.add_argument("--repo", required=True, help="GitHub repository in owner/name form.")
@@ -246,6 +324,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--promote-major", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--promote-minor", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--promote-latest", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--keep-releases", type=int, default=10, help="Keep this many latest numeric production releases.")
     parser.add_argument("--commit", action="store_true", help="Commit and push website/appcast changes before moving aliases.")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -253,6 +332,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.keep_releases < 1:
+        raise ValueError("keep releases must be at least 1")
+
     version = parse_version(args.version)
     if version.tag.endswith("-latest"):
         raise ValueError("promoted website versions must be numeric and must not use a -latest tag")
@@ -269,6 +351,7 @@ def main() -> int:
     promote_tags(version, args.promote_major, args.promote_minor, args.promote_latest, args.dry_run)
     if args.promote_latest:
         mark_release_latest(args.repo, release, args.dry_run)
+    prune_old_releases(args.repo, args.keep_releases, args.dry_run)
 
     print(f"Promoted {version.tag}")
     print(f"Download URL: {release.asset.download_url}")

@@ -166,6 +166,7 @@ jobs:
             --build "${{ steps.release.outputs.build }}"
             --sparkle-ed-signature "${{ steps.sparkle.outputs.signature }}"
             --asset-name "Donkey.dmg"
+            --keep-releases 10
             --commit
           )
 
