@@ -144,8 +144,31 @@ public struct LocalUIUnderstandingResult: Codable, Equatable, Sendable {
     }
 }
 
+public enum LocalUIUnderstandingStreamEvent: Equatable, Sendable {
+    case partial(LocalUIUnderstandingResult)
+    case final(LocalUIUnderstandingResult)
+}
+
 public protocol LocalUIUnderstandingRunning: Sendable {
     func understand(_ request: LocalUIUnderstandingRequest) async throws -> LocalUIUnderstandingResult
+}
+
+public extension LocalUIUnderstandingRunning {
+    func understandStream(
+        _ request: LocalUIUnderstandingRequest
+    ) -> AsyncThrowingStream<LocalUIUnderstandingStreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    let result = try await understand(request)
+                    continuation.yield(.final(result))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
 }
 
 public struct ProcessBackedLocalUIUnderstandingAdapter: LocalUIUnderstandingRunning {

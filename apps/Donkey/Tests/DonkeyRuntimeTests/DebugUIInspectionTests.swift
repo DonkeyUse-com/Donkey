@@ -1111,6 +1111,190 @@ struct DebugUIInspectionTests {
         #expect(row.bbox == DebugUIBoundingBox(x: 10, y: 240, width: 190, height: 52))
     }
 
+    @Test
+    func accessibilityInspectionDrawsNativeMusicTilesFromAXGroups() throws {
+        let screen = DebugUIScreenMetadata(
+            screenID: 1,
+            appKitFrame: HotLoopRect(x: 0, y: 0, width: 1200, height: 900, space: .screen),
+            captureFrame: WindowTargetBounds(x: 0, y: 0, width: 1200, height: 900)
+        )
+        let capturer = DebugUIFakeAccessibilityCapturer(
+            tree: MacAccessibilitySnapshotTreeBuilder.build(
+                root: RawMacAccessibilitySnapshotNode(
+                    role: "AXWindow",
+                    title: "Music",
+                    frame: WindowTargetBounds(x: 0, y: 0, width: 1200, height: 900),
+                    children: [
+                        RawMacAccessibilitySnapshotNode(
+                            role: "AXGroup",
+                            frame: WindowTargetBounds(x: 560, y: 540, width: 250, height: 260),
+                            isEnabled: true,
+                            actions: [],
+                            children: [
+                                RawMacAccessibilitySnapshotNode(
+                                    role: "AXImage",
+                                    label: "New This Week artwork",
+                                    frame: WindowTargetBounds(x: 560, y: 540, width: 250, height: 220)
+                                ),
+                                RawMacAccessibilitySnapshotNode(
+                                    role: "AXStaticText",
+                                    valueSummary: "New This Week",
+                                    frame: WindowTargetBounds(x: 560, y: 770, width: 160, height: 24)
+                                )
+                            ]
+                        )
+                    ]
+                ),
+                limits: MacAccessibilitySnapshotLimits(maxDepth: 6)
+            )
+        )
+        let service = DebugUIAccessibilityInspectionService(
+            windowResolver: MacWindowResolver(
+                provider: DebugUIFixtureWindowProvider(
+                    windows: [
+                        MacWindowProviderWindow(
+                            windowID: 8,
+                            processID: 100,
+                            appName: "Music",
+                            bounds: WindowTargetBounds(x: 0, y: 0, width: 1200, height: 900)
+                        )
+                    ],
+                    frontmostProcessID: 100
+                )
+            ),
+            capturer: capturer,
+            screenProvider: DebugUIFixtureScreenProvider(screens: [screen]),
+            currentProcessID: 999
+        )
+
+        let results = try service.inspect(scope: .main, minConfidence: 0.25)
+        let tile = try #require(results.first?.frame.elements.first { $0.label.contains("New This Week") })
+
+        #expect(tile.type == .listItem)
+        #expect(tile.bbox == DebugUIBoundingBox(x: 560, y: 540, width: 250, height: 260))
+        #expect(tile.metadata.values.contains("readOnlyEvidence") || tile.metadata.values.contains("cursorVisualization"))
+    }
+
+    @Test
+    func accessibilityInspectionDrawsMusicTileTextAndImagesFromBroadAXNodes() throws {
+        let screen = DebugUIScreenMetadata(
+            screenID: 1,
+            appKitFrame: HotLoopRect(x: 0, y: 0, width: 1200, height: 900, space: .screen),
+            captureFrame: WindowTargetBounds(x: 0, y: 0, width: 1200, height: 900)
+        )
+        let capturer = DebugUIFakeAccessibilityCapturer(
+            tree: MacAccessibilitySnapshotTreeBuilder.build(
+                root: RawMacAccessibilitySnapshotNode(
+                    role: "AXWindow",
+                    title: "Music",
+                    frame: WindowTargetBounds(x: 0, y: 0, width: 1200, height: 900),
+                    children: [
+                        RawMacAccessibilitySnapshotNode(
+                            role: "AXImage",
+                            label: "Happy Hits artwork",
+                            frame: WindowTargetBounds(x: 530, y: 175, width: 290, height: 290)
+                        ),
+                        RawMacAccessibilitySnapshotNode(
+                            role: "AXStaticText",
+                            valueSummary: "Happy Hits",
+                            frame: WindowTargetBounds(x: 530, y: 482, width: 120, height: 24)
+                        ),
+                        RawMacAccessibilitySnapshotNode(
+                            role: "AXStaticText",
+                            valueSummary: "Apple Music Feel Good",
+                            frame: WindowTargetBounds(x: 530, y: 512, width: 210, height: 22)
+                        )
+                    ]
+                ),
+                limits: MacAccessibilitySnapshotLimits(maxDepth: 6)
+            )
+        )
+        let service = DebugUIAccessibilityInspectionService(
+            windowResolver: MacWindowResolver(
+                provider: DebugUIFixtureWindowProvider(
+                    windows: [
+                        MacWindowProviderWindow(
+                            windowID: 9,
+                            processID: 100,
+                            appName: "Music",
+                            bounds: WindowTargetBounds(x: 0, y: 0, width: 1200, height: 900)
+                        )
+                    ],
+                    frontmostProcessID: 100
+                )
+            ),
+            capturer: capturer,
+            screenProvider: DebugUIFixtureScreenProvider(screens: [screen]),
+            currentProcessID: 999
+        )
+
+        let results = try service.inspect(scope: .main, minConfidence: 0.25)
+        let labels = results.first?.frame.elements.map(\.label) ?? []
+
+        #expect(labels.contains { $0.contains("Happy Hits artwork") })
+        #expect(labels.contains { $0.contains("Happy Hits") })
+        #expect(labels.contains { $0.contains("Apple Music Feel Good") })
+    }
+
+    @Test
+    func accessibilityProgressiveInspectionPublishesBroadAXNodes() throws {
+        let screen = DebugUIScreenMetadata(
+            screenID: 1,
+            appKitFrame: HotLoopRect(x: 0, y: 0, width: 1200, height: 900, space: .screen),
+            captureFrame: WindowTargetBounds(x: 0, y: 0, width: 1200, height: 900)
+        )
+        let tileNodes = (0..<8).map { index in
+            RawMacAccessibilitySnapshotNode(
+                role: "AXStaticText",
+                valueSummary: "Music tile \(index + 1)",
+                frame: WindowTargetBounds(x: 530, y: 180 + Double(index * 34), width: 180, height: 24)
+            )
+        }
+        let capturer = DebugUIFakeAccessibilityCapturer(
+            tree: MacAccessibilitySnapshotTreeBuilder.build(
+                root: RawMacAccessibilitySnapshotNode(
+                    role: "AXWindow",
+                    title: "Music",
+                    frame: WindowTargetBounds(x: 0, y: 0, width: 1200, height: 900),
+                    children: tileNodes
+                ),
+                limits: MacAccessibilitySnapshotLimits(maxDepth: 6)
+            )
+        )
+        let service = DebugUIAccessibilityInspectionService(
+            windowResolver: MacWindowResolver(
+                provider: DebugUIFixtureWindowProvider(
+                    windows: [
+                        MacWindowProviderWindow(
+                            windowID: 10,
+                            processID: 100,
+                            appName: "Music",
+                            bounds: WindowTargetBounds(x: 0, y: 0, width: 1200, height: 900)
+                        )
+                    ],
+                    frontmostProcessID: 100
+                )
+            ),
+            capturer: capturer,
+            screenProvider: DebugUIFixtureScreenProvider(screens: [screen]),
+            currentProcessID: 999
+        )
+        var partialBatches: [[DebugUIAccessibilityInspectionResult]] = []
+
+        let finalResults = try service.inspectProgressively(
+            scope: .main,
+            minConfidence: 0.25,
+            onPartialResults: { partialBatches.append($0) }
+        )
+        let partialLabels = partialBatches.flatMap { batch in
+            batch.flatMap { $0.frame.elements.map(\.label) }
+        }
+        let finalLabels = finalResults.flatMap { $0.frame.elements.map(\.label) }
+
+        #expect(partialLabels.contains("Music tile 8"))
+        #expect(finalLabels.contains("Music tile 8"))
+    }
+
     private func element(
         id: String,
         label: String,
@@ -1139,7 +1323,7 @@ struct DebugUIInspectionTests {
     }
 }
 
-private final class DebugUIFakeAccessibilityCapturer: MacAccessibilitySnapshotCapturing, @unchecked Sendable {
+private final class DebugUIFakeAccessibilityCapturer: MacAccessibilitySnapshotProgressCapturing, @unchecked Sendable {
     var trust: MacAccessibilityTrustStatus
     var tree: MacAccessibilitySnapshotTree
     var treesByWindowID: [UInt32: MacAccessibilitySnapshotTree]
@@ -1168,6 +1352,26 @@ private final class DebugUIFakeAccessibilityCapturer: MacAccessibilitySnapshotCa
     ) throws -> MacAccessibilitySnapshotTree {
         capturedWindowIDs.append(target.windowID)
         return treesByWindowID[target.windowID] ?? tree
+    }
+
+    func captureTree(
+        target: MacWindowTargetCandidate,
+        limits: MacAccessibilitySnapshotLimits,
+        onNode: (MacAccessibilitySnapshotNode) -> Void
+    ) throws -> MacAccessibilitySnapshotTree {
+        let tree = try captureTree(target: target, limits: limits)
+        emit(tree.root, to: onNode)
+        return tree
+    }
+
+    private func emit(
+        _ node: MacAccessibilitySnapshotNode,
+        to onNode: (MacAccessibilitySnapshotNode) -> Void
+    ) {
+        onNode(node)
+        for child in node.children {
+            emit(child, to: onNode)
+        }
     }
 }
 

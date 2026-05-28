@@ -19,18 +19,17 @@ import {
 } from "@/lib/inference/json";
 import {
   InferenceProviderError,
-  type JsonObject,
   type JsonValue,
 } from "@/lib/inference/providers";
 import {
   geminiScreenshotParseOutputSchema,
+  geminiScreenshotControlSchema,
   type GeminiScreenshotParseOutput,
   type HotLoopRectJSON,
   type ScreenshotParseRequest,
 } from "@/lib/inference/screenshot-parsing/schema";
 import type {
   ScreenshotParserProvider,
-  ScreenshotParserProviderResult,
   ScreenshotParserResult,
 } from "@/lib/inference/screenshot-parsing/types";
 
@@ -84,6 +83,63 @@ export function createGeminiFlashScreenshotParser(
         model,
         result,
         usage: usageFromGeminiResponse(rawBody),
+        metadata: result.metadata,
+      };
+    },
+    async *stream(request) {
+      ensureConfigured(config.configured);
+      const client = clientFactory(config.options);
+      const model = screenshotParseModelForRequest(request, environment);
+      const startedAt = performance.now();
+      const generator = await streamGeminiContent(client, request, model);
+      let accumulatedText = "";
+      let emittedControlCount = 0;
+      let latestUsage: JsonValue | undefined;
+
+      for await (const chunk of generator) {
+        accumulatedText += geminiResponseText(chunk);
+        latestUsage = usageFromGeminiResponse(toJsonValue(chunk)) ?? latestUsage;
+
+        const partialOutput = partialGeminiOutput(accumulatedText);
+        if (partialOutput.controls.length <= emittedControlCount) {
+          continue;
+        }
+
+        emittedControlCount = partialOutput.controls.length;
+        const result = normalizedScreenshotResult(request, partialOutput, {
+          provider: geminiProviderID,
+          parserProvider: screenshotProviderID,
+          model,
+          service: config.service,
+          location: config.location,
+          latencyMs: String(Math.round(performance.now() - startedAt)),
+          "screenshotParser.stream": "partial",
+        });
+        yield {
+          type: "partial",
+          provider: geminiProviderID,
+          model,
+          result,
+          metadata: result.metadata,
+        };
+      }
+
+      const output = parseGeminiOutputText(accumulatedText);
+      const result = normalizedScreenshotResult(request, output, {
+        provider: geminiProviderID,
+        parserProvider: screenshotProviderID,
+        model,
+        service: config.service,
+        location: config.location,
+        latencyMs: String(Math.round(performance.now() - startedAt)),
+        "screenshotParser.stream": "final",
+      });
+      yield {
+        type: "final",
+        provider: geminiProviderID,
+        model,
+        result,
+        usage: latestUsage,
         metadata: result.metadata,
       };
     },
@@ -283,7 +339,10 @@ function isDebugOverlayRequest(request: ScreenshotParseRequest) {
 }
 
 function parseGeminiOutput(rawBody: JsonValue) {
-  const text = geminiText(rawBody);
+  return parseGeminiOutputText(geminiText(rawBody));
+}
+
+function parseGeminiOutputText(text: string) {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -311,6 +370,118 @@ function parseGeminiOutput(rawBody: JsonValue) {
   return output.data;
 }
 
+async function streamGeminiContent(
+  client: GeminiClient,
+  request: ScreenshotParseRequest,
+  model: string,
+) {
+  try {
+    return await client.models.generateContentStream(
+      geminiRequestParameters(request, model),
+    );
+  } catch (error) {
+    throw geminiProviderError(error);
+  }
+}
+
+function partialGeminiOutput(text: string): GeminiScreenshotParseOutput {
+  const controls = extractArrayObjectTexts(text, "controls")
+    .map((controlText) => {
+      try {
+        return JSON.parse(controlText) as unknown;
+      } catch {
+        return null;
+      }
+    })
+    .map((control) => geminiScreenshotControlSchema.safeParse(control))
+    .filter((control) => control.success)
+    .map((control) => control.data);
+
+  return {
+    visibleText: [],
+    controls,
+    formFields: [],
+    confidence: controls.reduce(
+      (confidence, control) => Math.max(confidence, control.confidence),
+      0,
+    ),
+  };
+}
+
+function extractArrayObjectTexts(jsonText: string, propertyName: string) {
+  const propertyIndex = jsonText.indexOf(`"${propertyName}"`);
+  if (propertyIndex < 0) {
+    return [];
+  }
+
+  const arrayStart = jsonText.indexOf("[", propertyIndex);
+  if (arrayStart < 0) {
+    return [];
+  }
+
+  const objects: string[] = [];
+  let objectStart = -1;
+  let objectDepth = 0;
+  let arrayDepth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = arrayStart; index < jsonText.length; index += 1) {
+    const character = jsonText[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (character === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (character === "[") {
+      arrayDepth += 1;
+      continue;
+    }
+
+    if (character === "]") {
+      arrayDepth -= 1;
+      if (arrayDepth === 0) {
+        break;
+      }
+      continue;
+    }
+
+    if (arrayDepth !== 1) {
+      continue;
+    }
+
+    if (character === "{") {
+      if (objectDepth === 0) {
+        objectStart = index;
+      }
+      objectDepth += 1;
+      continue;
+    }
+
+    if (character === "}") {
+      objectDepth -= 1;
+      if (objectDepth === 0 && objectStart >= 0) {
+        objects.push(jsonText.slice(objectStart, index + 1));
+        objectStart = -1;
+      }
+    }
+  }
+
+  return objects;
+}
+
 function geminiText(rawBody: JsonValue) {
   if (isJsonObject(rawBody) && typeof rawBody.text === "string") {
     return rawBody.text;
@@ -328,6 +499,16 @@ function geminiText(rawBody: JsonValue) {
     .map((part) => typeof part.text === "string" ? part.text : "")
     .join("")
     .trim();
+}
+
+function geminiResponseText(response: unknown) {
+  const directText = response !== null
+    && typeof response === "object"
+    && "text" in response
+    && typeof response.text === "string"
+    ? response.text
+    : undefined;
+  return directText ?? geminiText(toJsonValue(response));
 }
 
 export function rectFromGeminiBox(

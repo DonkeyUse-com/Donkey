@@ -22,9 +22,11 @@ import {
 } from "@/lib/inference/responses";
 import {
   parseScreenshot,
+  parseScreenshotStream,
   screenshotParseModelForRequest,
 } from "@/lib/inference/screenshot-parsing";
 import { screenshotParseRequestSchema } from "@/lib/inference/screenshot-parsing/schema";
+import type { ScreenshotParseRequest } from "@/lib/inference/screenshot-parsing/schema";
 
 export const dynamic = "force-dynamic";
 
@@ -78,6 +80,15 @@ export const POST = withDonkeyAuth(async (request) => {
     return credits.response;
   }
 
+  if (parsed.data.stream) {
+    return streamScreenshotParseResponse({
+      clientId: client.clientId,
+      model,
+      request: parsed.data,
+      userId: request.donkey.userId,
+    });
+  }
+
   try {
     const result = await parseScreenshot(parsed.data);
     const recordedUsage = await recordInferenceUsage({
@@ -121,3 +132,90 @@ export const POST = withDonkeyAuth(async (request) => {
     throw error;
   }
 });
+
+function streamScreenshotParseResponse(input: {
+  clientId: string;
+  model: string;
+  request: ScreenshotParseRequest;
+  userId: string;
+}) {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for await (const event of parseScreenshotStream(input.request)) {
+          if (event.type === "partial") {
+            controller.enqueue(encoder.encode(serverSentEvent("partial", event.result)));
+            continue;
+          }
+
+          const recordedUsage = await recordInferenceUsage({
+            clientId: input.clientId,
+            metadata: {
+              parserProvider: "gemini-flash",
+              streaming: true,
+            },
+            model: event.model,
+            provider: event.provider,
+            requestKind: "screenshot_parse",
+            route: inferenceUsageRoutes.screenshotParse,
+            status: "succeeded",
+            usage: event.usage,
+            userId: input.userId,
+          });
+          controller.enqueue(
+            encoder.encode(
+              serverSentEvent("final", {
+                ...event.result,
+                metadata: {
+                  ...event.result.metadata,
+                  ...creditUsageHeaders(recordedUsage),
+                },
+              }),
+            ),
+          );
+        }
+      } catch (error) {
+        await recordFailedInferenceUsage({
+          clientId: input.clientId,
+          errorCode: inferenceErrorCode(error),
+          metadata: {
+            parserProvider: "gemini-flash",
+            streaming: true,
+          },
+          model: input.model,
+          provider: "gemini",
+          requestKind: "screenshot_parse",
+          route: inferenceUsageRoutes.screenshotParse,
+          userId: input.userId,
+        });
+        controller.enqueue(
+          encoder.encode(
+            serverSentEvent("error", {
+              error: inferenceErrorCode(error),
+              message: error instanceof Error ? error.message : "Screenshot parsing failed.",
+              details: error instanceof InferenceProviderError ? error.details : null,
+            }),
+          ),
+        );
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Cache-Control": "no-cache, no-transform",
+      "Connection": "keep-alive",
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "X-Accel-Buffering": "no",
+      "X-Donkey-Inference-Model": input.model,
+      "X-Donkey-Inference-Provider": "gemini",
+    },
+  });
+}
+
+function serverSentEvent(event: string, data: unknown) {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}

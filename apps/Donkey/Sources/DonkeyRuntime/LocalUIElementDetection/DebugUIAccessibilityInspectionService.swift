@@ -53,7 +53,7 @@ public struct DebugUIAccessibilityInspectionService: Sendable {
         self.init(
             windowResolver: MacWindowResolver(),
             capturer: ApplicationServicesMacAccessibilitySnapshotCapturer(
-                maximumTraversalNanoseconds: 700_000_000
+                maximumTraversalNanoseconds: 2_000_000_000
             ),
             screenProvider: AppKitDebugUIScreenMetadataProvider(),
             screenCapturer: DebugUIScreenCaptureService(),
@@ -114,6 +114,53 @@ public struct DebugUIAccessibilityInspectionService: Sendable {
         )
     }
 
+    public func inspectProgressively(
+        scope: DebugUIInspectionScreenScope,
+        minConfidence: Double,
+        frontmostOnly: Bool = false,
+        focusedOnly: Bool = false,
+        targetBundleIdentifiers: [String] = [],
+        targetAppNames: [String] = [],
+        onPartialResults: ([DebugUIAccessibilityInspectionResult]) -> Void
+    ) throws -> [DebugUIAccessibilityInspectionResult] {
+        let screens = try screenProvider.screens(scope: scope)
+        guard !screens.isEmpty else {
+            throw DebugUIAccessibilityInspectionError.noScreenAvailable
+        }
+
+        let targets = visibleInspectableTargets(
+            on: screens,
+            frontmostOnly: frontmostOnly,
+            focusedOnly: focusedOnly,
+            targetBundleIdentifiers: targetBundleIdentifiers,
+            targetAppNames: targetAppNames
+        )
+        guard capturer.trustStatus() == .trusted else {
+            throw DebugUIAccessibilityInspectionError.accessibilityNotTrusted
+        }
+        guard !targets.isEmpty else {
+            return []
+        }
+
+        guard let progressiveCapturer = capturer as? any MacAccessibilitySnapshotProgressCapturing else {
+            let results = localElementDetectionResults(
+                screens: screens,
+                targets: targets,
+                minConfidence: minConfidence
+            )
+            onPartialResults(results)
+            return results
+        }
+
+        return progressiveLocalElementDetectionResults(
+            screens: screens,
+            targets: targets,
+            minConfidence: minConfidence,
+            progressiveCapturer: progressiveCapturer,
+            onPartialResults: onPartialResults
+        )
+    }
+
     private func localElementDetectionResults(
         screens: [DebugUIScreenMetadata],
         targets: [MacWindowTargetCandidate],
@@ -124,6 +171,206 @@ public struct DebugUIAccessibilityInspectionService: Sendable {
             targets: targets
         )
 
+        return inspectionResults(
+            screens: screens,
+            candidatesByScreenID: candidatesByScreenID,
+            minConfidence: minConfidence,
+            fingerprintSalt: "final"
+        )
+    }
+
+    private func progressiveLocalElementDetectionResults(
+        screens: [DebugUIScreenMetadata],
+        targets: [MacWindowTargetCandidate],
+        minConfidence: Double,
+        progressiveCapturer: any MacAccessibilitySnapshotProgressCapturing,
+        onPartialResults: ([DebugUIAccessibilityInspectionResult]) -> Void
+    ) -> [DebugUIAccessibilityInspectionResult] {
+        var candidatesByScreenID = Dictionary(
+            uniqueKeysWithValues: screens.map { ($0.screenID, [LocalUIElementCandidate]()) }
+        )
+        let limits = Self.debugOverlayAccessibilityLimits
+        var occludingWindowBounds: [WindowTargetBounds] = []
+        var visibleWindowIndex = 0
+        var pendingCandidateCount = 0
+        var publishSequence = 0
+        var lastPublishUptime = ProcessInfo.processInfo.systemUptime
+
+        func publishPartial(force: Bool, target: MacWindowTargetCandidate) {
+            let now = ProcessInfo.processInfo.systemUptime
+            guard force || pendingCandidateCount >= 8 || now - lastPublishUptime >= 0.045 else {
+                return
+            }
+            pendingCandidateCount = 0
+            lastPublishUptime = now
+            publishSequence += 1
+            let results = inspectionResults(
+                screens: screens,
+                candidatesByScreenID: candidatesByScreenID,
+                minConfidence: minConfidence,
+                fingerprintSalt: "progress-\(publishSequence)"
+            )
+            guard results.contains(where: { !$0.frame.elements.isEmpty }) else {
+                return
+            }
+            onPartialResults(results)
+        }
+
+        for target in targets {
+            var windowBounds = target.bounds
+            var visibleWindowIsRenderable = false
+            var partialControls: [LocalAppDiscoveredControl] = []
+            var partialVisibleText: [String] = []
+            var emittedCandidateIDs = Set<String>()
+
+            let tree = try? progressiveCapturer.captureTree(
+                target: target,
+                limits: limits
+            ) { node in
+                if node.nodeID == "ax-1" {
+                    windowBounds = node.frame ?? target.bounds
+                    visibleWindowIsRenderable = Self.isVisible(
+                        windowBounds,
+                        occludingWindowBounds: occludingWindowBounds
+                    )
+                    if visibleWindowIsRenderable {
+                        for screen in screens where Self.intersects(windowBounds, screen.captureFrame) {
+                            if let candidate = windowCandidate(
+                                target: target,
+                                windowBounds: windowBounds,
+                                screen: screen,
+                                visibleWindowIndex: visibleWindowIndex
+                            ), emittedCandidateIDs.insert(candidate.id).inserted {
+                                candidatesByScreenID[screen.screenID, default: []].append(candidate)
+                                pendingCandidateCount += 1
+                            }
+                        }
+                        publishPartial(force: true, target: target)
+                    }
+                    return
+                }
+
+                if let text = controlDiscovery.visibleText(for: node) {
+                    partialVisibleText.append(text)
+                }
+                if visibleWindowIsRenderable,
+                   let candidate = broadAccessibilityCandidate(
+                       for: node,
+                       target: target,
+                       windowBounds: windowBounds,
+                       screens: screens,
+                       occludingWindowBounds: occludingWindowBounds
+                   ),
+                   emittedCandidateIDs.insert(candidate.candidate.id).inserted {
+                    candidatesByScreenID[candidate.screenID, default: []].append(candidate.candidate)
+                    pendingCandidateCount += 1
+                    publishPartial(force: false, target: target)
+                }
+
+                guard visibleWindowIsRenderable,
+                      let control = controlDiscovery.control(for: node)
+                else {
+                    return
+                }
+                partialControls.append(control)
+
+                guard let candidate = accessibilityCandidate(
+                    for: control,
+                    target: target,
+                    windowBounds: windowBounds,
+                    screens: screens,
+                    occludingWindowBounds: occludingWindowBounds
+                ), emittedCandidateIDs.insert(candidate.candidate.id).inserted
+                else {
+                    return
+                }
+
+                candidatesByScreenID[candidate.screenID, default: []].append(candidate.candidate)
+                pendingCandidateCount += 1
+                publishPartial(force: false, target: target)
+            }
+
+            guard let tree else {
+                occludingWindowBounds.append(target.bounds)
+                continue
+            }
+
+            let snapshot = MacAccessibilitySnapshot(
+                target: target,
+                limits: limits,
+                root: tree.root,
+                totalNodeCount: tree.totalNodeCount,
+                isTreeTruncated: tree.isTreeTruncated
+            )
+            let finalWindowBounds = snapshot.root.frame ?? target.bounds
+            defer { occludingWindowBounds.append(finalWindowBounds) }
+
+            removeCandidates(for: target, from: &candidatesByScreenID)
+            guard Self.isVisible(finalWindowBounds, occludingWindowBounds: occludingWindowBounds) else {
+                continue
+            }
+
+            for screen in screens where Self.intersects(finalWindowBounds, screen.captureFrame) {
+                if let candidate = windowCandidate(
+                    target: target,
+                    windowBounds: finalWindowBounds,
+                    screen: screen,
+                    visibleWindowIndex: visibleWindowIndex
+                ) {
+                    candidatesByScreenID[screen.screenID, default: []].append(candidate)
+                }
+            }
+            visibleWindowIndex += 1
+
+            let controlIndex = controlDiscovery.discover(in: snapshot)
+            let controls = controlIndex.controls
+            Self.logDiscoverySummary(
+                target: target,
+                snapshot: snapshot,
+                controls: controls,
+                visibleText: controlIndex.visibleText.isEmpty
+                    ? partialVisibleText.joined(separator: " ")
+                    : controlIndex.visibleText
+            )
+            for control in controls {
+                guard let candidate = accessibilityCandidate(
+                    for: control,
+                    target: target,
+                    windowBounds: finalWindowBounds,
+                    screens: screens,
+                    occludingWindowBounds: occludingWindowBounds
+                ) else {
+                    continue
+                }
+                candidatesByScreenID[candidate.screenID, default: []].append(candidate.candidate)
+            }
+            for candidate in broadAccessibilityCandidates(
+                root: snapshot.root,
+                target: target,
+                windowBounds: finalWindowBounds,
+                screens: screens,
+                occludingWindowBounds: occludingWindowBounds
+            ) {
+                candidatesByScreenID[candidate.screenID, default: []].append(candidate.candidate)
+            }
+            pendingCandidateCount = 1
+            publishPartial(force: true, target: target)
+        }
+
+        return inspectionResults(
+            screens: screens,
+            candidatesByScreenID: candidatesByScreenID,
+            minConfidence: minConfidence,
+            fingerprintSalt: "final"
+        )
+    }
+
+    private func inspectionResults(
+        screens: [DebugUIScreenMetadata],
+        candidatesByScreenID: [UInt32: [LocalUIElementCandidate]],
+        minConfidence: Double,
+        fingerprintSalt: String
+    ) -> [DebugUIAccessibilityInspectionResult] {
         return screens.map { screen in
             let fallbackSnapshot = DebugUIScreenCaptureSnapshot(
                 screenID: screen.screenID,
@@ -145,34 +392,33 @@ public struct DebugUIAccessibilityInspectionService: Sendable {
                 from: screen.captureFrame,
                 to: snapshot.pixelSize
             )
-            let targetWindowBounds = Self.targetWindowBounds(in: accessibilityCandidates)
-            let trace = elementDetectionService.detect(
-                LocalUIElementDetectionRequest(
-                    traceID: "debug-ui-local-\(screen.screenID)-\(snapshot.fingerprint)",
-                    screenshotPNGData: nil,
-                    pixelSize: snapshot.pixelSize,
-                    accessibilityCandidates: accessibilityCandidates,
-                    minConfidence: minConfidence,
-                    metadata: [
-                        "screen.id": String(screen.screenID),
-                        "screen.scope": screens.count > 1 ? "all" : "main",
-                        "donkeyVision.local": "accessibility"
-                    ]
-                )
+            let frame = DebugUIInspectionFrame(
+                elements: accessibilityCandidates
+                    .filter { $0.bounds.hasPositiveArea }
+                    .map(Self.debugElementFromUnfilteredAccessibilityCandidate)
+                    .sorted(by: Self.elementSort)
             )
-            let frame = elementDetectionService.debugInspectionFrame(
-                from: trace.clippedToTargetWindows(targetWindowBounds)
-            )
-                .validated(minConfidence: minConfidence)
             let fingerprint = Self.fingerprint(for: screen, elements: frame.elements)
             let outputSnapshot = DebugUIScreenCaptureSnapshot(
                 screenID: snapshot.screenID,
                 screenFrame: snapshot.screenFrame,
                 pixelSize: snapshot.pixelSize,
                 pngData: snapshot.pngData,
-                fingerprint: "\(snapshot.fingerprint)-\(fingerprint)"
+                fingerprint: "\(snapshot.fingerprint)-\(fingerprint)-\(fingerprintSalt)"
             )
             return DebugUIAccessibilityInspectionResult(snapshot: outputSnapshot, frame: frame)
+        }
+    }
+
+    private func removeCandidates(
+        for target: MacWindowTargetCandidate,
+        from candidatesByScreenID: inout [UInt32: [LocalUIElementCandidate]]
+    ) {
+        let windowID = String(target.windowID)
+        for screenID in candidatesByScreenID.keys {
+            candidatesByScreenID[screenID]?.removeAll { candidate in
+                candidate.metadata["target.windowID"] == windowID
+            }
         }
     }
 
@@ -183,12 +429,7 @@ public struct DebugUIAccessibilityInspectionService: Sendable {
         var candidatesByScreenID = Dictionary(
             uniqueKeysWithValues: screens.map { ($0.screenID, [LocalUIElementCandidate]()) }
         )
-        let limits = MacAccessibilitySnapshotLimits(
-            maxDepth: 6,
-            maxChildrenPerNode: 90,
-            maxTotalNodes: 1_200,
-            maxTextLength: 120
-        )
+        let limits = Self.debugOverlayAccessibilityLimits
         var occludingWindowBounds: [WindowTargetBounds] = []
         var visibleWindowIndex = 0
 
@@ -243,6 +484,15 @@ public struct DebugUIAccessibilityInspectionService: Sendable {
                 }
                 candidatesByScreenID[candidate.screenID, default: []].append(candidate.candidate)
             }
+            for candidate in broadAccessibilityCandidates(
+                root: snapshot.root,
+                target: target,
+                windowBounds: windowBounds,
+                screens: screens,
+                occludingWindowBounds: occludingWindowBounds
+            ) {
+                candidatesByScreenID[candidate.screenID, default: []].append(candidate.candidate)
+            }
         }
 
         return candidatesByScreenID
@@ -287,24 +537,6 @@ public struct DebugUIAccessibilityInspectionService: Sendable {
             .merging(Self.boundsMetadata(prefix: "target.bounds.", bounds: target.bounds)) { current, _ in current }
             .merging(Self.boundsMetadata(prefix: "debugOverlay.localBounds.", bounds: Self.localBounds(for: windowBounds, in: target.bounds))) { current, _ in current }
         )
-    }
-
-    private static func targetWindowBounds(
-        in candidates: [LocalUIElementCandidate]
-    ) -> [WindowTargetBounds] {
-        candidates.compactMap { candidate in
-            guard candidate.source == .accessibility,
-                  candidate.typeHint == .draggable
-            else {
-                return nil
-            }
-            return WindowTargetBounds(
-                x: candidate.bounds.origin.x,
-                y: candidate.bounds.origin.y,
-                width: candidate.bounds.size.width,
-                height: candidate.bounds.size.height
-            )
-        }
     }
 
     private static func scaleCandidates(
@@ -359,12 +591,7 @@ public struct DebugUIAccessibilityInspectionService: Sendable {
         var elementsByScreenID = Dictionary(
             uniqueKeysWithValues: screens.map { ($0.screenID, [DebugUIElement]()) }
         )
-        let limits = MacAccessibilitySnapshotLimits(
-            maxDepth: 6,
-            maxChildrenPerNode: 90,
-            maxTotalNodes: 600,
-            maxTextLength: 120
-        )
+        let limits = Self.debugOverlayAccessibilityLimits
         var occludingWindowBounds: [WindowTargetBounds] = []
 
         for target in targets {
@@ -624,9 +851,68 @@ public struct DebugUIAccessibilityInspectionService: Sendable {
         case .listItem:
             return .listItem
         case .group:
-            return control.actions.contains("AXPress") ? .button : nil
+            return control.actions.contains("AXPress") ? .button : .listItem
         case .unknown:
             return nil
+        }
+    }
+
+    private static func broadElementType(forRole role: String) -> DebugUIElementType? {
+        switch role {
+        case "AXRow", "AXOutlineRow", "AXCell", "AXGroup", "AXImage", "AXStaticText":
+            return .listItem
+        case "AXButton", "AXMenuButton":
+            return .button
+        case "AXLink":
+            return .link
+        case "AXMenuItem":
+            return .menuItem
+        case "AXSearchField", "AXTextField", "AXTextArea", "AXComboBox":
+            return .input
+        case "AXCheckBox", "AXRadioButton":
+            return .checkbox
+        default:
+            return .other
+        }
+    }
+
+    private static func broadLabel(
+        for node: MacAccessibilitySnapshotNode,
+        role: String
+    ) -> String? {
+        if let label = [node.label, node.title, node.valueSummary]
+            .compactMap({ $0?.trimmingCharacters(in: .whitespacesAndNewlines) })
+            .first(where: { !$0.isEmpty }) {
+            return label
+        }
+
+        var labels: [String] = []
+        collectLabels(node, labels: &labels)
+        let descendantLabel = labels
+            .prefix(8)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !descendantLabel.isEmpty {
+            return descendantLabel
+        }
+
+        if role == "AXImage" {
+            return "image"
+        }
+        return "\(role) \(node.nodeID)"
+    }
+
+    private static func collectLabels(
+        _ node: MacAccessibilitySnapshotNode,
+        labels: inout [String]
+    ) {
+        for child in node.children {
+            if let label = [child.label, child.title, child.valueSummary]
+                .compactMap({ $0?.trimmingCharacters(in: .whitespacesAndNewlines) })
+                .first(where: { !$0.isEmpty }) {
+                labels.append(label)
+            }
+            collectLabels(child, labels: &labels)
         }
     }
 
@@ -699,6 +985,158 @@ public struct DebugUIAccessibilityInspectionService: Sendable {
         )
     }
 
+    private func broadAccessibilityCandidates(
+        root: MacAccessibilitySnapshotNode,
+        target: MacWindowTargetCandidate,
+        windowBounds: WindowTargetBounds,
+        screens: [DebugUIScreenMetadata],
+        occludingWindowBounds: [WindowTargetBounds]
+    ) -> [(screenID: UInt32, candidate: LocalUIElementCandidate)] {
+        var candidates: [(screenID: UInt32, candidate: LocalUIElementCandidate)] = []
+        collectBroadAccessibilityCandidates(
+            node: root,
+            target: target,
+            windowBounds: windowBounds,
+            screens: screens,
+            occludingWindowBounds: occludingWindowBounds,
+            candidates: &candidates
+        )
+        return candidates
+    }
+
+    private func collectBroadAccessibilityCandidates(
+        node: MacAccessibilitySnapshotNode,
+        target: MacWindowTargetCandidate,
+        windowBounds: WindowTargetBounds,
+        screens: [DebugUIScreenMetadata],
+        occludingWindowBounds: [WindowTargetBounds],
+        candidates: inout [(screenID: UInt32, candidate: LocalUIElementCandidate)]
+    ) {
+        if let candidate = broadAccessibilityCandidate(
+            for: node,
+            target: target,
+            windowBounds: windowBounds,
+            screens: screens,
+            occludingWindowBounds: occludingWindowBounds
+        ) {
+            candidates.append(candidate)
+        }
+
+        for child in node.children {
+            collectBroadAccessibilityCandidates(
+                node: child,
+                target: target,
+                windowBounds: windowBounds,
+                screens: screens,
+                occludingWindowBounds: occludingWindowBounds,
+                candidates: &candidates
+            )
+        }
+    }
+
+    private func broadAccessibilityCandidate(
+        for node: MacAccessibilitySnapshotNode,
+        target: MacWindowTargetCandidate,
+        windowBounds: WindowTargetBounds,
+        screens: [DebugUIScreenMetadata],
+        occludingWindowBounds: [WindowTargetBounds]
+    ) -> (screenID: UInt32, candidate: LocalUIElementCandidate)? {
+        guard node.nodeID != "ax-1",
+              let rawBounds = node.frame
+        else {
+            return nil
+        }
+        let role = node.role ?? "AXUnknown"
+        let type = Self.broadElementType(forRole: role) ?? .other
+        let label = Self.broadLabel(for: node, role: role) ?? "\(role) \(node.nodeID)"
+
+        guard let bounds = DebugUIAccessibilityGeometry.normalizedBounds(
+            for: rawBounds,
+            targetBounds: windowBounds,
+            rootBounds: windowBounds
+        ),
+            let screen = screens.first(where: { Self.intersects(bounds, $0.captureFrame) }),
+              let bbox = DebugUIAccessibilityGeometry.boundingBox(
+                for: bounds,
+                screenFrame: screen.captureFrame
+              )
+        else {
+            return nil
+        }
+
+        return (
+            screen.screenID,
+            LocalUIElementCandidate(
+                id: "ax-node-\(target.windowID)-\(node.nodeID)",
+                source: .accessibility,
+                signalKind: role == "AXStaticText" ? .text : .accessibilityRole,
+                typeHint: type,
+                label: label,
+                role: role,
+                bounds: HotLoopRect(
+                    x: bbox.x,
+                    y: bbox.y,
+                    width: bbox.width,
+                    height: bbox.height,
+                    space: .screen
+                ),
+                confidence: role == "AXStaticText" ? 0.82 : 0.9,
+                actions: node.actions,
+                metadata: [
+                    "target.windowID": String(target.windowID),
+                    "target.appName": target.appName ?? "",
+                    "target.title": target.title ?? "",
+                    "accessibility.nodeID": node.nodeID,
+                    "accessibility.role": role,
+                    "accessibility.actions": node.actions.joined(separator: ","),
+                    "classification.reason": "accessibilityBroadNodeEvidence"
+                ]
+                .merging(Self.boundsMetadata(prefix: "target.bounds.", bounds: target.bounds)) { current, _ in current }
+                .merging(Self.boundsMetadata(prefix: "debugOverlay.localBounds.", bounds: Self.localBounds(for: bounds, in: target.bounds))) { current, _ in current }
+            )
+        )
+    }
+
+    private static func debugElementFromUnfilteredAccessibilityCandidate(
+        _ candidate: LocalUIElementCandidate
+    ) -> DebugUIElement {
+        let type = candidate.typeHint ?? .other
+        let label = candidate.label?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackLabel = [
+            candidate.role,
+            candidate.metadata["accessibility.role"],
+            candidate.id
+        ]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty } ?? type.rawValue
+        return DebugUIElement(
+            id: candidate.id,
+            type: type,
+            label: label?.isEmpty == false ? label! : fallbackLabel,
+            description: [
+                candidate.source.rawValue,
+                candidate.signalKind.rawValue,
+                candidate.role ?? ""
+            ].filter { !$0.isEmpty }.joined(separator: " "),
+            bbox: DebugUIBoundingBox(
+                x: candidate.bounds.origin.x,
+                y: candidate.bounds.origin.y,
+                width: candidate.bounds.size.width,
+                height: candidate.bounds.size.height
+            ),
+            confidence: candidate.confidence,
+            visualStyle: DebugUIOverlayStyle.style(for: type),
+            metadata: candidate.metadata.merging([
+                "debugOverlay.unfilteredAccessibility": "true",
+                "localUIElement.sources": candidate.source.rawValue,
+                "localUIElement.reasonCodes": [
+                    "\(candidate.source.rawValue).\(candidate.signalKind.rawValue)",
+                    "debugUnfilteredAX"
+                ].joined(separator: ",")
+            ]) { current, _ in current }
+        )
+    }
+
     private static func isWindowControl(_ control: LocalAppDiscoveredControl) -> Bool {
         let label = control.label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return ["close", "minimize", "zoom", "fullscreen", "full screen"].contains(label)
@@ -754,9 +1192,10 @@ public struct DebugUIAccessibilityInspectionService: Sendable {
         controls: [LocalAppDiscoveredControl],
         visibleText: String
     ) {
-        DebugUIAccessibilityInspectionLog.overlay.info(
-            "debug inspection ax-discovery windowID=\(target.windowID, privacy: .public) app=\(target.appName ?? "", privacy: .public) targetBounds=\(Self.describe(target.bounds), privacy: .public) rootFrame=\(Self.describe(snapshot.root.frame), privacy: .public) nodeCount=\(snapshot.totalNodeCount, privacy: .public) truncated=\(String(snapshot.isTreeTruncated), privacy: .public) controls=\(controls.count, privacy: .public) visibleTextChars=\(visibleText.count, privacy: .public) kinds=\(Self.controlKindSummary(controls), privacy: .public) roles=\(Self.roleSummary(snapshot.root), privacy: .public)"
-        )
+        _ = target
+        _ = snapshot
+        _ = controls
+        _ = visibleText
     }
 
     private static func controlKindSummary(_ controls: [LocalAppDiscoveredControl]) -> String {
@@ -834,6 +1273,13 @@ public struct DebugUIAccessibilityInspectionService: Sendable {
     private static func windowFrameStyle(at index: Int) -> DebugUIOverlayStyle {
         windowFrameStyles[index % windowFrameStyles.count]
     }
+
+    private static let debugOverlayAccessibilityLimits = MacAccessibilitySnapshotLimits(
+        maxDepth: 32,
+        maxChildrenPerNode: 10_000,
+        maxTotalNodes: 50_000,
+        maxTextLength: 300
+    )
 
     private static let windowFrameStyles: [DebugUIOverlayStyle] = [
         DebugUIOverlayStyle(overlayColor: "#EF4444", borderColor: "#F87171", labelColor: "#FFFFFF"),

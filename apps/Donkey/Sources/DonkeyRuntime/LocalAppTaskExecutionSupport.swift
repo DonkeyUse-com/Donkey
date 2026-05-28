@@ -61,6 +61,22 @@ public protocol LocalAppTaskAppControlling: Sendable {
 
     @MainActor
     func observe(definition: LocalAppTaskDefinition) async -> LocalAppTaskObservation
+
+    @MainActor
+    func observe(
+        definition: LocalAppTaskDefinition,
+        onPartialObservation: @escaping @Sendable (LocalAppTaskObservation) async -> Void
+    ) async -> LocalAppTaskObservation
+}
+
+public extension LocalAppTaskAppControlling {
+    @MainActor
+    func observe(
+        definition: LocalAppTaskDefinition,
+        onPartialObservation: @escaping @Sendable (LocalAppTaskObservation) async -> Void
+    ) async -> LocalAppTaskObservation {
+        await observe(definition: definition)
+    }
 }
 
 public enum LocalAppTaskActionEngines {
@@ -178,6 +194,14 @@ public struct MacLocalAppTaskController: LocalAppTaskAppControlling {
 
     @MainActor
     public func observe(definition: LocalAppTaskDefinition) async -> LocalAppTaskObservation {
+        await observe(definition: definition, onPartialObservation: { _ in })
+    }
+
+    @MainActor
+    public func observe(
+        definition: LocalAppTaskDefinition,
+        onPartialObservation: @escaping @Sendable (LocalAppTaskObservation) async -> Void
+    ) async -> LocalAppTaskObservation {
         let runningApplication = runningApplication(for: definition.targetApp)
         let isFocused = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == definition.targetApp.bundleIdentifier
         let verificationKey = definition.metadata["verificationTextKey"]
@@ -258,7 +282,9 @@ public struct MacLocalAppTaskController: LocalAppTaskAppControlling {
             definition: definition,
             runningApplication: runningApplication,
             isFocused: isFocused,
-            verificationKey: verificationKey
+            verificationKey: verificationKey,
+            accessibilityObservation: accessibilityObservation,
+            onPartialObservation: onPartialObservation
         ) else {
             var metadata = accessibilityObservation.metadata
             metadata["screenshotUnderstanding.status"] = "unavailable"
@@ -304,7 +330,9 @@ public struct MacLocalAppTaskController: LocalAppTaskAppControlling {
         definition: LocalAppTaskDefinition,
         runningApplication: NSRunningApplication?,
         isFocused: Bool,
-        verificationKey: String
+        verificationKey: String,
+        accessibilityObservation: LocalAppTaskObservation,
+        onPartialObservation: @escaping @Sendable (LocalAppTaskObservation) async -> Void
     ) async -> LocalAppTaskObservation? {
         guard runningApplication != nil,
               let target = try? MacWindowResolver().selectTarget(),
@@ -362,10 +390,45 @@ public struct MacLocalAppTaskController: LocalAppTaskAppControlling {
         )
 
         do {
-            return try await uiUnderstandingRunner.understand(request).observation(for: request)
+            var finalObservation: LocalAppTaskObservation?
+            for try await event in uiUnderstandingRunner.understandStream(request) {
+                switch event {
+                case .partial(let result):
+                    await onPartialObservation(
+                        Self.fusedObservation(
+                            accessibilityObservation: accessibilityObservation,
+                            screenshotObservation: result.observation(for: request)
+                        )
+                    )
+                case .final(let result):
+                    finalObservation = result.observation(for: request)
+                }
+            }
+            return finalObservation
         } catch {
             return nil
         }
+    }
+
+    private static func fusedObservation(
+        accessibilityObservation: LocalAppTaskObservation,
+        screenshotObservation: LocalAppTaskObservation
+    ) -> LocalAppTaskObservation {
+        let controls = accessibilityObservation.availableControls.merging(
+            screenshotObservation.availableControls
+        ) { current, new in current || new }
+        return LocalAppTaskObservation(
+            appIsRunning: accessibilityObservation.appIsRunning || screenshotObservation.appIsRunning,
+            appIsFocused: accessibilityObservation.appIsFocused || screenshotObservation.appIsFocused,
+            availableControls: controls,
+            visibleText: accessibilityObservation.visibleText.merging(
+                screenshotObservation.visibleText
+            ) { current, _ in current },
+            confidence: max(accessibilityObservation.confidence, screenshotObservation.confidence),
+            metadata: accessibilityObservation.metadata.merging(
+                screenshotObservation.metadata
+            ) { current, _ in current }
+        )
     }
 
     @MainActor

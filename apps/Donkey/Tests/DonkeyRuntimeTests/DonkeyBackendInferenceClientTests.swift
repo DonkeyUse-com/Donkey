@@ -147,12 +147,89 @@ struct DonkeyBackendInferenceClientTests {
         #expect(object["contentType"] as? String == "image/png")
         #expect(object["traceID"] as? String == "trace-1")
         #expect(object["targetID"] as? String == "target-1")
+        #expect(object["stream"] as? Bool == false)
         let pixelSize = try #require(object["pixelSize"] as? [String: Any])
         #expect(pixelSize["width"] as? Double == 200)
         #expect(pixelSize["height"] as? Double == 100)
         let metadata = try #require(object["metadata"] as? [String: Any])
         #expect(metadata["screenshot.scope"] as? String == "targetWindow")
         #expect(metadata["screenshot.desktopCaptureAllowed"] as? String == "false")
+    }
+
+    @Test
+    @MainActor
+    func parseScreenshotStreamUsesSSEAndEmitsPartialBeforeFinal() async throws {
+        let partial = LocalUIUnderstandingResult(
+            controls: [
+                LocalUIUnderstandingControl(
+                    id: "partial-play",
+                    label: "Play",
+                    kind: .button,
+                    frame: HotLoopRect(x: 10, y: 20, width: 80, height: 40, space: .window),
+                    confidence: 0.7
+                )
+            ],
+            confidence: 0.7,
+            metadata: ["screenshotParser.stream": "partial"]
+        )
+        let final = LocalUIUnderstandingResult(
+            controls: [
+                LocalUIUnderstandingControl(
+                    id: "partial-play",
+                    label: "Play",
+                    kind: .button,
+                    frame: HotLoopRect(x: 10, y: 20, width: 80, height: 40, space: .window),
+                    confidence: 0.7
+                ),
+                LocalUIUnderstandingControl(
+                    id: "final-shuffle",
+                    label: "Shuffle",
+                    kind: .button,
+                    frame: HotLoopRect(x: 100, y: 20, width: 90, height: 40, space: .window),
+                    confidence: 0.8
+                )
+            ],
+            confidence: 0.8,
+            metadata: ["screenshotParser.stream": "final"]
+        )
+        let encoder = JSONEncoder()
+        let responseText = [
+            "event: partial",
+            "data: \(String(data: try encoder.encode(partial), encoding: .utf8)!)",
+            "",
+            "event: final",
+            "data: \(String(data: try encoder.encode(final), encoding: .utf8)!)",
+            "",
+        ].joined(separator: "\n")
+        let httpClient = FixtureHTTPClient(
+            data: Data(responseText.utf8),
+            statusCode: 200,
+            headerFields: ["Content-Type": "text/event-stream"]
+        )
+        let client = DonkeyBackendInferenceClient(
+            configuration: configuration(),
+            httpClient: httpClient
+        )
+
+        var partials: [LocalUIUnderstandingResult] = []
+        let result = try await client.parseScreenshotStream(
+            LocalUIUnderstandingRequest(
+                traceID: "trace-stream",
+                targetID: "target-stream",
+                pixelSize: HotLoopSize(width: 200, height: 100, space: .window)
+            ),
+            imageData: Data("png".utf8)
+        ) { partial in
+            partials.append(partial)
+        }
+
+        #expect(partials.map(\.controls.count) == [1])
+        #expect(partials.first?.controls.first?.id == "partial-play")
+        #expect(result.controls.map(\.id) == ["partial-play", "final-shuffle"])
+        let request = try #require(httpClient.requests.first)
+        #expect(request.value(forHTTPHeaderField: "Accept") == "text/event-stream")
+        let object = try #require(request.httpBodyJSONObject)
+        #expect(object["stream"] as? Bool == true)
     }
 
     @Test
@@ -439,6 +516,97 @@ struct DonkeyBackendInferenceClientTests {
         #expect(first.controls.first?.id == "remote-button")
         #expect(second.metadata["remoteScreenshotParsing.status"] == "throttled")
         #expect(httpClient.requests.count == 1)
+    }
+
+    @Test
+    func remoteFallbackStreamsPartialAndFinalScreenshotEvidence() async throws {
+        let imageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("donkey-remote-screenshot-stream-\(UUID().uuidString).png")
+        try Data("stream-image".utf8).write(to: imageURL)
+        defer {
+            try? FileManager.default.removeItem(at: imageURL)
+        }
+
+        let partial = LocalUIUnderstandingResult(
+            controls: [
+                LocalUIUnderstandingControl(
+                    id: "partial-row",
+                    label: "Partial Row",
+                    kind: .listItem,
+                    confidence: 0.62
+                )
+            ],
+            confidence: 0.62,
+            metadata: ["screenshotParser.stream": "partial"]
+        )
+        let final = LocalUIUnderstandingResult(
+            controls: [
+                LocalUIUnderstandingControl(
+                    id: "partial-row",
+                    label: "Partial Row",
+                    kind: .listItem,
+                    confidence: 0.62
+                ),
+                LocalUIUnderstandingControl(
+                    id: "final-play",
+                    label: "Play",
+                    kind: .button,
+                    confidence: 0.91
+                )
+            ],
+            confidence: 0.91,
+            metadata: ["screenshotParser.stream": "final"]
+        )
+        let encoder = JSONEncoder()
+        let responseText = [
+            "event: partial",
+            "data: \(String(data: try encoder.encode(partial), encoding: .utf8)!)",
+            "",
+            "event: final",
+            "data: \(String(data: try encoder.encode(final), encoding: .utf8)!)",
+            "",
+        ].joined(separator: "\n")
+        let httpClient = FixtureHTTPClient(
+            data: Data(responseText.utf8),
+            statusCode: 200,
+            headerFields: ["Content-Type": "text/event-stream"]
+        )
+        let adapter = RemoteFallbackLocalUIUnderstandingAdapter(
+            primary: StaticUIUnderstandingRunner(result: LocalUIUnderstandingResult(confidence: 0.1)),
+            remote: RemoteScreenshotParsingLocalUIUnderstandingAdapter(
+                client: DonkeyBackendInferenceClient(
+                    configuration: configuration(),
+                    httpClient: httpClient
+                )
+            ),
+            throttle: RemoteScreenshotParsingThrottle(minimumInterval: 60)
+        )
+
+        let stream = adapter.understandStream(
+            LocalUIUnderstandingRequest(
+                traceID: "trace-stream-fallback",
+                targetID: "target-stream-fallback",
+                imageFileURL: imageURL,
+                pixelSize: HotLoopSize(width: 100, height: 100, space: .window)
+            )
+        )
+        var eventSummaries: [String] = []
+        for try await event in stream {
+            switch event {
+            case .partial(let result):
+                eventSummaries.append("partial:\(result.controls.map(\.id).joined(separator: ",")):\(result.metadata["remoteScreenshotParsing.status"] ?? "")")
+            case .final(let result):
+                eventSummaries.append("final:\(result.controls.map(\.id).joined(separator: ",")):\(result.metadata["remoteScreenshotParsing.status"] ?? "")")
+            }
+        }
+
+        #expect(eventSummaries == [
+            "partial:partial-row:streaming",
+            "final:partial-row,final-play:used",
+        ])
+        let request = try #require(httpClient.requests.first)
+        let object = try #require(request.httpBodyJSONObject)
+        #expect(object["stream"] as? Bool == true)
     }
 
     @Test

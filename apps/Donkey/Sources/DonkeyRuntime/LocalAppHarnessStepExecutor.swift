@@ -235,7 +235,7 @@ public actor LocalAppHarnessStepExecutor {
             traceID: traceID,
             metadata: ["reason": reason]
         )
-        let observation = await appController.observe(definition: definition)
+        let observation = await observeAppState(definition: definition, intent: intent, reason: reason)
         latestObservation = observation
         initialActionPlan = initialActionPlan ?? LocalAppTaskAdapter(definition: definition)
             .evidenceBackedActionPlan(for: intent, observation: observation)
@@ -247,6 +247,45 @@ public actor LocalAppHarnessStepExecutor {
             summary: "Observed local app state.",
             status: .succeeded,
             extraFacts: ["localApp.lastStep": context.call.name]
+        )
+    }
+
+    private func observeAppState(
+        definition: LocalAppTaskDefinition,
+        intent: TaskIntent,
+        reason: String
+    ) async -> LocalAppTaskObservation {
+        await appController.observe(definition: definition) { partialObservation in
+            await self.recordPartialObservation(
+                partialObservation,
+                definition: definition,
+                intent: intent,
+                reason: reason
+            )
+        }
+    }
+
+    private func recordPartialObservation(
+        _ observation: LocalAppTaskObservation,
+        definition: LocalAppTaskDefinition,
+        intent: TaskIntent,
+        reason: String
+    ) async {
+        latestObservation = observationWithActionEvidence(observation)
+        initialActionPlan = initialActionPlan ?? LocalAppTaskAdapter(definition: definition)
+            .evidenceBackedActionPlan(for: intent, observation: latestObservation)
+        await coordinator?.recordToolEvent(
+            capability: .perception,
+            decision: permissionPolicy.decision(for: .perception),
+            toolName: "local-app-observation",
+            summary: "Observed partial streaming UI evidence",
+            traceID: traceID,
+            metadata: [
+                "reason": reason,
+                "stream": "partial",
+                "controlCount": observation.metadata["controlCount"] ?? "",
+                "source": observation.metadata["runtime.backend"] ?? observation.metadata["observer"] ?? ""
+            ]
         )
     }
 
@@ -332,7 +371,7 @@ public actor LocalAppHarnessStepExecutor {
         } else {
             latestStatus = .failedSafe
             latestStatusReason = "actionDenied"
-            let observation = await appController.observe(definition: definition)
+            let observation = await observeAppState(definition: definition, intent: intent, reason: "actionDenied")
             latestObservation = observationWithActionEvidence(observation)
             return HarnessToolResult(
                 callID: context.call.id,
@@ -357,7 +396,7 @@ public actor LocalAppHarnessStepExecutor {
         }
 
         try? await Task.sleep(nanoseconds: 200_000_000)
-        let observation = await appController.observe(definition: definition)
+        let observation = await observeAppState(definition: definition, intent: intent, reason: "postAction")
         latestObservation = observationWithActionEvidence(observation)
         latestStatus = .needsUserReview
         latestStatusReason = "actionExecutedAwaitingVerification"
@@ -422,7 +461,7 @@ public actor LocalAppHarnessStepExecutor {
         }
 
         try? await Task.sleep(nanoseconds: 700_000_000)
-        let observation = await appController.observe(definition: definition)
+        let observation = await observeAppState(definition: definition, intent: intent, reason: "appleScriptCompleted")
         latestObservation = observationWithActionEvidence(observation)
         latestStatus = .completed
         latestStatusReason = "appleScriptAutomationCompleted"
@@ -464,7 +503,7 @@ public actor LocalAppHarnessStepExecutor {
             traceID: traceID,
             metadata: ["modelToolName": context.call.name]
         )
-        let observation = await appController.observe(definition: definition)
+        let observation = await observeAppState(definition: definition, intent: intent, reason: "verify")
         latestObservation = observationWithActionEvidence(observation)
         let plan = LocalAppTaskAdapter(definition: definition)
             .evidenceBackedActionPlan(for: intent, observation: latestObservation)

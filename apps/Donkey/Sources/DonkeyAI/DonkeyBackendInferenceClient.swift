@@ -133,32 +133,104 @@ public struct DonkeyBackendInferenceClient: @unchecked Sendable {
         imageData: Data? = nil,
         contentType: String = "image/png"
     ) async throws -> LocalUIUnderstandingResult {
-        guard let imageData = try imageData ?? understandingRequest.imageFileURL.map({ try Data(contentsOf: $0) }) else {
-            throw DonkeyBackendInferenceClientError.missingDownloadPayload("screenshot")
-        }
-
-        var request = makeRequest(path: "/api/inference/screenshots/parse/")
-        request.httpMethod = "POST"
-        var metadata = understandingRequest.metadata
-        metadata["screenshot.scope"] = metadata["screenshot.scope"] ?? "targetWindow"
-        metadata["screenshot.desktopCaptureAllowed"] = "false"
-        request.httpBody = try JSONEncoder().encode(
-            RemoteScreenshotParseRequest(
-                imageBase64: imageData.base64EncodedString(),
-                contentType: contentType,
-                pixelSize: understandingRequest.pixelSize ?? HotLoopSize(
-                    width: 1,
-                    height: 1,
-                    space: .window
-                ),
-                traceID: understandingRequest.traceID,
-                targetID: understandingRequest.targetID,
-                cropBounds: understandingRequest.cropBounds,
-                metadata: metadata
-            )
+        let request = try makeScreenshotParseRequest(
+            understandingRequest,
+            imageData: imageData,
+            contentType: contentType,
+            stream: false
         )
         let data = try await send(request)
         return try JSONDecoder().decode(LocalUIUnderstandingResult.self, from: data)
+    }
+
+    public func parseScreenshotStream(
+        _ understandingRequest: LocalUIUnderstandingRequest,
+        imageData: Data? = nil,
+        contentType: String = "image/png",
+        onPartialResult: @escaping @MainActor @Sendable (LocalUIUnderstandingResult) -> Void
+    ) async throws -> LocalUIUnderstandingResult {
+        var request = try makeScreenshotParseRequest(
+            understandingRequest,
+            imageData: imageData,
+            contentType: contentType,
+            stream: true
+        )
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+
+        let (lines, response) = try await httpClient.streamLines(request)
+        var responseBodyLines: [String] = []
+        guard (200..<300).contains(response.statusCode) else {
+            for try await line in lines {
+                responseBodyLines.append(line)
+            }
+            throw DonkeyBackendInferenceClientError.httpStatus(
+                response.statusCode,
+                responseBodyLines.joined(separator: "\n")
+            )
+        }
+
+        let decoder = JSONDecoder()
+        var finalResult: LocalUIUnderstandingResult?
+        var eventName: String?
+        var eventID: String?
+        var dataLines: [String] = []
+
+        func flushEvent() async throws {
+            guard !dataLines.isEmpty else {
+                eventName = nil
+                eventID = nil
+                return
+            }
+
+            let event = RemoteInferenceServerSentEvent(
+                event: eventName,
+                data: dataLines.joined(separator: "\n"),
+                id: eventID
+            )
+            eventName = nil
+            eventID = nil
+            dataLines.removeAll()
+
+            switch event.event {
+            case "partial":
+                let result = try decoder.decode(
+                    LocalUIUnderstandingResult.self,
+                    from: Data(event.data.utf8)
+                )
+                await onPartialResult(result)
+            case "final":
+                finalResult = try decoder.decode(
+                    LocalUIUnderstandingResult.self,
+                    from: Data(event.data.utf8)
+                )
+            case "error":
+                let error = (try? decoder.decode(RemoteScreenshotParseStreamError.self, from: Data(event.data.utf8)))
+                throw DonkeyBackendInferenceClientError.httpStatus(
+                    response.statusCode,
+                    error?.message ?? event.data
+                )
+            default:
+                break
+            }
+        }
+
+        for try await line in lines {
+            if line.isEmpty {
+                try await flushEvent()
+            } else if line.hasPrefix("event:") {
+                eventName = String(line.dropFirst("event:".count)).trimmingCharacters(in: .whitespaces)
+            } else if line.hasPrefix("id:") {
+                eventID = String(line.dropFirst("id:".count)).trimmingCharacters(in: .whitespaces)
+            } else if line.hasPrefix("data:") {
+                dataLines.append(String(line.dropFirst("data:".count)).trimmingCharacters(in: .whitespaces))
+            }
+        }
+        try await flushEvent()
+
+        guard let finalResult else {
+            throw DonkeyBackendInferenceClientError.invalidResponse
+        }
+        return finalResult
     }
 
     public func makeStreamingChatRequest(
@@ -262,6 +334,41 @@ public struct DonkeyBackendInferenceClient: @unchecked Sendable {
         request.setValue(configuration.clientID, forHTTPHeaderField: "x-donkey-client-id")
         return request
     }
+
+    private func makeScreenshotParseRequest(
+        _ understandingRequest: LocalUIUnderstandingRequest,
+        imageData: Data?,
+        contentType: String,
+        stream: Bool
+    ) throws -> URLRequest {
+        guard let imageData = try imageData ?? understandingRequest.imageFileURL.map({ try Data(contentsOf: $0) }) else {
+            throw DonkeyBackendInferenceClientError.missingDownloadPayload("screenshot")
+        }
+
+        var request = makeRequest(path: "/api/inference/screenshots/parse/")
+        request.httpMethod = "POST"
+        var metadata = understandingRequest.metadata
+        metadata["screenshot.scope"] = metadata["screenshot.scope"] ?? "targetWindow"
+        metadata["screenshot.desktopCaptureAllowed"] = "false"
+        request.httpBody = try JSONEncoder().encode(
+            RemoteScreenshotParseRequest(
+                imageBase64: imageData.base64EncodedString(),
+                contentType: contentType,
+                pixelSize: understandingRequest.pixelSize ?? HotLoopSize(
+                    width: 1,
+                    height: 1,
+                    space: .window
+                ),
+                traceID: understandingRequest.traceID,
+                targetID: understandingRequest.targetID,
+                cropBounds: understandingRequest.cropBounds,
+                metadata: metadata,
+                stream: stream
+            )
+        )
+        return request
+    }
+
 
     private func send(_ request: URLRequest) async throws -> Data {
         let (data, response) = try await httpClient.send(request)
@@ -409,4 +516,11 @@ private struct RemoteScreenshotParseRequest: Encodable {
     var targetID: String
     var cropBounds: HotLoopRect?
     var metadata: [String: String]
+    var stream: Bool
+}
+
+private struct RemoteScreenshotParseStreamError: Decodable {
+    var error: String?
+    var message: String
+    var details: RemoteInferenceJSONValue?
 }

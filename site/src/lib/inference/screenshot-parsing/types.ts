@@ -37,7 +37,25 @@ export type ScreenshotParserProviderResult = {
   metadata: JsonObject;
 };
 
+export type ScreenshotParserProviderStreamEvent =
+  | {
+      type: "partial";
+      provider: string;
+      model: string;
+      result: ScreenshotParserResult;
+      metadata: JsonObject;
+    }
+  | {
+      type: "final";
+      provider: string;
+      model: string;
+      result: ScreenshotParserResult;
+      usage?: JsonValue;
+      metadata: JsonObject;
+    };
+
 export type ScreenshotParserProvider = {
   configured: boolean;
   parse: (request: ScreenshotParseRequest) => Promise<ScreenshotParserProviderResult>;
+  stream?: (request: ScreenshotParseRequest) => AsyncGenerator<ScreenshotParserProviderStreamEvent>;
 };

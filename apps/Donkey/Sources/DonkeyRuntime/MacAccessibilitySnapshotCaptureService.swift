@@ -56,6 +56,14 @@ protocol MacAccessibilitySnapshotCapturing: Sendable {
     ) throws -> MacAccessibilitySnapshotTree
 }
 
+protocol MacAccessibilitySnapshotProgressCapturing: MacAccessibilitySnapshotCapturing {
+    func captureTree(
+        target: MacWindowTargetCandidate,
+        limits: MacAccessibilitySnapshotLimits,
+        onNode: (MacAccessibilitySnapshotNode) -> Void
+    ) throws -> MacAccessibilitySnapshotTree
+}
+
 public final class MacAccessibilitySnapshotCaptureService {
     private let artifactStore: LocalRunArtifactStore
     private let windowResolver: MacWindowResolver
@@ -340,7 +348,7 @@ public struct MacAccessibilityNativeDialogDetector: Sendable {
 
 }
 
-final class ApplicationServicesMacAccessibilitySnapshotCapturer: MacAccessibilitySnapshotCapturing {
+final class ApplicationServicesMacAccessibilitySnapshotCapturer: MacAccessibilitySnapshotProgressCapturing {
     private let maximumTraversalNanoseconds: UInt64
 
     init(maximumTraversalNanoseconds: UInt64 = 200_000_000) {
@@ -355,6 +363,14 @@ final class ApplicationServicesMacAccessibilitySnapshotCapturer: MacAccessibilit
         target: MacWindowTargetCandidate,
         limits: MacAccessibilitySnapshotLimits
     ) throws -> MacAccessibilitySnapshotTree {
+        try captureTree(target: target, limits: limits, onNode: { _ in })
+    }
+
+    func captureTree(
+        target: MacWindowTargetCandidate,
+        limits: MacAccessibilitySnapshotLimits,
+        onNode: (MacAccessibilitySnapshotNode) -> Void
+    ) throws -> MacAccessibilitySnapshotTree {
         let application = AXUIElementCreateApplication(target.processID)
         let deadlineUptime = ProcessInfo.processInfo.systemUptime
             + Double(maximumTraversalNanoseconds) / 1_000_000_000
@@ -367,10 +383,12 @@ final class ApplicationServicesMacAccessibilitySnapshotCapturer: MacAccessibilit
         let rawRoot = readRawNode(
             rootElement,
             depth: 0,
+            path: "ax-1",
             limits: limits,
             deadlineUptime: deadlineUptime,
             remainingNodeCount: &remainingNodeCount,
-            isTreeTruncated: &isTreeTruncated
+            isTreeTruncated: &isTreeTruncated,
+            onNode: onNode
         ) ?? RawMacAccessibilitySnapshotNode(
             role: "AXUnknown",
             title: target.title,
@@ -411,10 +429,12 @@ final class ApplicationServicesMacAccessibilitySnapshotCapturer: MacAccessibilit
     private func readRawNode(
         _ element: AXUIElement,
         depth: Int,
+        path: String,
         limits: MacAccessibilitySnapshotLimits,
         deadlineUptime: TimeInterval,
         remainingNodeCount: inout Int,
-        isTreeTruncated: inout Bool
+        isTreeTruncated: inout Bool,
+        onNode: (MacAccessibilitySnapshotNode) -> Void
     ) -> RawMacAccessibilitySnapshotNode? {
         guard !hasTimedOut(deadlineUptime) else {
             isTreeTruncated = true
@@ -427,24 +447,51 @@ final class ApplicationServicesMacAccessibilitySnapshotCapturer: MacAccessibilit
         }
 
         remainingNodeCount -= 1
+        let role = stringAttribute(kAXRoleAttribute as CFString, from: element)
+        let title = stringAttribute(kAXTitleAttribute as CFString, from: element)
+        let label = stringAttribute(kAXDescriptionAttribute as CFString, from: element)
+        let valueSummary = valueSummaryAttribute(kAXValueAttribute as CFString, from: element)
+        let frame = frame(from: element)
+        let isEnabled = boolAttribute(kAXEnabledAttribute as CFString, from: element)
+        let isFocused = boolAttribute(kAXFocusedAttribute as CFString, from: element)
+        let actions = actionNames(from: element)
+
+        onNode(
+            MacAccessibilitySnapshotNode(
+                nodeID: path,
+                role: Self.summarizeText(role, limit: limits.maxTextLength),
+                title: Self.summarizeText(title, limit: limits.maxTextLength),
+                label: Self.summarizeText(label, limit: limits.maxTextLength),
+                valueSummary: Self.summarizeText(valueSummary, limit: limits.maxTextLength),
+                frame: frame,
+                isEnabled: isEnabled,
+                isFocused: isFocused,
+                actions: actions.compactMap {
+                    Self.summarizeText($0, limit: limits.maxTextLength)
+                }
+            )
+        )
+
         let children = childNodes(
             for: element,
             depth: depth,
+            path: path,
             limits: limits,
             deadlineUptime: deadlineUptime,
             remainingNodeCount: &remainingNodeCount,
-            isTreeTruncated: &isTreeTruncated
+            isTreeTruncated: &isTreeTruncated,
+            onNode: onNode
         )
 
         return RawMacAccessibilitySnapshotNode(
-            role: stringAttribute(kAXRoleAttribute as CFString, from: element),
-            title: stringAttribute(kAXTitleAttribute as CFString, from: element),
-            label: stringAttribute(kAXDescriptionAttribute as CFString, from: element),
-            valueSummary: valueSummaryAttribute(kAXValueAttribute as CFString, from: element),
-            frame: frame(from: element),
-            isEnabled: boolAttribute(kAXEnabledAttribute as CFString, from: element),
-            isFocused: boolAttribute(kAXFocusedAttribute as CFString, from: element),
-            actions: actionNames(from: element),
+            role: role,
+            title: title,
+            label: label,
+            valueSummary: valueSummary,
+            frame: frame,
+            isEnabled: isEnabled,
+            isFocused: isFocused,
+            actions: actions,
             children: children
         )
     }
@@ -452,10 +499,12 @@ final class ApplicationServicesMacAccessibilitySnapshotCapturer: MacAccessibilit
     private func childNodes(
         for element: AXUIElement,
         depth: Int,
+        path: String,
         limits: MacAccessibilitySnapshotLimits,
         deadlineUptime: TimeInterval,
         remainingNodeCount: inout Int,
-        isTreeTruncated: inout Bool
+        isTreeTruncated: inout Bool,
+        onNode: (MacAccessibilitySnapshotNode) -> Void
     ) -> [RawMacAccessibilitySnapshotNode] {
         guard !hasTimedOut(deadlineUptime) else {
             isTreeTruncated = true
@@ -483,16 +532,36 @@ final class ApplicationServicesMacAccessibilitySnapshotCapturer: MacAccessibilit
         )
 
         return rawChildren
-            .compactMap { child in
+            .enumerated()
+            .compactMap { index, child in
                 readRawNode(
                     child,
                     depth: depth + 1,
+                    path: "\(path).\(index + 1)",
                     limits: limits,
                     deadlineUptime: deadlineUptime,
                     remainingNodeCount: &remainingNodeCount,
-                    isTreeTruncated: &isTreeTruncated
+                    isTreeTruncated: &isTreeTruncated,
+                    onNode: onNode
                 )
             }
+    }
+
+    private static func summarizeText(
+        _ value: String?,
+        limit: Int
+    ) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty
+        else {
+            return nil
+        }
+
+        guard trimmed.count <= limit else {
+            return "[redacted length=\(trimmed.count)]"
+        }
+
+        return trimmed
     }
 
     private func hasTimedOut(_ deadlineUptime: TimeInterval) -> Bool {

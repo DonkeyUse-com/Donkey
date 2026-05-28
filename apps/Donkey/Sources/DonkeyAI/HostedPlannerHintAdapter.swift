@@ -101,6 +101,7 @@ public struct PlannerHintAdapterResult: Equatable, Sendable {
 
 public protocol AIHTTPClient: Sendable {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse)
+    func streamLines(_ request: URLRequest) async throws -> (AsyncThrowingStream<String, Error>, HTTPURLResponse)
 }
 
 public struct URLSessionAIHTTPClient: AIHTTPClient {
@@ -112,6 +113,40 @@ public struct URLSessionAIHTTPClient: AIHTTPClient {
             throw AIHTTPClientError.invalidHTTPResponse
         }
         return (data, httpResponse)
+    }
+
+    public func streamLines(_ request: URLRequest) async throws -> (AsyncThrowingStream<String, Error>, HTTPURLResponse) {
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AIHTTPClientError.invalidHTTPResponse
+        }
+        let stream = AsyncThrowingStream<String, Error> { continuation in
+            Task {
+                do {
+                    for try await line in bytes.lines {
+                        continuation.yield(line)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+        return (stream, httpResponse)
+    }
+}
+
+public extension AIHTTPClient {
+    func streamLines(_ request: URLRequest) async throws -> (AsyncThrowingStream<String, Error>, HTTPURLResponse) {
+        let (data, response) = try await send(request)
+        let text = String(data: data, encoding: .utf8) ?? ""
+        let stream = AsyncThrowingStream<String, Error> { continuation in
+            for line in text.components(separatedBy: .newlines) {
+                continuation.yield(line)
+            }
+            continuation.finish()
+        }
+        return (stream, response)
     }
 }
 

@@ -250,6 +250,13 @@ vision, OCR, and hover evidence enrich the world model, labels, and layout. When
 Accessibility cannot resolve the target, scoped AI screenshot boxes may become a
 secondary actionable target for a guarded coordinate click.
 
+Screenshot understanding is a structured evidence source, not an overlay-only
+feature. Hosted screenshot parsers may stream partial UI-understanding results
+while a final parse is still running. The local-app controller forwards those
+partial controls, labels, boxes, confidence values, and provenance metadata into
+the same observation path used for actions, then replaces or augments them with
+the final parse result when it arrives.
+
 Element actions execute only after the harness validates:
 
 - target focus

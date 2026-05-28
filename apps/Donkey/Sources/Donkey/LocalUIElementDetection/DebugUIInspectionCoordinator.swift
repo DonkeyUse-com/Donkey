@@ -33,6 +33,7 @@ final class DebugUIInspectionCoordinator {
     private var movementEventMonitors: [Any] = []
     private var currentConfig: DebugUIOverlayConfiguration = .disabled
     private var isAnalyzing = false
+    private var isRefreshingActiveAccessibility = false
 
     init(configURL: URL? = nil) {
         self.configURL = configURL
@@ -68,6 +69,7 @@ final class DebugUIInspectionCoordinator {
         lastRenderedFrames.removeAll()
         lastSnapshots.removeAll()
         isAnalyzing = false
+        isRefreshingActiveAccessibility = false
         currentConfig = .disabled
     }
 
@@ -266,14 +268,58 @@ final class DebugUIInspectionCoordinator {
 
     private func refreshActiveAccessibilityFrame() {
         guard currentConfig.enabled,
-              !isAnalyzing,
+              !isRefreshingActiveAccessibility,
               let screens = try? screenSurfaces(scope: currentConfig.screenScope)
         else {
             return
         }
 
-        let frames = activeAccessibilityFrames()
-        guard !frames.isEmpty else { return }
+        isRefreshingActiveAccessibility = true
+        defer { isRefreshingActiveAccessibility = false }
+
+        do {
+            let results = try accessibilityInspectionService.inspectProgressively(
+                scope: currentConfig.screenScope,
+                minConfidence: currentConfig.minConfidence,
+                frontmostOnly: true,
+                focusedOnly: true,
+                targetBundleIdentifiers: currentConfig.targetBundleIdentifiers,
+                targetAppNames: currentConfig.targetAppNames
+            ) { [weak self] partialResults in
+                self?.renderActiveAccessibilityResults(
+                    partialResults,
+                    screens: screens,
+                    stage: "active-accessibility-progress"
+                )
+            }
+            renderActiveAccessibilityResults(
+                results,
+                screens: screens,
+                stage: "active-accessibility"
+            )
+        } catch {
+            DebugUIInspectionLog.overlay.debug(
+                "debug inspection skipped active accessibility refresh error=\(String(describing: error), privacy: .public)"
+            )
+        }
+    }
+
+    private func renderActiveAccessibilityResults(
+        _ results: [DebugUIAccessibilityInspectionResult],
+        screens: [DebugUIScreenSurface],
+        stage: String
+    ) {
+        let frames = Dictionary(
+            uniqueKeysWithValues: results.map { result in
+                (
+                    result.snapshot.screenID,
+                    Self.frameInScreenPointSpace(
+                        result.frame,
+                        snapshot: result.snapshot
+                    )
+                )
+            }
+        )
 
         for screen in screens {
             guard let accessibilityFrame = frames[screen.screenID],
@@ -283,11 +329,30 @@ final class DebugUIInspectionCoordinator {
             }
 
             let existing = lastRenderedFrames[screen.screenID] ?? DebugUIInspectionFrame()
+            let progressiveAccessibilityFrame: DebugUIInspectionFrame
+            if stage.contains("progress") {
+                let incomingIDs = Set(accessibilityFrame.elements.map(\.id))
+                let incomingWindowIDs = Set(accessibilityFrame.elements.compactMap(Self.windowID(for:)))
+                let carriedAccessibilityElements = existing.elements.filter { element in
+                    guard Self.isAccessibilityEvidence(element),
+                          !incomingIDs.contains(element.id),
+                          let windowID = Self.windowID(for: element)
+                    else {
+                        return false
+                    }
+                    return incomingWindowIDs.contains(windowID)
+                }
+                progressiveAccessibilityFrame = DebugUIInspectionFrame(
+                    elements: carriedAccessibilityElements + accessibilityFrame.elements
+                )
+            } else {
+                progressiveAccessibilityFrame = accessibilityFrame
+            }
             let nonAccessibilityFrame = DebugUIInspectionFrame(
                 elements: existing.elements.filter { !Self.isAccessibilityEvidence($0) }
             )
             let fusedFrame = DebugUIInspectionFrameFusion.fused(
-                accessibilityFrame: accessibilityFrame,
+                accessibilityFrame: progressiveAccessibilityFrame,
                 geminiFrame: nonAccessibilityFrame
             )
             guard !fusedFrame.elements.isEmpty,
@@ -296,14 +361,21 @@ final class DebugUIInspectionCoordinator {
                 continue
             }
 
+            var tracker = trackers[screen.screenID] ?? DebugUIElementTracker()
+            let trackedFrame = tracker.update(
+                with: fusedFrame,
+                renderNewElementsImmediately: true
+            )
+            trackers[screen.screenID] = tracker
+
             let snapshot = Self.screenPointSnapshot(
                 screen: screen,
-                fingerprint: "active-accessibility-\(Self.frameSignature(fusedFrame))"
+                fingerprint: "\(stage)-\(Self.frameSignature(trackedFrame))"
             )
-            lastRenderedFrames[screen.screenID] = fusedFrame
+            lastRenderedFrames[screen.screenID] = trackedFrame
             lastSnapshots[screen.screenID] = snapshot
-            logLayoutDiagnostics(stage: "active-accessibility", screen: screen, frame: fusedFrame, captures: [])
-            overlayController.render(frame: fusedFrame, snapshot: snapshot)
+            logLayoutDiagnostics(stage: stage, screen: screen, frame: trackedFrame, captures: [])
+            overlayController.render(frame: trackedFrame, snapshot: snapshot)
         }
     }
 
@@ -454,11 +526,54 @@ final class DebugUIInspectionCoordinator {
                 )
                 continue
             }
-            lastFingerprints[screen.screenID] = fingerprint
 
             let localEvidenceFrame = accessibilityFrame
 
-            var elements: [DebugUIElement] = []
+            let currentWindowIDs = Set(screenCaptures.map(\.target.windowID))
+            var elements = (lastRenderedFrames[screen.screenID]?.elements ?? [])
+                .filter { element in
+                    guard !Self.isAccessibilityEvidence(element) else { return false }
+                    guard let windowID = Self.windowID(for: element) else { return true }
+                    return currentWindowIDs.contains(windowID)
+                }
+
+            func renderGeminiFrame(stage: String, updatesFingerprint: Bool) {
+                var tracker = trackers[screen.screenID] ?? DebugUIElementTracker()
+                let geminiFrame = DebugUIInspectionFrame(elements: elements)
+                let fusedFrame = DebugUIInspectionFrameFusion.fused(
+                    accessibilityFrame: localEvidenceFrame,
+                    geminiFrame: geminiFrame
+                )
+                let trackedFrame = tracker.update(
+                    with: fusedFrame,
+                    renderNewElementsImmediately: true
+                )
+                trackers[screen.screenID] = tracker
+                if !force,
+                   let previousFrame = lastRenderedFrames[screen.screenID],
+                   trackedFrame.isOverlayRenderEquivalent(to: previousFrame) {
+                    DebugUIInspectionLog.overlay.debug(
+                        "debug inspection skipped stable \(stage, privacy: .public) render screenID=\(screen.screenID, privacy: .public)"
+                    )
+                    return
+                }
+
+                let snapshot = Self.screenPointSnapshot(
+                    screen: screen,
+                    fingerprint: updatesFingerprint ? fingerprint : "\(fingerprint)-\(stage)-\(Self.frameSignature(trackedFrame))"
+                )
+                DebugUIInspectionLog.overlay.info(
+                    "debug inspection rendering source=\(stage, privacy: .public) screenID=\(screen.screenID, privacy: .public) windows=\(screenCaptures.count, privacy: .public) localEvidenceElements=\(localEvidenceFrame.elements.count, privacy: .public) geminiElements=\(geminiFrame.elements.count, privacy: .public) elements=\(trackedFrame.elements.count, privacy: .public)"
+                )
+                logLayoutDiagnostics(stage: stage, screen: screen, frame: trackedFrame, captures: screenCaptures)
+                if updatesFingerprint {
+                    lastFingerprints[screen.screenID] = fingerprint
+                }
+                lastRenderedFrames[screen.screenID] = trackedFrame
+                lastSnapshots[screen.screenID] = snapshot
+                overlayController.render(frame: trackedFrame, snapshot: snapshot)
+            }
+
             for capture in screenCaptures {
                 let capturePixelSize = HotLoopSize(
                     width: capture.parsePixelSize.width,
@@ -501,18 +616,32 @@ final class DebugUIInspectionCoordinator {
                     ]
                 )
                 do {
-                    let result = try await client.parseScreenshot(
+                    let result = try await client.parseScreenshotStream(
                         request,
                         imageData: capture.parseImageData,
                         contentType: capture.parseContentType
-                    )
-                    elements += ScreenshotParseDebugUIOverlayMapper.frame(
+                    ) { partialResult in
+                        let parsedElements = ScreenshotParseDebugUIOverlayMapper.frame(
+                            from: partialResult,
+                            target: capture.target,
+                            capturePixelSize: capturePixelSize,
+                            screenFrame: screenBounds,
+                            minConfidence: self.currentConfig.minConfidence
+                        ).elements
+                        elements.removeAll { Self.windowID(for: $0) == capture.target.windowID }
+                        elements += parsedElements
+                        renderGeminiFrame(stage: "gemini-progress", updatesFingerprint: false)
+                    }
+                    let parsedElements = ScreenshotParseDebugUIOverlayMapper.frame(
                         from: result,
                         target: capture.target,
                         capturePixelSize: capturePixelSize,
                         screenFrame: screenBounds,
                         minConfidence: currentConfig.minConfidence
                     ).elements
+                    elements.removeAll { Self.windowID(for: $0) == capture.target.windowID }
+                    elements += parsedElements
+                    renderGeminiFrame(stage: "gemini-progress", updatesFingerprint: false)
                 } catch {
                     DebugUIInspectionLog.overlay.error(
                         "debug inspection gemini parse failed windowID=\(capture.target.windowID, privacy: .public) error=\(String(describing: error), privacy: .public)"
@@ -520,34 +649,7 @@ final class DebugUIInspectionCoordinator {
                 }
             }
 
-            var tracker = trackers[screen.screenID] ?? DebugUIElementTracker()
-            let geminiFrame = DebugUIInspectionFrame(elements: elements)
-            let fusedFrame = DebugUIInspectionFrameFusion.fused(
-                accessibilityFrame: localEvidenceFrame,
-                geminiFrame: geminiFrame
-            )
-            let trackedFrame = tracker.update(
-                with: fusedFrame,
-                renderNewElementsImmediately: true
-            )
-            trackers[screen.screenID] = tracker
-            if !force,
-               let previousFrame = lastRenderedFrames[screen.screenID],
-               trackedFrame.isOverlayRenderEquivalent(to: previousFrame) {
-                DebugUIInspectionLog.overlay.debug(
-                    "debug inspection skipped stable gemini render screenID=\(screen.screenID, privacy: .public)"
-                )
-                continue
-            }
-
-            let snapshot = Self.screenPointSnapshot(screen: screen, fingerprint: fingerprint)
-            DebugUIInspectionLog.overlay.info(
-                "debug inspection rendering source=gemini-fused screenID=\(screen.screenID, privacy: .public) windows=\(screenCaptures.count, privacy: .public) localEvidenceElements=\(localEvidenceFrame.elements.count, privacy: .public) geminiElements=\(geminiFrame.elements.count, privacy: .public) elements=\(trackedFrame.elements.count, privacy: .public)"
-            )
-            logLayoutDiagnostics(stage: "gemini-fused", screen: screen, frame: trackedFrame, captures: screenCaptures)
-            lastRenderedFrames[screen.screenID] = trackedFrame
-            lastSnapshots[screen.screenID] = snapshot
-            overlayController.render(frame: trackedFrame, snapshot: snapshot)
+            renderGeminiFrame(stage: "gemini-fused", updatesFingerprint: true)
         }
     }
 
@@ -807,37 +909,10 @@ final class DebugUIInspectionCoordinator {
         frame: DebugUIInspectionFrame,
         captures: [DebugUIWindowCapture]
     ) {
-        let screenPointSize = HotLoopSize(
-            width: screen.appKitFrame.size.width,
-            height: screen.appKitFrame.size.height,
-            space: .screen
-        )
-        let screenshotPixelSize = HotLoopSize(
-            width: screen.appKitFrame.size.width,
-            height: screen.appKitFrame.size.height,
-            space: .screen
-        )
-        let counts = sourceCounts(frame.elements)
-        DebugUIInspectionLog.overlay.info(
-            "debug inspection layout stage=\(stage, privacy: .public) screenID=\(screen.screenID, privacy: .public) elements=\(frame.elements.count, privacy: .public) ax=\(counts.ax, privacy: .public) ai=\(counts.ai, privacy: .public) cv=\(counts.cv, privacy: .public) other=\(counts.other, privacy: .public) appKitFrame=\(Self.describe(screen.appKitFrame), privacy: .public) captureFrame=\(Self.describe(screen.captureFrame), privacy: .public)"
-        )
-
-        for capture in captures.prefix(8) {
-            DebugUIInspectionLog.overlay.info(
-                "debug inspection layout-target stage=\(stage, privacy: .public) screenID=\(screen.screenID, privacy: .public) windowID=\(capture.target.windowID, privacy: .public) app=\(capture.target.appName ?? "", privacy: .public) bundle=\(capture.target.bundleIdentifier ?? "", privacy: .public) targetBounds=\(Self.describe(capture.target.bounds), privacy: .public) screenshot=\(capture.screenshot.imageWidth, privacy: .public)x\(capture.screenshot.imageHeight, privacy: .public) parse=\(Int(capture.parsePixelSize.width.rounded()), privacy: .public)x\(Int(capture.parsePixelSize.height.rounded()), privacy: .public) method=\(capture.screenshot.captureMethod.rawValue, privacy: .public) coord=\(capture.screenshot.coordinateSpace, privacy: .public)"
-            )
-        }
-
-        for (index, element) in frame.elements.sorted(by: Self.elementSort).prefix(48).enumerated() {
-            let layerFrame = DebugUIOverlayGeometry.localLayerFrame(
-                for: element.bbox,
-                screenshotPixelSize: screenshotPixelSize,
-                screenPointSize: screenPointSize
-            )
-            DebugUIInspectionLog.overlay.info(
-                "debug inspection layout-element stage=\(stage, privacy: .public) idx=\(index, privacy: .public) source=\(Self.sourceName(for: element), privacy: .public) id=\(element.id, privacy: .public) label=\(Self.shortLabel(element.label), privacy: .public) confidence=\(String(format: "%.2f", element.confidence), privacy: .public) bbox=\(Self.describe(element.bbox), privacy: .public) layer=\(Self.describe(layerFrame), privacy: .public) targetWindowID=\(Self.metadataValue("target.windowID", metadata: element.metadata) ?? "", privacy: .public) targetBounds=\(Self.describe(Self.targetBounds(for: element)), privacy: .public) localBounds=\(Self.describe(Self.localBounds(for: element)), privacy: .public) metadataSource=\(Self.metadataValue("localUIElement.sources", metadata: element.metadata) ?? "", privacy: .public)"
-            )
-        }
+        _ = stage
+        _ = screen
+        _ = frame
+        _ = captures
     }
 
     private func sourceCounts(_ elements: [DebugUIElement]) -> (ax: Int, ai: Int, cv: Int, other: Int) {

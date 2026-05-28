@@ -183,7 +183,11 @@ private final class DebugUIInspectionSurface {
         let path = CGPath(rect: CGRect(origin: .zero, size: boxFrame.size), transform: nil)
         layers.box.frame = boxFrame
         layers.box.path = path
-        layers.box.fillColor = fillColor(for: element)
+        layers.box.fillColor = fillColor(
+            for: element,
+            boxFrame: boxFrame,
+            containerSize: rootView.bounds.size
+        )
         layers.box.strokeColor = strokeColor(for: element)
         layers.box.lineDashPattern = lineDashPattern(for: element)
         layers.box.lineWidth = lineWidth(for: element)
@@ -211,17 +215,15 @@ private final class DebugUIInspectionSurface {
         return base
     }
 
-    private func fillColor(for element: DebugUIElement) -> CGColor {
-        if element.id.hasPrefix("window-") {
-            return NSColor.clear.cgColor
-        }
-        if sourceKind(for: element) == .ai {
-            return nsColor(hex: "#FF2D55", alpha: 0.16).cgColor
-        }
-        if sourceKind(for: element) == .nativeVisual {
-            return nsColor(hex: "#00C7BE", alpha: 0.13).cgColor
-        }
-        return nsColor(hex: element.visualStyle.overlayColor, alpha: 0.14).cgColor
+    private func fillColor(
+        for element: DebugUIElement,
+        boxFrame: CGRect? = nil,
+        containerSize: CGSize? = nil
+    ) -> CGColor {
+        _ = element
+        _ = boxFrame
+        _ = containerSize
+        return NSColor.clear.cgColor
     }
 
     private func strokeColor(for element: DebugUIElement) -> CGColor {
@@ -231,7 +233,12 @@ private final class DebugUIInspectionSurface {
         case .nativeVisual:
             return nsColor(hex: "#00C7BE", alpha: 0.95).cgColor
         case .accessibility:
-            return nsColor(hex: "#34D399", alpha: 0.95).cgColor
+            return accessibilityColor(
+                for: element,
+                saturation: 0.68,
+                brightness: 1.0,
+                alpha: 0.95
+            )
         case .other:
             return nsColor(hex: element.visualStyle.borderColor, alpha: 0.95).cgColor
         }
@@ -244,7 +251,12 @@ private final class DebugUIInspectionSurface {
         case .nativeVisual:
             return nsColor(hex: "#00C7BE", alpha: 0.92).cgColor
         case .accessibility:
-            return nsColor(hex: "#34D399", alpha: 0.92).cgColor
+            return accessibilityColor(
+                for: element,
+                saturation: 0.72,
+                brightness: 0.82,
+                alpha: 0.92
+            )
         case .other:
             return nsColor(hex: element.visualStyle.overlayColor, alpha: 0.92).cgColor
         }
@@ -284,6 +296,41 @@ private final class DebugUIInspectionSurface {
             return .accessibility
         }
         return .other
+    }
+
+    private func accessibilityRole(for element: DebugUIElement) -> String {
+        if let role = element.metadata["accessibility.role"], !role.isEmpty {
+            return role
+        }
+        if let role = element.metadata.first(where: { key, _ in key.hasSuffix(".accessibility.role") })?.value,
+           !role.isEmpty {
+            return role
+        }
+        return ""
+    }
+
+    private func accessibilityColor(
+        for element: DebugUIElement,
+        saturation: CGFloat,
+        brightness: CGFloat,
+        alpha: CGFloat
+    ) -> CGColor {
+        let key = accessibilityRole(for: element).isEmpty
+            ? element.type.rawValue
+            : accessibilityRole(for: element)
+        let hue = CGFloat(Self.stableHash(key) % 360) / 360
+        return NSColor(
+            calibratedHue: hue,
+            saturation: saturation,
+            brightness: brightness,
+            alpha: alpha
+        ).cgColor
+    }
+
+    private static func stableHash(_ value: String) -> UInt32 {
+        value.utf8.reduce(UInt32(2_166_136_261)) { hash, byte in
+            (hash ^ UInt32(byte)) &* 16_777_619
+        }
     }
 
     private func fadeIn(_ layers: DebugUIInspectionElementLayers) {

@@ -46,11 +46,51 @@ public struct RemoteScreenshotParsingLocalUIUnderstandingAdapter: LocalUIUnderst
         try await client.parseScreenshot(request)
     }
 
+    public func understandStream(
+        _ request: LocalUIUnderstandingRequest
+    ) -> AsyncThrowingStream<LocalUIUnderstandingStreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    let final = try await client.parseScreenshotStream(request) { partial in
+                        continuation.yield(.partial(partial))
+                    }
+                    continuation.yield(.final(final))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+
     func understand(
         _ request: LocalUIUnderstandingRequest,
         imageData: Data
     ) async throws -> LocalUIUnderstandingResult {
         try await client.parseScreenshot(request, imageData: imageData)
+    }
+
+    func understandStream(
+        _ request: LocalUIUnderstandingRequest,
+        imageData: Data
+    ) -> AsyncThrowingStream<LocalUIUnderstandingStreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    let final = try await client.parseScreenshotStream(
+                        request,
+                        imageData: imageData
+                    ) { partial in
+                        continuation.yield(.partial(partial))
+                    }
+                    continuation.yield(.final(final))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
     }
 }
 
@@ -117,6 +157,94 @@ public struct RemoteFallbackLocalUIUnderstandingAdapter: LocalUIUnderstandingRun
         } catch {
             if let primaryResult {
                 return annotatedPrimaryResult(primaryResult, status: "failed")
+            }
+            throw error
+        }
+    }
+
+    public func understandStream(
+        _ request: LocalUIUnderstandingRequest
+    ) -> AsyncThrowingStream<LocalUIUnderstandingStreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    try await streamUnderstanding(request, continuation: continuation)
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func streamUnderstanding(
+        _ request: LocalUIUnderstandingRequest,
+        continuation: AsyncThrowingStream<LocalUIUnderstandingStreamEvent, Error>.Continuation
+    ) async throws {
+        let primaryResult = try? await primary.understand(request)
+        if let primaryResult, primaryEvidenceIsGood(primaryResult) {
+            continuation.yield(.final(primaryResult))
+            continuation.finish()
+            return
+        }
+
+        guard let imageFileURL = request.imageFileURL else {
+            if let primaryResult {
+                continuation.yield(.final(primaryResult))
+                continuation.finish()
+                return
+            }
+            throw LocalUIUnderstandingError.unavailable("missingImagePath")
+        }
+
+        let imageData: Data
+        do {
+            imageData = try Data(contentsOf: imageFileURL)
+        } catch {
+            if let primaryResult {
+                continuation.yield(.final(primaryResult))
+                continuation.finish()
+                return
+            }
+            throw LocalUIUnderstandingError.unavailable("missingImageData")
+        }
+
+        let fingerprint = Self.fingerprint(for: imageData)
+        let allowed = await throttle.shouldAllow(
+            targetID: request.targetID,
+            imageFingerprint: fingerprint
+        )
+        guard allowed else {
+            if let primaryResult {
+                continuation.yield(.final(annotatedPrimaryResult(primaryResult, status: "throttled")))
+                continuation.finish()
+                return
+            }
+            throw LocalUIUnderstandingError.unavailable("remoteScreenshotParsingThrottled")
+        }
+
+        do {
+            for try await event in remote.understandStream(request, imageData: imageData) {
+                switch event {
+                case .partial(var partial):
+                    partial.metadata = partial.metadata.merging([
+                        "remoteScreenshotParsing.status": "streaming",
+                        "remoteScreenshotParsing.fingerprint": fingerprint
+                    ]) { current, _ in current }
+                    continuation.yield(.partial(bestResult(primary: primaryResult, remote: partial)))
+                case .final(var final):
+                    final.metadata = final.metadata.merging([
+                        "remoteScreenshotParsing.status": "used",
+                        "remoteScreenshotParsing.fingerprint": fingerprint
+                    ]) { current, _ in current }
+                    continuation.yield(.final(bestResult(primary: primaryResult, remote: final)))
+                }
+            }
+            continuation.finish()
+        } catch {
+            if let primaryResult {
+                continuation.yield(.final(annotatedPrimaryResult(primaryResult, status: "failed")))
+                continuation.finish()
+                return
             }
             throw error
         }

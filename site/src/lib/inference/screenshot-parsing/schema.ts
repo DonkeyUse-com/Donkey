@@ -4,19 +4,16 @@ import { toJsonObject } from "@/lib/inference/json";
 
 const metadataSchema = z.record(z.string().min(1).max(64), z.string().max(512));
 const coordinateSpaceSchema = z.enum(["screen", "window", "crop", "normalizedTarget"]);
-const controlKindValues = [
-  "button",
-  "textField",
-  "searchField",
-  "checkbox",
-  "link",
-  "menuItem",
-  "listItem",
-  "group",
-  "unknown",
-] as const;
-const controlKindSchema = z.enum(controlKindValues);
-type ControlKind = z.infer<typeof controlKindSchema>;
+type ControlKind =
+  | "button"
+  | "textField"
+  | "searchField"
+  | "checkbox"
+  | "link"
+  | "menuItem"
+  | "listItem"
+  | "group"
+  | "unknown";
 
 export const hotLoopSizeSchema = z.object({
   width: z.number().positive().max(20_000),
@@ -41,6 +38,7 @@ export const screenshotParseRequestSchema = z.object({
   targetID: z.string().min(1).max(256).optional(),
   cropBounds: hotLoopRectSchema.optional(),
   metadata: metadataSchema.optional().default({}),
+  stream: z.boolean().optional().default(false),
 }).transform((value) => ({
   ...value,
   metadata: toJsonObject(value.metadata),

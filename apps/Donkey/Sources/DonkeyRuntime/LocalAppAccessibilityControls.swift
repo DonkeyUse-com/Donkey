@@ -108,6 +108,34 @@ public struct LocalAppAccessibilityControlDiscovery: Sendable {
         )
     }
 
+    func visibleText(for node: MacAccessibilitySnapshotNode) -> String? {
+        bestLabel(for: node)
+    }
+
+    func control(for node: MacAccessibilitySnapshotNode) -> LocalAppDiscoveredControl? {
+        let kind = controlKind(for: node)
+        let controlLabel = labelForControl(node, kind: kind)
+        guard kind != .unknown, let controlLabel else {
+            return nil
+        }
+
+        return LocalAppDiscoveredControl(
+            id: node.nodeID,
+            kind: kind,
+            role: node.role,
+            label: controlLabel,
+            valueSummary: node.valueSummary,
+            frame: node.frame,
+            isEnabled: node.isEnabled ?? true,
+            actions: node.actions,
+            metadata: [
+                "accessibility.nodeID": node.nodeID,
+                "controlKind": kind.rawValue,
+                "controlID": inferredControlID(label: controlLabel, kind: kind)
+            ]
+        )
+    }
+
     public func observedFormFields(in snapshot: MacAccessibilitySnapshot) -> [LocalDocumentFormField] {
         discover(in: snapshot).controls
             .filter { [.textField, .searchField, .checkbox].contains($0.kind) }
@@ -136,26 +164,8 @@ public struct LocalAppAccessibilityControlDiscovery: Sendable {
             visibleText.append(label)
         }
 
-        let kind = controlKind(for: node)
-        let controlLabel = labelForControl(node, kind: kind)
-        if kind != .unknown, let controlLabel {
-            controls.append(
-                LocalAppDiscoveredControl(
-                    id: node.nodeID,
-                    kind: kind,
-                    role: node.role,
-                    label: controlLabel,
-                    valueSummary: node.valueSummary,
-                    frame: node.frame,
-                    isEnabled: node.isEnabled ?? true,
-                    actions: node.actions,
-                    metadata: [
-                        "accessibility.nodeID": node.nodeID,
-                        "controlKind": kind.rawValue,
-                        "controlID": inferredControlID(label: controlLabel, kind: kind)
-                    ]
-                )
-            )
+        if let control = control(for: node) {
+            controls.append(control)
         }
 
         for child in node.children {
@@ -176,7 +186,7 @@ public struct LocalAppAccessibilityControlDiscovery: Sendable {
         if let label = bestLabel(for: node) {
             return label
         }
-        if kind == .listItem {
+        if kind == .listItem || kind == .group {
             return descendantText(for: node) ?? "list item"
         }
         return nil
@@ -217,6 +227,16 @@ public struct LocalAppAccessibilityControlDiscovery: Sendable {
            node.frame?.hasPositiveArea == true,
            descendantText(for: node) != nil {
             return .listItem
+        }
+        if role == "AXGroup",
+           node.frame?.hasPositiveArea == true,
+           descendantText(for: node) != nil {
+            return .group
+        }
+        if (role == "AXStaticText" || role == "AXImage"),
+           node.frame?.hasPositiveArea == true,
+           bestLabel(for: node) != nil {
+            return .group
         }
         if role == "AXSearchField" { return .searchField }
         if role == "AXTextField" || role == "AXTextArea" || role == "AXComboBox" {
