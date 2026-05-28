@@ -193,15 +193,15 @@ public struct DonkeyBackendInferenceClient: @unchecked Sendable {
 
             switch event.event {
             case "partial":
-                let result = try decoder.decode(
-                    LocalUIUnderstandingResult.self,
-                    from: Data(event.data.utf8)
+                let result = try Self.decodeLocalUIUnderstandingResult(
+                    from: event.data,
+                    decoder: decoder
                 )
                 await onPartialResult(result)
             case "final":
-                finalResult = try decoder.decode(
-                    LocalUIUnderstandingResult.self,
-                    from: Data(event.data.utf8)
+                finalResult = try Self.decodeLocalUIUnderstandingResult(
+                    from: event.data,
+                    decoder: decoder
                 )
             case "error":
                 let error = (try? decoder.decode(RemoteScreenshotParseStreamError.self, from: Data(event.data.utf8)))
@@ -231,6 +231,25 @@ public struct DonkeyBackendInferenceClient: @unchecked Sendable {
             throw DonkeyBackendInferenceClientError.invalidResponse
         }
         return finalResult
+    }
+
+    private static func decodeLocalUIUnderstandingResult(
+        from text: String,
+        decoder: JSONDecoder
+    ) throws -> LocalUIUnderstandingResult {
+        var lastError: Error?
+        for candidate in jsonObjectCandidates(in: text).reversed() {
+            do {
+                return try decoder.decode(LocalUIUnderstandingResult.self, from: Data(candidate.utf8))
+            } catch {
+                lastError = error
+            }
+        }
+
+        if let lastError {
+            throw lastError
+        }
+        throw DonkeyBackendInferenceClientError.invalidResponse
     }
 
     public func makeStreamingChatRequest(
@@ -324,6 +343,48 @@ public struct DonkeyBackendInferenceClient: @unchecked Sendable {
                 guard !dataLines.isEmpty else { return nil }
                 return RemoteInferenceServerSentEvent(event: event, data: dataLines.joined(separator: "\n"), id: id)
             }
+    }
+
+    private static func jsonObjectCandidates(in text: String) -> [String] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var candidates: [String] = trimmed.isEmpty ? [] : [trimmed]
+        var objectStart: String.Index?
+        var depth = 0
+        var isInsideString = false
+        var isEscaped = false
+        var index = text.startIndex
+
+        while index < text.endIndex {
+            let character = text[index]
+            if isInsideString {
+                if isEscaped {
+                    isEscaped = false
+                } else if character == "\\" {
+                    isEscaped = true
+                } else if character == "\"" {
+                    isInsideString = false
+                }
+            } else if character == "\"" {
+                isInsideString = true
+            } else if character == "{" {
+                if depth == 0 {
+                    objectStart = index
+                }
+                depth += 1
+            } else if character == "}", depth > 0 {
+                depth -= 1
+                if depth == 0, let start = objectStart {
+                    let objectEnd = text.index(after: index)
+                    candidates.append(String(text[start..<objectEnd]))
+                    objectStart = nil
+                }
+            }
+
+            index = text.index(after: index)
+        }
+
+        var seen = Set<String>()
+        return candidates.filter { seen.insert($0).inserted }
     }
 
     public func makeRequest(path: String) -> URLRequest {

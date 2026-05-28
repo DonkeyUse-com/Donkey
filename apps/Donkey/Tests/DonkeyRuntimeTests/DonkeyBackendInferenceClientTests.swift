@@ -233,6 +233,82 @@ struct DonkeyBackendInferenceClientTests {
     }
 
     @Test
+    @MainActor
+    func parseScreenshotStreamToleratesConcatenatedJSONDataLines() async throws {
+        let stalePartial = LocalUIUnderstandingResult(
+            controls: [
+                LocalUIUnderstandingControl(
+                    id: "stale-play",
+                    label: "Play",
+                    kind: .button,
+                    confidence: 0.4
+                )
+            ],
+            confidence: 0.4,
+            metadata: ["screenshotParser.stream": "partial"]
+        )
+        let latestPartial = LocalUIUnderstandingResult(
+            controls: [
+                LocalUIUnderstandingControl(
+                    id: "latest-play",
+                    label: "Play",
+                    kind: .button,
+                    confidence: 0.8
+                )
+            ],
+            confidence: 0.8,
+            metadata: ["screenshotParser.stream": "partial"]
+        )
+        let final = LocalUIUnderstandingResult(
+            controls: [
+                LocalUIUnderstandingControl(
+                    id: "final-result",
+                    label: "Search Result",
+                    kind: .listItem,
+                    confidence: 0.9
+                )
+            ],
+            confidence: 0.9,
+            metadata: ["screenshotParser.stream": "final"]
+        )
+        let encoder = JSONEncoder()
+        let responseText = [
+            "event: partial",
+            "data: \(String(data: try encoder.encode(stalePartial), encoding: .utf8)!)",
+            "data: \(String(data: try encoder.encode(latestPartial), encoding: .utf8)!)",
+            "",
+            "event: final",
+            "data: \(String(data: try encoder.encode(stalePartial), encoding: .utf8)!)",
+            "data: \(String(data: try encoder.encode(final), encoding: .utf8)!)",
+            "",
+        ].joined(separator: "\n")
+        let httpClient = FixtureHTTPClient(
+            data: Data(responseText.utf8),
+            statusCode: 200,
+            headerFields: ["Content-Type": "text/event-stream"]
+        )
+        let client = DonkeyBackendInferenceClient(
+            configuration: configuration(),
+            httpClient: httpClient
+        )
+
+        var partials: [LocalUIUnderstandingResult] = []
+        let result = try await client.parseScreenshotStream(
+            LocalUIUnderstandingRequest(
+                traceID: "trace-concat",
+                targetID: "target-concat",
+                pixelSize: HotLoopSize(width: 200, height: 100, space: .window)
+            ),
+            imageData: Data("png".utf8)
+        ) { partial in
+            partials.append(partial)
+        }
+
+        #expect(partials.map(\.controls.first?.id) == ["latest-play"])
+        #expect(result.controls.map(\.id) == ["final-result"])
+    }
+
+    @Test
     func screenshotParseOverlayMapperConvertsWindowPixelsToScreenOverlayCoordinates() throws {
         let result = LocalUIUnderstandingResult(
             controls: [
