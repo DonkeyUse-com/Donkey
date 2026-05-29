@@ -14,11 +14,13 @@ public enum DonkeyBackendInferenceClientError: Error, Equatable, Sendable {
 public struct DonkeyBackendInferenceConfiguration: Equatable, Sendable {
     public var baseURL: URL
     public var clientID: String
+    public var devAuthBypass: Bool
     public static let baseURLConfigurationDescription = "DONKEY_WEB_BASE_URL"
 
-    public init(baseURL: URL, clientID: String) {
+    public init(baseURL: URL, clientID: String, devAuthBypass: Bool = false) {
         self.baseURL = baseURL
         self.clientID = clientID
+        self.devAuthBypass = devAuthBypass
     }
 
     public static func fromEnvironment(
@@ -38,7 +40,8 @@ public struct DonkeyBackendInferenceConfiguration: Equatable, Sendable {
 
         return DonkeyBackendInferenceConfiguration(
             baseURL: baseURL,
-            clientID: environment["DONKEY_CLIENT_ID"] ?? stableClientID()
+            clientID: environment["DONKEY_CLIENT_ID"] ?? stableClientID(),
+            devAuthBypass: boolEnvironmentValue(environment["DONKEY_DEV_AUTH_BYPASS"])
         )
     }
 
@@ -61,6 +64,15 @@ public struct DonkeyBackendInferenceConfiguration: Equatable, Sendable {
     private static func trimmed(_ value: String?) -> String? {
         let trimmedValue = value?.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmedValue?.isEmpty == false ? trimmedValue : nil
+    }
+
+    private static func boolEnvironmentValue(_ value: String?) -> Bool {
+        switch trimmed(value)?.lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
     }
 
     private static func stableClientID() -> String {
@@ -408,6 +420,9 @@ public struct DonkeyBackendInferenceClient: @unchecked Sendable {
         request.httpShouldHandleCookies = true
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(configuration.clientID, forHTTPHeaderField: "x-donkey-client-id")
+        if configuration.devAuthBypass {
+            request.setValue("1", forHTTPHeaderField: "x-donkey-dev-auth-bypass")
+        }
         return request
     }
 

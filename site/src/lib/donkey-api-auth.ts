@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 export type DonkeyAuthContext = {
   platform: "api";
   app: "donkey";
-  method: "session-cookie";
+  method: "session-cookie" | "dev-bypass";
   clientId: string | null;
   userId: string;
 };
@@ -21,10 +21,17 @@ export type DonkeyAuthHandler<
 > = (request: TReq, ...args: TArgs) => Promise<Response> | Response;
 
 const clientIdHeader = "x-donkey-client-id";
+const devAuthBypassHeader = "x-donkey-dev-auth-bypass";
+const devAuthBypassUserID = "donkey-dev-auth-bypass";
 
 export async function getDonkeyAuthContext(
   headers: Headers,
 ): Promise<DonkeyAuthContext | null> {
+  const devBypass = devAuthBypassContext(headers);
+  if (devBypass) {
+    return devBypass;
+  }
+
   const session = await auth.api.getSession({
     headers,
   });
@@ -40,6 +47,31 @@ export async function getDonkeyAuthContext(
     method: "session-cookie",
     clientId: clientId ? clientId : null,
     userId: session.user.id,
+  };
+}
+
+export function shouldBypassDonkeyInferenceCredits(
+  authContext: DonkeyAuthContext,
+) {
+  return authContext.method === "dev-bypass";
+}
+
+function devAuthBypassContext(headers: Headers): DonkeyAuthContext | null {
+  if (process.env.NODE_ENV === "production") {
+    return null;
+  }
+  if (headers.get(devAuthBypassHeader)?.trim() !== "1") {
+    return null;
+  }
+
+  const clientId = headers.get(clientIdHeader)?.trim();
+
+  return {
+    platform: "api",
+    app: "donkey",
+    method: "dev-bypass",
+    clientId: clientId ? clientId : null,
+    userId: devAuthBypassUserID,
   };
 }
 

@@ -57,12 +57,30 @@ struct DonkeyBackendInferenceClientTests {
         let request = try #require(httpClient.requests.first)
         #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
         #expect(request.value(forHTTPHeaderField: "x-donkey-client-id") == "client-1")
+        #expect(request.value(forHTTPHeaderField: "x-donkey-dev-auth-bypass") == nil)
         #expect(request.url?.path == "/api/inference/responses/")
 
         let object = try #require(request.httpBodyJSONObject)
         #expect(object["model"] == nil)
         #expect(object["store"] as? Bool == false)
         #expect(object["stream"] as? Bool == false)
+    }
+
+    @Test
+    func backendRequestsSendDevAuthBypassHeaderWhenConfigured() {
+        let client = DonkeyBackendInferenceClient(
+            configuration: DonkeyBackendInferenceConfiguration(
+                baseURL: URL(string: "https://donkey.example")!,
+                clientID: "client-1",
+                devAuthBypass: true
+            ),
+            httpClient: FixtureHTTPClient(data: Data("{}".utf8), statusCode: 200)
+        )
+
+        let request = client.makeRequest(path: "/api/inference/responses/")
+
+        #expect(request.value(forHTTPHeaderField: "x-donkey-client-id") == "client-1")
+        #expect(request.value(forHTTPHeaderField: "x-donkey-dev-auth-bypass") == "1")
     }
 
     @Test
@@ -762,6 +780,20 @@ struct DonkeyBackendInferenceClientTests {
 
         #expect(configuration.baseURL.absoluteString == "https://web.donkey.example")
         #expect(configuration.clientID == "client-env")
+        #expect(configuration.devAuthBypass == false)
+    }
+
+    @Test
+    func configurationReadsDevAuthBypassEnvironment() throws {
+        let configuration = try DonkeyBackendInferenceConfiguration.fromEnvironment([
+            "DONKEY_WEB_BASE_URL": "https://web.donkey.example",
+            "DONKEY_CLIENT_ID": "client-env",
+            "DONKEY_DEV_AUTH_BYPASS": "1",
+        ])
+
+        #expect(configuration.baseURL.absoluteString == "https://web.donkey.example")
+        #expect(configuration.clientID == "client-env")
+        #expect(configuration.devAuthBypass == true)
     }
 
     @Test

@@ -18,7 +18,10 @@ import {
 import { InferenceProviderError } from "@/lib/inference/providers";
 import type { JsonObject, JsonValue } from "@/lib/inference/providers";
 import { responseCreateRequestSchema } from "@/lib/inference/schemas";
-import { withDonkeyAuth } from "@/lib/donkey-api-auth";
+import {
+  shouldBypassDonkeyInferenceCredits,
+  withDonkeyAuth,
+} from "@/lib/donkey-api-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -37,14 +40,17 @@ export const POST = withDonkeyAuth(async (request) => {
     typeof parsed.data.body.model === "string" && parsed.data.body.model.trim()
       ? parsed.data.body.model.trim()
       : "unknown";
-  const credits = await requireInferenceCredits({
-    model: requestedModel,
-    provider: parsed.data.donkeyProvider,
-    route: inferenceUsageRoutes.responses,
-    userId: request.donkey.userId,
-  });
-  if (!credits.ok) {
-    return credits.response;
+  const bypassCredits = shouldBypassDonkeyInferenceCredits(request.donkey);
+  if (!bypassCredits) {
+    const credits = await requireInferenceCredits({
+      model: requestedModel,
+      provider: parsed.data.donkeyProvider,
+      route: inferenceUsageRoutes.responses,
+      userId: request.donkey.userId,
+    });
+    if (!credits.ok) {
+      return credits.response;
+    }
   }
 
   const debugInspection = isDebugUIInspectionRequest(parsed.data.body);
@@ -69,15 +75,17 @@ export const POST = withDonkeyAuth(async (request) => {
     const providerStartedAt = performance.now();
     const result = await provider.createResponse?.(parsed.data);
     if (!result) {
-      await recordFailedInferenceUsage({
-        clientId: client.clientId,
-        errorCode: "responses_unavailable",
-        model: requestedModel,
-        provider: failedUsageProvider,
-        requestKind: "responses",
-        route: inferenceUsageRoutes.responses,
-        userId: request.donkey.userId,
-      });
+      if (!bypassCredits) {
+        await recordFailedInferenceUsage({
+          clientId: client.clientId,
+          errorCode: "responses_unavailable",
+          model: requestedModel,
+          provider: failedUsageProvider,
+          requestKind: "responses",
+          route: inferenceUsageRoutes.responses,
+          userId: request.donkey.userId,
+        });
+      }
 
       return NextResponse.json(
         {
@@ -85,6 +93,23 @@ export const POST = withDonkeyAuth(async (request) => {
         },
         { status: 503 },
       );
+    }
+
+    let usageHeaders: Record<string, string> = {};
+    if (bypassCredits) {
+      usageHeaders["X-Donkey-Dev-Auth-Bypass"] = "true";
+    } else {
+      const recordedUsage = await recordInferenceUsage({
+        clientId: client.clientId,
+        model: result.model,
+        provider: result.provider,
+        requestKind: "responses",
+        route: inferenceUsageRoutes.responses,
+        status: "succeeded",
+        usage: result.usage,
+        userId: request.donkey.userId,
+      });
+      usageHeaders = creditUsageHeaders(recordedUsage);
     }
 
     if (debugInspection) {
@@ -102,34 +127,25 @@ export const POST = withDonkeyAuth(async (request) => {
       );
     }
 
-    const recordedUsage = await recordInferenceUsage({
-      clientId: client.clientId,
-      model: result.model,
-      provider: result.provider,
-      requestKind: "responses",
-      route: inferenceUsageRoutes.responses,
-      status: "succeeded",
-      usage: result.usage,
-      userId: request.donkey.userId,
-    });
-
     return NextResponse.json(result.body, {
       headers: {
         "X-Donkey-Inference-Provider": result.provider,
         "X-Donkey-Inference-Model": result.model,
-        ...creditUsageHeaders(recordedUsage),
+        ...usageHeaders,
       },
     });
   } catch (error) {
-    await recordFailedInferenceUsage({
-      clientId: client.clientId,
-      errorCode: inferenceErrorCode(error),
-      model: requestedModel,
-      provider: failedUsageProvider,
-      requestKind: "responses",
-      route: inferenceUsageRoutes.responses,
-      userId: request.donkey.userId,
-    });
+    if (!bypassCredits) {
+      await recordFailedInferenceUsage({
+        clientId: client.clientId,
+        errorCode: inferenceErrorCode(error),
+        model: requestedModel,
+        provider: failedUsageProvider,
+        requestKind: "responses",
+        route: inferenceUsageRoutes.responses,
+        userId: request.donkey.userId,
+      });
+    }
     if (error instanceof InferenceProviderError) {
       return inferenceProviderErrorResponse(error);
     }
