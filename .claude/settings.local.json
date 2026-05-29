@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /Users/davidle/projects/donkey status --short)",
+      "Bash(swift build:*)",
+      "Bash(swift test:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git status:*)"
+    ]
+  }
+}
