@@ -46,14 +46,16 @@ const vertexAIScope = "https://www.googleapis.com/auth/cloud-platform";
 export const geminiBrowserInteractionToolType = "donkey_gemini_browser_interaction";
 export const debugUIInspectionToolType = "donkey_debug_ui_inspection";
 
+// Note: `generic_harness_planning` is deliberately NOT fast-decision. Planning is the most
+// reasoning-heavy step (routing, plan steps, applying loaded skill guidance, and the act-vs-confirm
+// call), and the flash-lite model follows that nuanced guidance poorly — it tends to ask for
+// clarification on requests a skill can resolve directly. Route planning to the stronger model.
 const fastDecisionSchemaNames = new Set([
-  "generic_harness_planning",
   "task_intent_v1",
   "task_followup_resolution_v1",
 ]);
 
 const fastDecisionPromptVersions = new Set([
-  "task-intent-v1",
   "task-followup-resolution-v1",
 ]);
 
