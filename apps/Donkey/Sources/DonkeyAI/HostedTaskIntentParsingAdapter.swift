@@ -300,66 +300,19 @@ public struct HostedTaskIntentParsingAdapter: TaskIntentParsingAdapter {
                 )
             }
 
-            var repairDecodeFailureMetadata: [String: String] = [:]
-            do {
-                if let intent = try TaskIntentWireCodec.decodeHostedPlanningIntent(
-                    repairOutputText,
-                    definitions: request.taskDefinitions,
-                    originalCommand: request.command,
-                    appFinderCatalog: request.appFinderCatalog,
-                    sourceModelCallID: "model-call-\(request.sourceTraceID)-repair",
-                    parserName: "hosted-responses-v1",
-                    parserSource: .onlineModel
-                ) {
-                    return TaskIntentAdapterResult(
-                        intent: intent,
-                        trace: trace(
-                            entry: entry,
-                            request: request,
-                            status: .completed,
-                            validationStatus: "schemaDecoded",
-                            latencyMS: latencyMS,
-                            metadata: Self.repairMetadata(
-                                previousMetadata: previousMetadata,
-                                repairOutputText: repairOutputText,
-                                status: "schemaDecoded"
-                            )
-                        )
-                    )
-                }
-            } catch {
-                repairDecodeFailureMetadata = Self.planningDecodeFailureMetadata(error)
-            }
-
-            if let noTaskMetadata = try? TaskIntentWireCodec.hostedPlanningNoTaskMetadata(
+            return decodeOutputText(
                 repairOutputText,
-                parserName: "hosted-responses-v1"
-            ) {
-                return result(
-                    entry: entry,
-                    request: request,
-                    status: .completed,
-                    validationStatus: "noTaskIntent",
-                    latencyMS: latencyMS,
-                    metadata: Self.repairMetadata(
-                        previousMetadata: previousMetadata,
-                        repairOutputText: repairOutputText,
-                        status: "noTaskIntent"
-                    ).merging(noTaskMetadata) { _, new in new }
-                )
-            }
-
-            return result(
                 entry: entry,
                 request: request,
-                status: .invalidOutput,
-                validationStatus: "invalid",
                 latencyMS: latencyMS,
-                metadata: Self.repairMetadata(
-                    previousMetadata: previousMetadata,
-                    repairOutputText: repairOutputText,
-                    status: "invalid"
-                ).merging(repairDecodeFailureMetadata) { current, _ in current }
+                modelCallIDSuffix: "-repair",
+                metadataBuilder: { status in
+                    Self.repairMetadata(
+                        previousMetadata: previousMetadata,
+                        repairOutputText: repairOutputText,
+                        status: status
+                    )
+                }
             )
         } catch is CancellationError {
             return result(entry: entry, request: request, status: .cancelled, validationStatus: "notValidated", latencyMS: nil)
@@ -378,6 +331,65 @@ public struct HostedTaskIntentParsingAdapter: TaskIntentParsingAdapter {
                 ).merging(Self.errorMetadata(error)) { current, _ in current }
             )
         }
+    }
+
+    private func decodeOutputText(
+        _ outputText: String,
+        entry: AIModelRegistryEntry,
+        request: TaskIntentAdapterRequest,
+        latencyMS: Double,
+        modelCallIDSuffix: String = "",
+        metadataBuilder: (String) -> [String: String]
+    ) -> TaskIntentAdapterResult {
+        var decodeFailureMetadata: [String: String] = [:]
+        do {
+            if let intent = try TaskIntentWireCodec.decodeHostedPlanningIntent(
+                outputText,
+                definitions: request.taskDefinitions,
+                originalCommand: request.command,
+                appFinderCatalog: request.appFinderCatalog,
+                sourceModelCallID: "model-call-\(request.sourceTraceID)\(modelCallIDSuffix)",
+                parserName: "hosted-responses-v1",
+                parserSource: .onlineModel
+            ) {
+                return TaskIntentAdapterResult(
+                    intent: intent,
+                    trace: trace(
+                        entry: entry,
+                        request: request,
+                        status: .completed,
+                        validationStatus: "schemaDecoded",
+                        latencyMS: latencyMS,
+                        metadata: metadataBuilder("schemaDecoded")
+                    )
+                )
+            }
+        } catch {
+            decodeFailureMetadata = Self.planningDecodeFailureMetadata(error)
+        }
+
+        if let noTaskMetadata = try? TaskIntentWireCodec.hostedPlanningNoTaskMetadata(
+            outputText,
+            parserName: "hosted-responses-v1"
+        ) {
+            return result(
+                entry: entry,
+                request: request,
+                status: .completed,
+                validationStatus: "noTaskIntent",
+                latencyMS: latencyMS,
+                metadata: metadataBuilder("noTaskIntent").merging(noTaskMetadata) { _, new in new }
+            )
+        }
+
+        return result(
+            entry: entry,
+            request: request,
+            status: .invalidOutput,
+            validationStatus: "invalid",
+            latencyMS: latencyMS,
+            metadata: metadataBuilder("invalid").merging(decodeFailureMetadata) { current, _ in current }
+        )
     }
 
     private static let instructions = [
@@ -401,6 +413,7 @@ public struct HostedTaskIntentParsingAdapter: TaskIntentParsingAdapter {
         "For local_app_interaction, select the most likely local app, set targetAppName and entities.appName to the human app name, set entities.goal, and when text must be entered set entities.query plus normalizedEntities.query.",
         "For local_app_interaction, use available local UI tools for UI workflows and available skill tools for skill-backed workflows. When a loaded app skill provides a validated script for the selected capability, prefer skill.load then skill.script.execute with structured toolInputs over repeated screenshot-driven keyboard fallback.",
         "When automation.applescript.generate is available and a supported app action is better handled through AppleScript than UI input, use it only for a small doable target-app operation, not a full automation pipeline. Plan dynamic AppleScript as separate steps: automation.applescript.generate, automation.applescript.validate, automation.applescript.execute, then app.observe and an app.verifyCommand or app.verifyVisibleText step. Use the same stable toolInputs.scriptArtifactID on generate, validate, and execute. The generate step should include targetApp, bundleIdentifier when known, goal, entities as JSON text, allowedActions, and verification. Never put script source in planner output; the child generation tool creates the source artifact. If AppleScript is not clearly doable for that small operation, use observation, Accessibility, screenshot, or UI tools instead.",
+        "Use agent.path.visualize only when you have grounded app/window/control/action evidence for every pointer waypoint. It is visual-only: it must describe the AI path with stepsJSON and must never replace real AX, AppleScript, keyboard, or guarded coordinate actions.",
         "Use ui.clickTarget when the intended action is to click or submit a visible control by Accessibility or AI visual evidence instead of pressing Return. Put the semantic or observed visual target id in controlID.",
         "Verification may be a set of verifier steps. Use app.verifyCommand for guarded command evidence, app.verifyVisibleText for observed result text, and include both when both kinds of evidence are needed.",
         "When ui.setText is present, entities.query and normalizedEntities.query must be non-empty, the step inputEntity should usually be query, and controlID/focusKey should describe the guarded UI strategy.",
@@ -445,27 +458,7 @@ public struct HostedTaskIntentParsingAdapter: TaskIntentParsingAdapter {
     }
 
     private static func outputText(from value: RemoteInferenceJSONValue) -> String? {
-        if let outputText = value.objectValue?["output_text"]?.stringValue,
-           !outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return outputText
-        }
-
-        guard let output = value.objectValue?["output"]?.arrayValue else {
-            return nil
-        }
-        for item in output {
-            guard let content = item.objectValue?["content"]?.arrayValue else { continue }
-            for contentItem in content {
-                guard contentItem.objectValue?["type"]?.stringValue == "output_text",
-                      let text = contentItem.objectValue?["text"]?.stringValue,
-                      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                else {
-                    continue
-                }
-                return text
-            }
-        }
-        return nil
+        RemoteInferenceResponseHelpers.outputText(from: value)
     }
 
     private static func status(for error: Error) -> AIModelCallStatus {
@@ -496,22 +489,7 @@ public struct HostedTaskIntentParsingAdapter: TaskIntentParsingAdapter {
     }
 
     private static func jsonValue(_ value: Any) -> RemoteInferenceJSONValue {
-        switch value {
-        case let string as String:
-            return .string(string)
-        case let bool as Bool:
-            return .bool(bool)
-        case let int as Int:
-            return .number(Double(int))
-        case let double as Double:
-            return .number(double)
-        case let array as [Any]:
-            return .array(array.map(jsonValue))
-        case let object as [String: Any]:
-            return .object(object.mapValues(jsonValue))
-        default:
-            return .null
-        }
+        RemoteInferenceResponseHelpers.jsonValue(value)
     }
 
     private func result(
@@ -571,28 +549,5 @@ private struct HostedPlanningRepairContext {
             "If no supported executable action is possible, return a conversation or clarification route.",
             "Use the relevant app skill and catalog metadata to repair app-specific workflow fields instead of inventing unsupported behavior."
         ].joined(separator: " ")
-    }
-}
-
-private extension RemoteInferenceJSONValue {
-    var objectValue: [String: RemoteInferenceJSONValue]? {
-        if case .object(let value) = self {
-            return value
-        }
-        return nil
-    }
-
-    var arrayValue: [RemoteInferenceJSONValue]? {
-        if case .array(let value) = self {
-            return value
-        }
-        return nil
-    }
-
-    var stringValue: String? {
-        if case .string(let value) = self {
-            return value
-        }
-        return nil
     }
 }

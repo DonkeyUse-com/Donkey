@@ -26,6 +26,30 @@ struct UserQueryCommandHandlingResult: Equatable, Sendable {
     var documentReviewRequest: DocumentFormFillReviewRequest?
     var agentVisualizationPlan: AgentVisualizationPlan?
     var cursorOverlayRequest: PointerCoachCursorGuideRequest?
+
+    init(
+        status: LocalAppTaskLiveRunStatus,
+        threadStatus: UserQueryTaskStatus,
+        decision: AppHarnessDecision,
+        summary: String,
+        traceID: String,
+        metadata: [String: String],
+        taskLabel: String? = nil,
+        documentReviewRequest: DocumentFormFillReviewRequest? = nil,
+        agentVisualizationPlan: AgentVisualizationPlan? = nil,
+        cursorOverlayRequest: PointerCoachCursorGuideRequest? = nil
+    ) {
+        self.status = status
+        self.threadStatus = threadStatus
+        self.decision = decision
+        self.summary = summary
+        self.taskLabel = taskLabel
+        self.traceID = traceID
+        self.metadata = metadata
+        self.documentReviewRequest = documentReviewRequest
+        self.agentVisualizationPlan = agentVisualizationPlan
+        self.cursorOverlayRequest = cursorOverlayRequest
+    }
 }
 
 struct DocumentFormFillReviewRequest: Equatable, Sendable {
@@ -150,16 +174,12 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
                 threadStatus: .chatting,
                 decision: decision,
                 summary: "",
-                taskLabel: nil,
                 traceID: traceID,
                 metadata: [
                     "appHarness.decision": decision.kind.rawValue,
                     "appHarness.decision.traceID": traceID,
                     "appHarness.router": "emptyTurn"
-                ].merging(Self.genericHarnessMetadata(preparedTurn: genericPreparedTurn)) { current, _ in current },
-                documentReviewRequest: nil,
-                agentVisualizationPlan: nil,
-                cursorOverlayRequest: nil
+                ].merging(Self.genericHarnessMetadata(preparedTurn: genericPreparedTurn)) { current, _ in current }
             )
             _ = await genericHarnessLifecycle.coordinator.complete(
                 taskID: genericPreparedTurn.task.id,
@@ -242,131 +262,24 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
         )
 
         if Self.shouldFailSafelyWithoutLocalTask(resolution) {
-            let response = Self.modelUnavailableResponse(for: resolution)
-            let decision = AppHarnessDecision(
-                kind: .respond,
-                message: response,
-                traceID: traceID,
-                metadata: [
-                    "structuredDecision": "true",
-                    "router": "modelUnavailable",
-                    "resolution.status": resolution.status.rawValue
-                ]
+            return await handleFailSafe(
+                resolution: resolution, traceID: traceID, taskID: taskID,
+                modelMetadata: modelMetadata
             )
-            let handlingResult = UserQueryCommandHandlingResult(
-                status: .failedSafe,
-                threadStatus: .failed,
-                decision: decision,
-                summary: response,
-                taskLabel: nil,
-                traceID: traceID,
-                metadata: modelMetadata.merging([
-                    "appHarness.decision": AppHarnessDecisionKind.respond.rawValue,
-                    "router": "modelUnavailable",
-                    "resolution.status": resolution.status.rawValue,
-                    "resolution.reason": resolution.metadata["reason"] ?? ""
-                ]) { _, new in new },
-                documentReviewRequest: nil,
-                agentVisualizationPlan: nil,
-                cursorOverlayRequest: nil
-            )
-            _ = await genericHarnessLifecycle.coordinator.failSafe(
-                taskID: taskID,
-                reason: "Hosted command parser did not produce a safe action plan"
-            )
-            await coordinatorRegistry.finish(taskID: taskID)
-            logHandlingResult(
-                handlingResult,
-                stage: "modelUnavailable",
-                hint: "The hosted planner failed before producing executable intent; no local task was run."
-            )
-            return handlingResult
         }
 
         if Self.shouldAskClarificationBeforeLocalTask(resolution) {
-            let question = Self.clarificationQuestion(for: resolution)
-            let decision = AppHarnessDecision(
-                kind: .askClarification,
-                message: question,
-                missingDetail: resolution.metadata["reason"],
-                traceID: traceID,
-                metadata: [
-                    "structuredDecision": "true",
-                    "router": "modelClarification",
-                    "resolution.status": resolution.status.rawValue
-                ]
+            return await handleClarification(
+                resolution: resolution, traceID: traceID, taskID: taskID,
+                modelMetadata: modelMetadata
             )
-            let handlingResult = UserQueryCommandHandlingResult(
-                status: .needsConfirmation,
-                threadStatus: .waitingForClarification,
-                decision: decision,
-                summary: question,
-                taskLabel: nil,
-                traceID: traceID,
-                metadata: modelMetadata.merging([
-                    "appHarness.decision": AppHarnessDecisionKind.askClarification.rawValue,
-                    "router": "modelClarification",
-                    "resolution.status": resolution.status.rawValue,
-                    "resolution.reason": resolution.metadata["reason"] ?? ""
-                ]) { _, new in new },
-                documentReviewRequest: nil,
-                agentVisualizationPlan: nil,
-                cursorOverlayRequest: nil
-            )
-            _ = await genericHarnessLifecycle.coordinator.waitForUser(
-                taskID: taskID,
-                question: question,
-                reason: "Generic harness planner requested clarification"
-            )
-            await coordinatorRegistry.finish(taskID: taskID)
-            logHandlingResult(
-                handlingResult,
-                stage: "clarification",
-                hint: "The harness planner asked for a missing detail before selecting an action tool."
-            )
-            return handlingResult
         }
 
         if Self.shouldRespondWithoutLocalTask(resolution) {
-            let response = Self.conversationResponse(for: resolution)
-            let decision = AppHarnessDecision(
-                kind: .respond,
-                message: response,
-                traceID: traceID,
-                metadata: [
-                    "structuredDecision": "true",
-                    "router": "modelConversation",
-                    "resolution.status": resolution.status.rawValue
-                ]
+            return await handleConversation(
+                resolution: resolution, traceID: traceID, taskID: taskID,
+                modelMetadata: modelMetadata
             )
-            let handlingResult = UserQueryCommandHandlingResult(
-                status: .completed,
-                threadStatus: .chatting,
-                decision: decision,
-                summary: response,
-                taskLabel: nil,
-                traceID: traceID,
-                metadata: modelMetadata.merging([
-                    "appHarness.decision": AppHarnessDecisionKind.respond.rawValue,
-                    "router": "modelConversation",
-                    "resolution.status": resolution.status.rawValue,
-                    "resolution.reason": resolution.metadata["reason"] ?? ""
-                ]) { _, new in new },
-                documentReviewRequest: nil,
-                agentVisualizationPlan: nil,
-                cursorOverlayRequest: nil
-            )
-            _ = await genericHarnessLifecycle.coordinator.complete(
-                taskID: taskID,
-                reason: "User query conversation response"
-            )
-            await coordinatorRegistry.finish(taskID: taskID)
-            logHandlingResult(
-                handlingResult,
-                stage: "conversation",
-                hint: "No local task intent was produced; responded in the thread."
-            )
-            return handlingResult
         }
 
         let decision = AppHarnessDecision(
@@ -435,19 +348,14 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
         let finalizedTask = await genericHarnessLifecycle.taskState(taskID: taskID)
         logActionTraces(for: result)
 
-        let agentVisualizationPlan = LocalAppTaskAgentVisualizationBuilder.plan(
-            for: result,
-            sourceTraceID: traceID
-        ).map(groundAgentVisualizationPlan)
-        let handlingResult = UserQueryCommandHandlingResult(
-            status: result.status,
-            threadStatus: Self.userQueryStatus(for: finalizedTask)
-                ?? threadStatus(for: result, runStep: runStep),
-            decision: decision,
-            summary: summary(for: result, task: finalizedTask, runStep: runStep),
-            taskLabel: taskLabel(for: result),
-            traceID: traceID,
-            metadata: Self.genericHarnessTaskMetadata(finalizedTask ?? runStep?.task).merging(result.metadata) { current, _ in current }.merging([
+        let agentVisualizationPlan = Self.agentVisualizationPlan(from: runSteps)
+            ?? LocalAppTaskAgentVisualizationBuilder.plan(
+                for: result,
+                sourceTraceID: traceID
+            ).map(groundAgentVisualizationPlan)
+        let localTaskMetadata = Self.genericHarnessTaskMetadata(finalizedTask ?? runStep?.task)
+            .merging(result.metadata) { current, _ in current }
+            .merging([
                 "appHarness.decision": AppHarnessDecisionKind.runLocalTask.rawValue,
                 "appHarness.router": "modelLocalAppTask"
             ]) { current, _ in current }
@@ -456,7 +364,16 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
                 runStep: runStep,
                 verificationStep: finalized.verificationStep,
                 recoveryStep: finalized.recoveryStep
-            )) { current, _ in current },
+            )) { current, _ in current }
+        let handlingResult = UserQueryCommandHandlingResult(
+            status: result.status,
+            threadStatus: Self.userQueryStatus(for: finalizedTask)
+                ?? threadStatus(for: result, runStep: runStep),
+            decision: decision,
+            summary: summary(for: result, task: finalizedTask, runStep: runStep),
+            traceID: traceID,
+            metadata: localTaskMetadata,
+            taskLabel: taskLabel(for: result),
             documentReviewRequest: documentReviewRequest(
                 traceID: traceID,
                 result: result
@@ -493,6 +410,141 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
             reason: "User query approved pending permissions"
         ) != nil
     }
+
+    // MARK: - Non-Local-Task Routing
+
+    private func handleFailSafe(
+        resolution: LocalAppTaskCatalogResolution,
+        traceID: String,
+        taskID: String,
+        modelMetadata: [String: String]
+    ) async -> UserQueryCommandHandlingResult {
+        let response = Self.modelUnavailableResponse(for: resolution)
+        let decision = AppHarnessDecision(
+            kind: .respond,
+            message: response,
+            traceID: traceID,
+            metadata: [
+                "structuredDecision": "true",
+                "router": "modelUnavailable",
+                "resolution.status": resolution.status.rawValue
+            ]
+        )
+        let result = UserQueryCommandHandlingResult(
+            status: .failedSafe,
+            threadStatus: .failed,
+            decision: decision,
+            summary: response,
+            traceID: traceID,
+            metadata: modelMetadata.merging([
+                "appHarness.decision": AppHarnessDecisionKind.respond.rawValue,
+                "router": "modelUnavailable",
+                "resolution.status": resolution.status.rawValue,
+                "resolution.reason": resolution.metadata["reason"] ?? ""
+            ]) { _, new in new }
+        )
+        _ = await genericHarnessLifecycle.coordinator.failSafe(
+            taskID: taskID,
+            reason: "Hosted command parser did not produce a safe action plan"
+        )
+        await coordinatorRegistry.finish(taskID: taskID)
+        logHandlingResult(
+            result,
+            stage: "modelUnavailable",
+            hint: "The hosted planner failed before producing executable intent; no local task was run."
+        )
+        return result
+    }
+
+    private func handleClarification(
+        resolution: LocalAppTaskCatalogResolution,
+        traceID: String,
+        taskID: String,
+        modelMetadata: [String: String]
+    ) async -> UserQueryCommandHandlingResult {
+        let question = Self.clarificationQuestion(for: resolution)
+        let decision = AppHarnessDecision(
+            kind: .askClarification,
+            message: question,
+            missingDetail: resolution.metadata["reason"],
+            traceID: traceID,
+            metadata: [
+                "structuredDecision": "true",
+                "router": "modelClarification",
+                "resolution.status": resolution.status.rawValue
+            ]
+        )
+        let result = UserQueryCommandHandlingResult(
+            status: .needsConfirmation,
+            threadStatus: .waitingForClarification,
+            decision: decision,
+            summary: question,
+            traceID: traceID,
+            metadata: modelMetadata.merging([
+                "appHarness.decision": AppHarnessDecisionKind.askClarification.rawValue,
+                "router": "modelClarification",
+                "resolution.status": resolution.status.rawValue,
+                "resolution.reason": resolution.metadata["reason"] ?? ""
+            ]) { _, new in new }
+        )
+        _ = await genericHarnessLifecycle.coordinator.waitForUser(
+            taskID: taskID,
+            question: question,
+            reason: "Generic harness planner requested clarification"
+        )
+        await coordinatorRegistry.finish(taskID: taskID)
+        logHandlingResult(
+            result,
+            stage: "clarification",
+            hint: "The harness planner asked for a missing detail before selecting an action tool."
+        )
+        return result
+    }
+
+    private func handleConversation(
+        resolution: LocalAppTaskCatalogResolution,
+        traceID: String,
+        taskID: String,
+        modelMetadata: [String: String]
+    ) async -> UserQueryCommandHandlingResult {
+        let response = Self.conversationResponse(for: resolution)
+        let decision = AppHarnessDecision(
+            kind: .respond,
+            message: response,
+            traceID: traceID,
+            metadata: [
+                "structuredDecision": "true",
+                "router": "modelConversation",
+                "resolution.status": resolution.status.rawValue
+            ]
+        )
+        let result = UserQueryCommandHandlingResult(
+            status: .completed,
+            threadStatus: .chatting,
+            decision: decision,
+            summary: response,
+            traceID: traceID,
+            metadata: modelMetadata.merging([
+                "appHarness.decision": AppHarnessDecisionKind.respond.rawValue,
+                "router": "modelConversation",
+                "resolution.status": resolution.status.rawValue,
+                "resolution.reason": resolution.metadata["reason"] ?? ""
+            ]) { _, new in new }
+        )
+        _ = await genericHarnessLifecycle.coordinator.complete(
+            taskID: taskID,
+            reason: "User query conversation response"
+        )
+        await coordinatorRegistry.finish(taskID: taskID)
+        logHandlingResult(
+            result,
+            stage: "conversation",
+            hint: "No local task intent was produced; responded in the thread."
+        )
+        return result
+    }
+
+    // MARK: - Generic Harness Task Execution
 
     private func finalizeGenericHarnessTask(
         taskID: String,
@@ -535,20 +587,20 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
         case .needsConfirmation, .unsupportedCommand:
             _ = await genericHarnessLifecycle.coordinator.waitForUser(
                 taskID: taskID,
-                question: summary(for: result, runStep: runStep),
+                question: summary(for: result, task: runStep?.task, runStep: runStep),
                 reason: "User query local app task needs clarification"
             )
             return UserQueryGenericFinalizeResult()
         case .appUnavailable, .failedSafe:
             let recoveryStep = await recoverGenericHarnessTask(
                 taskID: taskID,
-                reason: summary(for: result, runStep: runStep),
+                reason: summary(for: result, task: runStep?.task, runStep: runStep),
                 traceID: result.traceID,
                 runtime: runtime
             )
             _ = await genericHarnessLifecycle.coordinator.failSafe(
                 taskID: taskID,
-                reason: summary(for: result, runStep: runStep)
+                reason: summary(for: result, task: runStep?.task, runStep: runStep)
             )
             return UserQueryGenericFinalizeResult(
                 recoveryStep: recoveryStep
@@ -642,6 +694,22 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
         }
     }
 
+    private static func agentVisualizationPlan(
+        from runSteps: [HarnessStepExecutionResult]
+    ) -> AgentVisualizationPlan? {
+        for step in runSteps.reversed() {
+            guard step.toolResult?.toolName == AppHarnessGenericLifecycleToolNames.agentPathVisualize,
+                  let text = step.toolResult?.metadata["agentVisualization.planJSON"],
+                  let data = text.data(using: .utf8),
+                  let plan = try? JSONDecoder().decode(AgentVisualizationPlan.self, from: data)
+            else {
+                continue
+            }
+            return plan
+        }
+        return nil
+    }
+
     private func groundAgentVisualizationPlan(_ plan: AgentVisualizationPlan) -> AgentVisualizationPlan {
         let candidates = MacWindowResolver().enumerateCandidates()
         guard !candidates.isEmpty else { return plan }
@@ -695,32 +763,24 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
                 metadata["responseMode"] = "conversation"
                 metadata["assistantResponse"] = "I'm here. What would you like to work on?"
             }
-            for key in ["responseMode", "assistantResponse"] {
-                if let value = result.trace.metadata[key], !value.isEmpty {
-                    metadata[key] = value
-                }
-            }
-            for key in [
-                "reason",
-                "detail",
-                "error",
-                "backend.provider",
-                "http.status",
-                "http.bodyPreview",
-                "modelOutput.empty",
-                "modelOutput.preview",
-                "fallback.status",
-                "fallback.validation",
-                "fallback.reason",
-                "fallback.http.status",
-                "fallback.http.bodyPreview",
-                "provider",
-                "privacy.store"
-            ] {
-                if let value = result.trace.metadata[key], !value.isEmpty {
-                    metadata["model.\(key)"] = value
-                }
-            }
+            Self.mergeNonEmpty(
+                from: result.trace.metadata,
+                keys: ["responseMode", "assistantResponse"],
+                into: &metadata
+            )
+            Self.mergeNonEmpty(
+                from: result.trace.metadata,
+                keys: [
+                    "reason", "detail", "error", "backend.provider",
+                    "http.status", "http.bodyPreview",
+                    "modelOutput.empty", "modelOutput.preview",
+                    "fallback.status", "fallback.validation", "fallback.reason",
+                    "fallback.http.status", "fallback.http.bodyPreview",
+                    "provider", "privacy.store"
+                ],
+                into: &metadata,
+                keyPrefix: "model."
+            )
             return (
                 LocalAppTaskCatalogResolution(
                     status: .needsConfirmation,
@@ -826,6 +886,19 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
             }
         }
         return nil
+    }
+
+    private static func mergeNonEmpty(
+        from source: [String: String],
+        keys: [String],
+        into target: inout [String: String],
+        keyPrefix: String = ""
+    ) {
+        for key in keys {
+            if let value = source[key], !value.isEmpty {
+                target["\(keyPrefix)\(key)"] = value
+            }
+        }
     }
 
     private func runHint(for result: LocalAppTaskLiveRunResult) -> String {
@@ -1015,7 +1088,7 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
         )
     }
 
-    private func summary(for result: LocalAppTaskLiveRunResult) -> String {
+    private func statusSummary(for result: LocalAppTaskLiveRunResult) -> String {
         switch result.status {
         case .completed:
             return "Done"
@@ -1045,13 +1118,6 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
         case .failedSafe:
             return "Stopped safely"
         }
-    }
-
-    private func summary(
-        for result: LocalAppTaskLiveRunResult,
-        runStep: HarnessStepExecutionResult?
-    ) -> String {
-        summary(for: result, task: runStep?.task, runStep: runStep)
     }
 
     private func summary(
@@ -1089,7 +1155,7 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
             return question
         }
 
-        return summary(for: result)
+        return statusSummary(for: result)
     }
 
     private func threadStatus(
@@ -1226,7 +1292,7 @@ struct LocalAppUserQueryCommandHandler: UserQueryCommandHandling {
         ]
     }
 
-    private static func genericHarnessToolNames() -> [String] {
+    static func genericHarnessToolNames() -> [String] {
         let allowedSensitiveTools: Set<String> = [
             "automation.applescript.generate"
         ]

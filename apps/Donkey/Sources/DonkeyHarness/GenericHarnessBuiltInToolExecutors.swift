@@ -1,3 +1,4 @@
+import DonkeyContracts
 import Foundation
 
 public struct HarnessMemoryEntry: Codable, Equatable, Sendable {
@@ -237,6 +238,8 @@ public struct HarnessBuiltInToolServices: Sendable {
     }
 }
 
+// MARK: - Built-In Tool Executors
+
 public enum BuiltInHarnessToolExecutors {
     public static func tools(
         descriptors: [HarnessToolDescriptor],
@@ -286,6 +289,8 @@ public enum BuiltInHarnessToolExecutors {
             return textEnter(context)
         case "keyboard.press":
             return keyboardPress(context)
+        case "agent.path.visualize":
+            return agentPathVisualize(context)
         case "automation.applescript.generate":
             return await appleScriptGenerate(context, services: services)
         case "automation.applescript.validate":
@@ -317,11 +322,13 @@ public enum BuiltInHarnessToolExecutors {
         }
     }
 
+    // MARK: - Conversation & User Interaction
+
     private static func conversationRespond(_ context: HarnessToolExecutionContext) -> HarnessToolResult {
         let response = context.call.input["response"] ?? context.call.input["message"] ?? ""
         return success(
             context,
-            summary: response.isEmpty ? "Conversation response recorded." : "Conversation response recorded.",
+            summary: "Conversation response recorded.",
             facts: [
                 "lastConversationResponseLength": String(response.count),
                 "lastAcceptedTool": context.call.name
@@ -362,6 +369,8 @@ public enum BuiltInHarnessToolExecutors {
             ]
         )
     }
+
+    // MARK: - Memory & Skills
 
     private static func memoryRetrieve(
         _ context: HarnessToolExecutionContext,
@@ -605,6 +614,8 @@ public enum BuiltInHarnessToolExecutors {
         )
     }
 
+    // MARK: - App Search & Focus
+
     private static func appSearch(
         _ context: HarnessToolExecutionContext,
         services: HarnessBuiltInToolServices
@@ -674,6 +685,8 @@ public enum BuiltInHarnessToolExecutors {
             ]) { current, _ in current }
         )
     }
+
+    // MARK: - Screen & Elements
 
     private static func screenObserve(_ context: HarnessToolExecutionContext) -> HarnessToolResult {
         let hasEvidence = context.worldModel.focusedApp != nil
@@ -810,6 +823,92 @@ public enum BuiltInHarnessToolExecutors {
         )
     }
 
+    private static func agentPathVisualize(_ context: HarnessToolExecutionContext) -> HarnessToolResult {
+        guard let stepsJSON = trimmed(context.call.input["stepsJSON"] ?? context.call.input["steps"]) else {
+            return invalidInput(context, "agent.path.visualize requires stepsJSON.")
+        }
+        guard let stepData = stepsJSON.data(using: .utf8) else {
+            return invalidInput(context, "agent.path.visualize stepsJSON must be UTF-8 JSON.")
+        }
+
+        let steps: [AgentPathStep]
+        do {
+            steps = try JSONDecoder().decode([AgentPathStep].self, from: stepData)
+        } catch {
+            return invalidInput(context, "agent.path.visualize stepsJSON did not match AgentPathStep.")
+        }
+        guard !steps.isEmpty else {
+            return invalidInput(context, "agent.path.visualize requires at least one path step.")
+        }
+
+        let ungroundedStepIDs = steps
+            .filter { !$0.hasGroundedTarget }
+            .map(\.id)
+        guard ungroundedStepIDs.isEmpty else {
+            return HarnessToolResult(
+                callID: context.call.id,
+                toolName: context.call.name,
+                status: .failed,
+                summary: "Agent path visualization stopped before showing ungrounded motion.",
+                observations: HarnessObservationDelta(
+                    facts: [
+                        "agent.path.visualize.status": "blocked",
+                        "agent.path.visualize.ungroundedStepIDs": ungroundedStepIDs.joined(separator: ","),
+                        "lastAcceptedTool": context.call.name
+                    ],
+                    uncertainty: ["ungrounded pointer step(s): \(ungroundedStepIDs.joined(separator: ","))"]
+                ),
+                metadata: [
+                    "executor": "builtInGeneric",
+                    "reason": "ungroundedAgentPathStep",
+                    "ungroundedStepIDs": ungroundedStepIDs.joined(separator: ","),
+                    "realPointerMoved": "false"
+                ]
+            )
+        }
+
+        let trace = AgentPathTrace(
+            id: trimmed(context.call.input["traceID"] ?? context.call.input["agentPathTraceID"])
+                ?? "agent-path-\(context.taskID)-\(context.call.id)",
+            taskID: context.taskID,
+            title: trimmed(context.call.input["title"]) ?? context.worldModel.facts["genericHarness.intent.goal"] ?? "Agent path",
+            sourceTraceID: trimmed(context.call.input["sourceTraceID"] ?? context.call.metadata["traceID"]) ?? context.call.id,
+            steps: steps,
+            metadata: context.call.input.filter { key, _ in
+                key.hasPrefix("target.") || key.hasPrefix("agentPath.") || key == "targetApp"
+            }.merging([
+                "source": "agent.path.visualize",
+                "realPointerMoved": "false"
+            ]) { current, _ in current }
+        )
+        guard let plan = trace.visualizationPlan() else {
+            return failed(context, "Agent path visualization did not contain any grounded cursor targets.", reason: "noGroundedTargets")
+        }
+
+        return success(
+            context,
+            summary: "Prepared visual-only agent path with \(trace.groundedSteps.count) grounded step(s).",
+            facts: [
+                "agent.path.visualize.status": "ready",
+                "agent.path.visualize.traceID": trace.id,
+                "agent.path.visualize.stepCount": String(trace.steps.count),
+                "agent.path.visualize.groundedStepCount": String(trace.groundedSteps.count),
+                "agent.path.visualize.realPointerMoved": "false",
+                "lastAcceptedTool": context.call.name
+            ],
+            metadata: [
+                "agentPath.traceID": trace.id,
+                "agentPath.traceJSON": jsonString(trace),
+                "agentVisualization.planID": plan.id,
+                "agentVisualization.planJSON": jsonString(plan),
+                "agentVisualization.stepCount": String(plan.steps.count),
+                "realPointerMoved": "false"
+            ]
+        )
+    }
+
+    // MARK: - AppleScript Automation
+
     private static func appleScriptGenerate(
         _ context: HarnessToolExecutionContext,
         services: HarnessBuiltInToolServices
@@ -945,6 +1044,8 @@ public enum BuiltInHarnessToolExecutors {
         }
         return entities
     }
+
+    // MARK: - Application Learning
 
     private static func applicationLearningStart(
         _ context: HarnessToolExecutionContext,
@@ -1207,6 +1308,8 @@ public enum BuiltInHarnessToolExecutors {
         }
     }
 
+    // MARK: - Verification & Lifecycle
+
     private static func stateVerify(_ context: HarnessToolExecutionContext) -> HarnessToolResult {
         guard let criteria = trimmed(context.call.input["criteria"]) else {
             return invalidInput(context, "state.verify requires criteria.")
@@ -1246,6 +1349,8 @@ public enum BuiltInHarnessToolExecutors {
             metadata: ["lifecycleOperation": context.call.name]
         )
     }
+
+    // MARK: - Result Helpers
 
     private static func success(
         _ context: HarnessToolExecutionContext,
@@ -1295,6 +1400,8 @@ public enum BuiltInHarnessToolExecutors {
             ]
         )
     }
+
+    // MARK: - Utility
 
     private static func scopedElements(_ context: HarnessToolExecutionContext) -> [HarnessWorldElement] {
         guard let scope = trimmed(context.call.input["scope"]) else {
@@ -1441,5 +1548,16 @@ public enum BuiltInHarnessToolExecutors {
     private static func bounded(_ value: String, limit: Int) -> String {
         guard value.count > limit else { return value }
         return String(value.prefix(limit))
+    }
+
+    private static func jsonString<T: Encodable>(_ value: T) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(value),
+              let text = String(data: data, encoding: .utf8)
+        else {
+            return "{}"
+        }
+        return text
     }
 }

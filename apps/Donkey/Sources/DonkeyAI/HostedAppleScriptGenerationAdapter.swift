@@ -173,18 +173,20 @@ public struct HostedAppleScriptGenerationAdapter: Sendable {
     }
 
     private func promptText(for request: HarnessScriptGenerationRequest) -> String {
-        let payload: [String: Any] = [
-            "targetApp": request.targetApp,
-            "bundleIdentifier": request.bundleIdentifier ?? "",
-            "goal": request.goal,
-            "entities": request.entities,
-            "allowedActions": request.allowedActions,
-            "verification": request.verification,
-            "worldFacts": request.worldFacts,
-            "metadata": request.metadata
-        ]
-        let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
-        let json = data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        let payload = AppleScriptGenerationPromptPayload(
+            targetApp: request.targetApp,
+            bundleIdentifier: request.bundleIdentifier ?? "",
+            goal: request.goal,
+            entities: request.entities,
+            allowedActions: request.allowedActions,
+            verification: request.verification,
+            worldFacts: request.worldFacts,
+            metadata: request.metadata
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let json = (try? encoder.encode(payload))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         return "Generate one bounded AppleScript for this structured local-app task JSON:\n\(json)"
     }
 
@@ -236,46 +238,11 @@ public struct HostedAppleScriptGenerationAdapter: Sendable {
     }
 
     private static func jsonValue(_ value: Any) -> RemoteInferenceJSONValue {
-        switch value {
-        case let value as String:
-            return .string(value)
-        case let value as Bool:
-            return .bool(value)
-        case let value as Int:
-            return .number(Double(value))
-        case let value as Double:
-            return .number(value)
-        case let value as [String: Any]:
-            return .object(value.mapValues(jsonValue))
-        case let value as [Any]:
-            return .array(value.map(jsonValue))
-        default:
-            return .null
-        }
+        RemoteInferenceResponseHelpers.jsonValue(value)
     }
 
     private static func outputText(from value: RemoteInferenceJSONValue) -> String? {
-        if let outputText = value.objectValue?["output_text"]?.stringValue,
-           !outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return outputText
-        }
-
-        guard let output = value.objectValue?["output"]?.arrayValue else {
-            return nil
-        }
-        for item in output {
-            guard let content = item.objectValue?["content"]?.arrayValue else { continue }
-            for contentItem in content {
-                guard contentItem.objectValue?["type"]?.stringValue == "output_text",
-                      let text = contentItem.objectValue?["text"]?.stringValue,
-                      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                else {
-                    continue
-                }
-                return text
-            }
-        }
-        return nil
+        RemoteInferenceResponseHelpers.outputText(from: value)
     }
 }
 
@@ -286,4 +253,15 @@ private struct AppleScriptGenerationWire: Decodable {
     var summary: String
     var safetyNotes: [String]
     var expectedOutput: String
+}
+
+private struct AppleScriptGenerationPromptPayload: Encodable {
+    var targetApp: String
+    var bundleIdentifier: String
+    var goal: String
+    var entities: [String: String]
+    var allowedActions: String
+    var verification: String
+    var worldFacts: [String: String]
+    var metadata: [String: String]
 }
