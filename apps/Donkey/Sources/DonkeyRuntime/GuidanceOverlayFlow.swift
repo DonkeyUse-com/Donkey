@@ -37,33 +37,18 @@ public enum GuidanceOverlayFlow {
         guard !targets.isEmpty else {
             return Outcome(request: nil, reason: "noTargets", resolvedAppName: nil)
         }
-        guard let target = resolveTarget(
+        guard let observation = AccessibilityObserver.observe(
             appName: appName,
             bundleIdentifier: bundleIdentifier,
             resolver: windowResolver
         ) else {
-            return Outcome(request: nil, reason: "noWindowForApp", resolvedAppName: nil)
+            return Outcome(request: nil, reason: "accessibilityObservationUnavailable", resolvedAppName: nil)
         }
-
-        let limits = MacAccessibilitySnapshotLimits(maxDepth: 8, maxChildrenPerNode: 120, maxTotalNodes: 1_200)
-        guard let tree = try? ApplicationServicesMacAccessibilitySnapshotCapturer().captureTree(
-            target: target,
-            limits: limits
-        ) else {
-            return Outcome(request: nil, reason: "accessibilityCaptureFailed", resolvedAppName: target.appName)
-        }
-        let snapshot = MacAccessibilitySnapshot(
-            target: target,
-            limits: limits,
-            root: tree.root,
-            totalNodeCount: tree.totalNodeCount,
-            isTreeTruncated: tree.isTreeTruncated
-        )
-        let index = LocalAppAccessibilityControlDiscovery().discover(in: snapshot)
+        let target = observation.target
         let steps = AccessibilityCursorPathBuilder.buildSteps(
             targetApp: target.appName ?? appName ?? "",
-            windowBounds: snapshot.target.bounds,
-            controls: index.controls,
+            windowBounds: target.bounds,
+            controls: observation.controls,
             targets: targets,
             phaseID: "guidance"
         )
@@ -81,28 +66,5 @@ public enum GuidanceOverlayFlow {
             return Outcome(request: nil, reason: "noOverlayRequest", resolvedAppName: target.appName)
         }
         return Outcome(request: request, reason: "ok", resolvedAppName: target.appName)
-    }
-
-    private static func resolveTarget(
-        appName: String?,
-        bundleIdentifier: String?,
-        resolver: MacWindowResolver
-    ) -> MacWindowTargetCandidate? {
-        if appName != nil || bundleIdentifier != nil {
-            let candidates = resolver.enumerateCandidates()
-            if let match = candidates.first(where: { candidate in
-                if let bundleIdentifier, let candidateBundle = candidate.bundleIdentifier {
-                    return candidateBundle.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
-                }
-                if let appName, let candidateApp = candidate.appName {
-                    return candidateApp.localizedCaseInsensitiveContains(appName)
-                        || appName.localizedCaseInsensitiveContains(candidateApp)
-                }
-                return false
-            }) {
-                return match
-            }
-        }
-        return try? resolver.selectTarget()
     }
 }
