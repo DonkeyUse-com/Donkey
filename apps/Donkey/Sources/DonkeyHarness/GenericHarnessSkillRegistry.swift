@@ -328,7 +328,10 @@ public struct HarnessSkillFileSystemSource: Sendable {
             scripts: scriptDescriptors(in: directory),
             metadata: [
                 "source": sourceKind == .builtIn ? "builtInFilesystem" : "filesystem",
-                "directory": directory.path
+                "directory": directory.path,
+                // File-based discovery signal: natural trigger words for lexical skill matching
+                // (no embeddings). Comma-separated `keywords:` line in the SKILL.md frontmatter.
+                "keywords": metadataList(named: "keywords", in: contents).joined(separator: " ")
             ]
         )
     }
@@ -400,8 +403,12 @@ public struct HarnessSkillFileSystemSource: Sendable {
 
             let relativePath = relativePath(of: url, from: skillDirectory)
             let basename = url.deletingPathExtension().lastPathComponent
+            // Derive the script ID from the path WITHOUT the file extension so it matches the
+            // `scripts:` IDs declared in SKILL.md (e.g. `scripts-play-media-by-search`, not
+            // `scripts-play-media-by-search-applescript`).
+            let relativePathWithoutExtension = (relativePath as NSString).deletingPathExtension
             return HarnessSkillScriptDescriptor(
-                id: slug(relativePath),
+                id: slug(relativePathWithoutExtension),
                 language: language,
                 purpose: titleCased(basename),
                 relativePath: relativePath,

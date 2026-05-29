@@ -65,6 +65,7 @@ public enum BuiltInLocalAppSkillPacks {
                 return !lowered.hasPrefix("id:")
                     && !lowered.hasPrefix("description:")
                     && !lowered.hasPrefix("tags:")
+                    && !lowered.hasPrefix("keywords:")
                     && !lowered.hasPrefix("tools:")
             }
             .joined(separator: "\n")
@@ -84,28 +85,52 @@ public struct LocalAppTaskSkillContext: Equatable, Sendable {
         self.snippets = snippets
     }
 
+    /// Builds skill guidance that scales to many skills via progressive disclosure (no embeddings):
+    ///   1. A compact discovery catalog — one line per skill (id + summary + tags) for the top-K
+    ///      lexically-relevant skills — so the planner can SEE what is available and pick one.
+    ///   2. The FULL instruction body of the single best-matched skill, so its concrete execution
+    ///      steps (e.g. skill.load → skill.script.execute) are never truncated.
+    /// Context stays bounded regardless of the total number of skills: K one-liners + 1 full body.
+    /// The planner can `skill.load` any other catalog entry to get that skill's full body on demand.
     public static func defaultContext(
+        command: String = "",
         taskDefinitions: [LocalAppTaskDefinition],
         appFinderCatalog: [LocalAppFinderCatalogEntry],
-        maxSkills: Int = 8
+        maxSkills: Int = 24,
+        detailCharacters: Int = 4_000
     ) -> LocalAppTaskSkillContext {
-        let descriptors = selectedBuiltInSkillDescriptors(
+        let ranked = rankedBuiltInSkillDescriptors(
+            command: command,
             taskDefinitions: taskDefinitions,
-            appFinderCatalog: appFinderCatalog,
-            maxSkills: maxSkills
+            appFinderCatalog: appFinderCatalog
         )
-        return LocalAppTaskSkillContext(
-            snippets: descriptors.map {
-                BuiltInLocalAppSkillPacks.instructionSnippet(for: $0)
-            }
-        )
+        guard !ranked.isEmpty else {
+            return LocalAppTaskSkillContext(snippets: [])
+        }
+
+        let catalogEntries = ranked.prefix(max(1, maxSkills)).map(\.descriptor)
+        let catalog = (["Available skills (pick the most relevant for the request; load it with skill.load to get its full steps):"]
+            + catalogEntries.map(discoveryLine(for:)))
+            .joined(separator: "\n")
+
+        var snippets = [catalog]
+        if let top = ranked.first, top.score > 0 {
+            snippets.append(BuiltInLocalAppSkillPacks.instructionSnippet(for: top.descriptor, maxCharacters: detailCharacters))
+        }
+        return LocalAppTaskSkillContext(snippets: snippets)
     }
 
-    private static func selectedBuiltInSkillDescriptors(
+    /// One compact catalog line for discovery: `- <id>: <summary> (tags: a, b)`.
+    private static func discoveryLine(for descriptor: HarnessSkillDescriptor) -> String {
+        let tags = descriptor.tags.isEmpty ? "" : " (tags: \(descriptor.tags.joined(separator: ", ")))"
+        return "- \(descriptor.id): \(descriptor.summary)\(tags)"
+    }
+
+    private static func rankedBuiltInSkillDescriptors(
+        command: String,
         taskDefinitions: [LocalAppTaskDefinition],
-        appFinderCatalog: [LocalAppFinderCatalogEntry],
-        maxSkills: Int
-    ) -> [HarnessSkillDescriptor] {
+        appFinderCatalog: [LocalAppFinderCatalogEntry]
+    ) -> [(descriptor: HarnessSkillDescriptor, score: Int)] {
         let descriptors = BuiltInLocalAppSkillPacks.descriptors()
         guard !descriptors.isEmpty else { return [] }
 
@@ -130,13 +155,20 @@ public struct LocalAppTaskSkillContext: Equatable, Sendable {
             }
         }
         let catalogTokens = tokens(in: catalogValues.joined(separator: " "))
-        let availableTokens = taskTokens.union(catalogTokens)
-        let scored: [(descriptor: HarnessSkillDescriptor, score: Int)] = descriptors.map { descriptor in
+        // The user's actual request is the strongest signal for which skills the task needs, so
+        // weight command matches heavily. Without this, selection only reflects installed apps and
+        // static task definitions, which can miss (or arbitrarily pick) the skill the task requires.
+        let commandTokens = tokens(in: command)
+        let availableTokens = taskTokens.union(catalogTokens).union(commandTokens)
+        return descriptors.map { descriptor in
+            // Score over id, name, summary, tags, and the file-based `keywords:` trigger words.
             let descriptorTokens = tokens(
-                in: ([descriptor.id, descriptor.name, descriptor.summary] + descriptor.tags)
+                in: ([descriptor.id, descriptor.name, descriptor.summary, descriptor.metadata["keywords"] ?? ""]
+                    + descriptor.tags)
                     .joined(separator: " ")
             )
             let score = descriptorTokens.intersection(availableTokens).count
+                + 3 * descriptorTokens.intersection(commandTokens).count
             return (descriptor: descriptor, score: score)
         }
         .sorted {
@@ -145,13 +177,6 @@ public struct LocalAppTaskSkillContext: Equatable, Sendable {
             }
             return $0.score > $1.score
         }
-
-        let matching = scored.filter { $0.score > 0 }.map { $0.descriptor }
-        if !matching.isEmpty {
-            return Array(matching.prefix(max(0, maxSkills)))
-        }
-
-        return Array(descriptors.prefix(max(0, maxSkills)))
     }
 
     private static func tokens(in value: String) -> Set<String> {

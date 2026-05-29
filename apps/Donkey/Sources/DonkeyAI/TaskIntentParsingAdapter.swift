@@ -31,12 +31,15 @@ public struct TaskIntentAdapterRequest: Equatable, Sendable {
         self.contextSnippets = TaskIntentModelContextCompactor.compact(contextSnippets)
         self.appFinderCatalog = appFinderCatalog
         self.availableToolNames = availableToolNames
+        // Budget allows a compact discovery catalog plus ONE full skill body (the top match), so the
+        // chosen skill's concrete execution steps are not truncated. See LocalAppTaskSkillContext.
         self.skillSnippets = TaskIntentModelContextCompactor(
             maxSnippets: 8,
-            maxSnippetCharacters: 1_200,
-            maxTotalCharacters: 6_400
+            maxSnippetCharacters: 4_200,
+            maxTotalCharacters: 9_000
         ).compact(
             skillSnippets ?? LocalAppTaskSkillContext.defaultContext(
+                command: command,
                 taskDefinitions: taskDefinitions,
                 appFinderCatalog: appFinderCatalog
             ).snippets

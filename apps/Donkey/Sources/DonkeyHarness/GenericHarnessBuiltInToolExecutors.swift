@@ -443,6 +443,9 @@ public enum BuiltInHarnessToolExecutors {
             return failed(context, "Skill was not found: \(skillID)", reason: "skillNotFound")
         }
 
+        let scriptCatalog = skill.scripts
+            .map { "\($0.id) [\($0.language.rawValue)]: \($0.purpose)" }
+            .joined(separator: "; ")
         return success(
             context,
             summary: "Loaded skill \(skill.name).",
@@ -455,7 +458,11 @@ public enum BuiltInHarnessToolExecutors {
             metadata: [
                 "skillID": skill.id,
                 "instructionPath": skill.instructionPath ?? "",
-                "scriptIDs": skill.scripts.map(\.id).joined(separator: ",")
+                "scriptIDs": skill.scripts.map(\.id).joined(separator: ","),
+                "scriptCatalog": scriptCatalog,
+                // Progressive disclosure: surface the chosen skill's full instructions on load, so a
+                // skill discovered from the compact catalog gets its concrete execution detail here.
+                "skillInstructions": skill.description
             ]
         )
     }
