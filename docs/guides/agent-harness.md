@@ -117,6 +117,10 @@ the target app is focused. The harness needs post-action evidence such as a
 guarded command trace, visible text, selected state, app-reported result, or
 screenshot-backed observation.
 
+Pointer playback is separate from input. It may rotate, travel, hold, and label
+the path the agent planned or observed, while AX, AppleScript, keyboard input,
+or guarded coordinate fallback perform the real work.
+
 ## AppleScript And Scripts
 
 AppleScript is a tool path, not a hardcoded helper path. Generation creates a

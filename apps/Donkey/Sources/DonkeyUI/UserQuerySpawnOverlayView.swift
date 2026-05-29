@@ -230,7 +230,9 @@ public final class UserQuerySpawnOverlayViewModel: ObservableObject {
         state: UserQuerySpawnState,
         origin: CGPoint,
         destination: CGPoint,
-        screenSize: CGSize
+        screenSize: CGSize,
+        preRotateDuration: TimeInterval = 0,
+        travelDuration: TimeInterval = UserQuerySpawnOverlayViewModel.travelDuration
     ) {
         animationGeneration += 1
         self.state = state
@@ -239,10 +241,11 @@ public final class UserQuerySpawnOverlayViewModel: ObservableObject {
         self.screenSize = screenSize
         self.opacity = 0
         self.isHolding = false
-        self.cursorAngleDegrees = UserQuerySpawnGeometry.angleDegrees(
+        let travelAngle = UserQuerySpawnGeometry.angleDegrees(
             from: origin,
             to: destination
         )
+        self.cursorAngleDegrees = travelAngle
         self.terminalTailAngleDegrees = 0
         self.isWorking = false
         self.viewportOrigin = .zero
@@ -261,17 +264,30 @@ public final class UserQuerySpawnOverlayViewModel: ObservableObject {
             withAnimation(.easeOut(duration: 0.12)) {
                 self.opacity = 1
             }
-            self.finishTravelAfterDelay(generation: generation, finalPosition: destination)
+            self.finishTravelAfterDelay(
+                generation: generation,
+                finalPosition: destination,
+                delay: preRotateDuration + travelDuration
+            )
         }
     }
 
     public func update(
         state: UserQuerySpawnState,
         destination: CGPoint,
-        screenSize: CGSize
+        screenSize: CGSize,
+        preRotateDuration: TimeInterval = 0,
+        travelDuration: TimeInterval = UserQuerySpawnOverlayViewModel.travelDuration
     ) {
         guard self.state?.id == state.id else {
-            show(state: state, origin: position, destination: destination, screenSize: screenSize)
+            show(
+                state: state,
+                origin: position,
+                destination: destination,
+                screenSize: screenSize,
+                preRotateDuration: preRotateDuration,
+                travelDuration: travelDuration
+            )
             return
         }
 
@@ -308,10 +324,17 @@ public final class UserQuerySpawnOverlayViewModel: ObservableObject {
 
         animationGeneration += 1
         let generation = animationGeneration
-        cursorAngleDegrees = UserQuerySpawnGeometry.angleDegrees(
+        let travelAngle = UserQuerySpawnGeometry.angleDegrees(
             from: position,
             to: destination
         )
+        if preRotateDuration > 0 {
+            withAnimation(.easeInOut(duration: preRotateDuration)) {
+                cursorAngleDegrees = travelAngle
+            }
+        } else {
+            cursorAngleDegrees = travelAngle
+        }
         terminalTailAngleDegrees = 0
         self.destination = destination
         self.isHolding = false
@@ -319,7 +342,11 @@ public final class UserQuerySpawnOverlayViewModel: ObservableObject {
         withAnimation(.easeOut(duration: 0.12)) {
             self.opacity = 1
         }
-        finishTravelAfterDelay(generation: generation, finalPosition: destination)
+        finishTravelAfterDelay(
+            generation: generation,
+            finalPosition: destination,
+            delay: preRotateDuration + travelDuration
+        )
     }
 
     public func fadeOut() {
@@ -431,8 +458,12 @@ public final class UserQuerySpawnOverlayViewModel: ObservableObject {
         labelLayoutChanged?()
     }
 
-    private func finishTravelAfterDelay(generation: Int, finalPosition: CGPoint) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.travelDuration) { [weak self] in
+    private func finishTravelAfterDelay(
+        generation: Int,
+        finalPosition: CGPoint,
+        delay: TimeInterval = UserQuerySpawnOverlayViewModel.travelDuration
+    ) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, self.animationGeneration == generation else { return }
 
             self.position = finalPosition

@@ -3,7 +3,8 @@ import DonkeyHarness
 import Foundation
 
 public enum AppHarnessGenericLifecycleToolNames {
-    public static let localAppTools: [String] = LocalAppActionPlanTool.allCases.map(\.rawValue)
+    public static let agentPathVisualize = "agent.path.visualize"
+    public static let localAppTools: [String] = (LocalAppActionPlanTool.allCases.map(\.rawValue) + [agentPathVisualize]).sorted()
 }
 
 public struct AppHarnessGenericLifecyclePreparedTurn: Equatable, Sendable {

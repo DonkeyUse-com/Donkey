@@ -156,6 +156,7 @@ public struct AgentVisualizationPlan: Codable, Equatable, Sendable, Identifiable
                 id: step.id,
                 label: step.label,
                 target: target,
+                preRotateDuration: Self.preRotateDuration(for: step),
                 travelDuration: step.travelDuration,
                 holdDuration: step.holdDuration,
                 metadata: cursorStepMetadata(for: step)
@@ -213,5 +214,12 @@ public struct AgentVisualizationPlan: Codable, Equatable, Sendable, Identifiable
             metadata["cursor.targetSpace"] = "screenNormalized"
         }
         return metadata
+    }
+
+    private static func preRotateDuration(for step: AgentVisualizationStep) -> TimeInterval {
+        guard let value = Double(step.metadata["preRotateDuration"] ?? "") else {
+            return 0.12
+        }
+        return min(max(value, 0), 0.6)
     }
 }

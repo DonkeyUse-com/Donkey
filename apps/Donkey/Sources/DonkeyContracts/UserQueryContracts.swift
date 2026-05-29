@@ -280,6 +280,7 @@ public struct PointerCoachCursorGuideStep: Equatable, Sendable, Identifiable {
     public var id: String
     public var label: String
     public var target: CGPoint
+    public var preRotateDuration: TimeInterval
     public var travelDuration: TimeInterval
     public var holdDuration: TimeInterval
     public var metadata: [String: String]
@@ -288,6 +289,7 @@ public struct PointerCoachCursorGuideStep: Equatable, Sendable, Identifiable {
         id: String = UUID().uuidString,
         label: String,
         target: CGPoint,
+        preRotateDuration: TimeInterval = 0.12,
         travelDuration: TimeInterval = 0.9,
         holdDuration: TimeInterval = 1.8,
         metadata: [String: String] = [:]
@@ -295,6 +297,7 @@ public struct PointerCoachCursorGuideStep: Equatable, Sendable, Identifiable {
         self.id = id
         self.label = label
         self.target = target
+        self.preRotateDuration = min(max(preRotateDuration, 0), 0.6)
         self.travelDuration = max(0.1, travelDuration)
         self.holdDuration = max(0.4, holdDuration)
         self.metadata = metadata

@@ -3,6 +3,7 @@ import Foundation
 
 public enum AgentVisualizationCursorPathPhase: String, Codable, Equatable, Sendable {
     case idle
+    case preRotate
     case travel
     case hold
     case complete
@@ -73,14 +74,35 @@ public enum AgentVisualizationCursorPathSampler {
 
         var remaining = elapsed
         var origin = point(request.origin, in: screenSize)
+        var previousAngle: Double = 0
         for (index, step) in request.steps.enumerated() {
             let target = point(step.target, metadata: step.metadata, screenFrame: screenFrame)
+            let travelAngle = angle(from: origin, to: target)
+            if step.preRotateDuration > 0,
+               remaining <= step.preRotateDuration {
+                let linearProgress = min(max(remaining / step.preRotateDuration, 0), 1)
+                let easedProgress = eased(linearProgress)
+                return AgentVisualizationCursorPathSample(
+                    position: origin,
+                    angle: interpolatedAngle(from: previousAngle, to: travelAngle, progress: easedProgress),
+                    visibleLabel: "",
+                    isHolding: false,
+                    phase: .preRotate,
+                    stepIndex: index,
+                    stepID: step.id,
+                    elapsedInPhase: max(0, remaining),
+                    linearProgress: linearProgress,
+                    easedProgress: easedProgress
+                )
+            }
+
+            remaining -= step.preRotateDuration
             if remaining <= step.travelDuration {
                 let linearProgress = min(max(remaining / step.travelDuration, 0), 1)
                 let easedProgress = eased(linearProgress)
                 return AgentVisualizationCursorPathSample(
                     position: curvedPoint(from: origin, to: target, progress: easedProgress),
-                    angle: angle(from: origin, to: target),
+                    angle: travelAngle,
                     visibleLabel: "",
                     isHolding: false,
                     phase: .travel,
@@ -97,7 +119,7 @@ public enum AgentVisualizationCursorPathSampler {
                 let wobble = sin(remaining * 8) * 1.8
                 return AgentVisualizationCursorPathSample(
                     position: CGPoint(x: target.x + wobble, y: target.y),
-                    angle: angle(from: origin, to: target),
+                    angle: travelAngle,
                     visibleLabel: step.label,
                     isHolding: true,
                     phase: .hold,
@@ -113,6 +135,7 @@ public enum AgentVisualizationCursorPathSampler {
             }
 
             remaining -= step.holdDuration
+            previousAngle = travelAngle
             origin = target
         }
 
@@ -188,6 +211,18 @@ public enum AgentVisualizationCursorPathSampler {
     public static func eased(_ progress: Double) -> Double {
         let t = min(max(progress, 0), 1)
         return 1 - pow(1 - t, 3)
+    }
+
+    public static func interpolatedAngle(
+        from origin: Double,
+        to target: Double,
+        progress: Double
+    ) -> Double {
+        let clampedProgress = min(max(progress, 0), 1)
+        var delta = target - origin
+        while delta > 180 { delta -= 360 }
+        while delta < -180 { delta += 360 }
+        return origin + delta * clampedProgress
     }
 
     private static func targetBounds(from metadata: [String: String]) -> WindowTargetBounds? {

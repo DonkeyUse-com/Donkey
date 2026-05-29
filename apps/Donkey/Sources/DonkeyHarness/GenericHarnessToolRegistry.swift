@@ -323,6 +323,27 @@ public enum BuiltInHarnessToolCatalog {
                 requiredContext: ["focused target"]
             ),
             descriptor(
+                "agent.path.visualize",
+                pluginID: "core.agent-path",
+                summary: "Prepare a visual-only pointer path from grounded harness evidence without performing input.",
+                input: [
+                    "stepsJSON": "JSON array of AgentPathStep values with grounded normalizedTarget point or bounds.",
+                    "title": "Short label for the visual path.",
+                    "sourceTraceID": "Trace id that produced the path."
+                ],
+                output: [
+                    "agentPath.traceJSON": "Encoded AgentPathTrace.",
+                    "agentVisualization.planJSON": "Encoded AgentVisualizationPlan for pointer playback."
+                ],
+                permissions: [],
+                safety: .readOnly,
+                requiredContext: ["grounded app, window, control, or action evidence"],
+                verification: [
+                    "realPointerMoved=false",
+                    "ungrounded steps block instead of inventing motion"
+                ]
+            ),
+            descriptor(
                 "automation.applescript.generate",
                 pluginID: "core.automation",
                 summary: "Ask a child model boundary to generate a small, bounded AppleScript artifact for a doable resolved app task.",

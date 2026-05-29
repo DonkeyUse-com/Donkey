@@ -352,7 +352,9 @@ final class UserQuerySpawnOverlayController {
     private func animateSurfaceTravel(
         _ surface: UserQuerySpawnSurface,
         to destination: CGPoint,
-        on screen: NSScreen
+        on screen: NSScreen,
+        preRotateDuration: TimeInterval = 0,
+        travelDuration: TimeInterval = UserQuerySpawnOverlayViewModel.travelDuration
     ) {
         surface.travelWorkItem?.cancel()
         surface.screen = screen
@@ -380,10 +382,18 @@ final class UserQuerySpawnOverlayController {
             on: screen
         )
 
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = UserQuerySpawnOverlayViewModel.travelDuration
-            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.45, 0.05, 0.3, 1)
-            surface.panel.animator().setFrame(destinationGlobalFrame, display: true)
+        let startTravel = DispatchWorkItem { [weak surface] in
+            guard let surface else { return }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = travelDuration
+                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.45, 0.05, 0.3, 1)
+                surface.panel.animator().setFrame(destinationGlobalFrame, display: true)
+            }
+        }
+        if preRotateDuration > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + preRotateDuration, execute: startTravel)
+        } else {
+            startTravel.perform()
         }
 
         let workItem = DispatchWorkItem { [weak self, weak surface] in
@@ -402,7 +412,7 @@ final class UserQuerySpawnOverlayController {
         }
         surface.travelWorkItem = workItem
         DispatchQueue.main.asyncAfter(
-            deadline: .now() + UserQuerySpawnOverlayViewModel.travelDuration + 0.03,
+            deadline: .now() + preRotateDuration + travelDuration + 0.03,
             execute: workItem
         )
         updateMouseEventPassthrough(for: surface)
@@ -436,7 +446,7 @@ final class UserQuerySpawnOverlayController {
             }
             surface.guideWorkItems.append(workItem)
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
-            delay += UserQuerySpawnOverlayViewModel.travelDuration + step.holdDuration
+            delay += step.preRotateDuration + step.travelDuration + step.holdDuration
         }
 
         let completionWorkItem = DispatchWorkItem { [weak self, weak surface] in
@@ -480,9 +490,17 @@ final class UserQuerySpawnOverlayController {
         surface.viewModel.update(
             state: state,
             destination: destination,
-            screenSize: screen.frame.size
+            screenSize: screen.frame.size,
+            preRotateDuration: step.preRotateDuration,
+            travelDuration: step.travelDuration
         )
-        animateSurfaceTravel(surface, to: destination, on: screen)
+        animateSurfaceTravel(
+            surface,
+            to: destination,
+            on: screen,
+            preRotateDuration: step.preRotateDuration,
+            travelDuration: step.travelDuration
+        )
     }
 
     private func guideDestination(

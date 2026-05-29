@@ -120,7 +120,8 @@ struct AgentVisualizationCursorPathFeedbackTests {
                         confidence: 0.8
                     ),
                     travelDuration: 0.4,
-                    holdDuration: 0.4
+                    holdDuration: 0.4,
+                    metadata: ["preRotateDuration": "0"]
                 ),
                 AgentVisualizationStep(
                     id: "focus",
@@ -133,7 +134,8 @@ struct AgentVisualizationCursorPathFeedbackTests {
                         confidence: 0.8
                     ),
                     travelDuration: 0.4,
-                    holdDuration: 0.4
+                    holdDuration: 0.4,
+                    metadata: ["preRotateDuration": "0"]
                 ),
                 AgentVisualizationStep(
                     id: "verify",
@@ -146,7 +148,8 @@ struct AgentVisualizationCursorPathFeedbackTests {
                         confidence: 0.8
                     ),
                     travelDuration: 0.4,
-                    holdDuration: 0.4
+                    holdDuration: 0.4,
+                    metadata: ["preRotateDuration": "0"]
                 )
             ],
             metadata: ["realPointerMoved": "false"]
@@ -216,6 +219,7 @@ struct AgentVisualizationCursorPathFeedbackTests {
                     id: "point-a",
                     label: "Point A",
                     target: CGPoint(x: 0.30, y: 0.60),
+                    preRotateDuration: 0,
                     travelDuration: 1.0,
                     holdDuration: 0.5
                 ),
@@ -223,12 +227,51 @@ struct AgentVisualizationCursorPathFeedbackTests {
                     id: "point-b",
                     label: "Point B",
                     target: CGPoint(x: 0.80, y: 0.20),
+                    preRotateDuration: 0,
                     travelDuration: 2.0,
                     holdDuration: 0.5
                 )
             ],
             metadata: ["realPointerMoved": "false"]
         )
+    }
+
+    @Test
+    func samplerRotatesTowardTargetBeforeTravel() {
+        let request = PointerCoachCursorGuideRequest(
+            id: "pre-rotate",
+            title: "Pre Rotate",
+            origin: CGPoint(x: 0.10, y: 0.20),
+            steps: [
+                PointerCoachCursorGuideStep(
+                    id: "target",
+                    label: "Target",
+                    target: CGPoint(x: 0.30, y: 0.60),
+                    preRotateDuration: 0.2,
+                    travelDuration: 1.0,
+                    holdDuration: 0.5
+                )
+            ],
+            metadata: ["realPointerMoved": "false"]
+        )
+        let screen = CGSize(width: 1_000, height: 500)
+        let rotating = AgentVisualizationCursorPathSampler.sample(
+            request: request,
+            elapsed: 0.1,
+            screenSize: screen
+        )
+        let traveling = AgentVisualizationCursorPathSampler.sample(
+            request: request,
+            elapsed: 0.21,
+            screenSize: screen
+        )
+
+        expectPoint(rotating.position, x: 100, y: 100)
+        #expect(rotating.phase == .preRotate)
+        #expect(rotating.stepID == "target")
+        #expect(abs(rotating.angle) > 1)
+        #expect(traveling.phase == .travel)
+        #expect(traveling.position.x > rotating.position.x)
     }
 
     private func expectPoint(

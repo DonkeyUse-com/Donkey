@@ -60,6 +60,106 @@ struct GenericHarnessTests {
         let learningExplore = descriptors.first { $0.name == "application.learning.proposeExploration" }
         #expect(learningExplore?.requiredPermissions == [.accessibility])
         #expect(learningExplore?.verificationHints.contains { $0.contains("technical roles/actions") } == true)
+
+        let agentPath = descriptors.first { $0.name == "agent.path.visualize" }
+        #expect(agentPath?.pluginID == "core.agent-path")
+        #expect(agentPath?.requiredPermissions == [])
+        #expect(agentPath?.safetyClass == .readOnly)
+        #expect(agentPath?.verificationHints.contains("realPointerMoved=false") == true)
+    }
+
+    @Test
+    func agentPathVisualizeToolReturnsVisualOnlyPlanForGroundedSteps() async throws {
+        let coordinator = HarnessTaskCoordinator()
+        let runtime = GenericHarnessRuntime(
+            coordinator: coordinator,
+            registry: BuiltInHarnessToolCatalog.registryWithBuiltInExecutors()
+        )
+        let task = await coordinator.createTask(
+            id: "task-agent-path",
+            threadID: "thread-agent-path",
+            goal: "show the path"
+        )
+        let steps = [
+            AgentPathStep(
+                id: "open-source",
+                phaseID: "source",
+                kind: .navigateApp,
+                label: "Open source app",
+                targetApp: "Source",
+                point: HotLoopPoint(x: 0.20, y: 0.30, space: .normalizedTarget),
+                source: .windowMetadata
+            ),
+            AgentPathStep(
+                id: "act-destination",
+                phaseID: "destination",
+                kind: .act,
+                label: "Use destination",
+                targetApp: "Destination",
+                bounds: HotLoopRect(x: 0.60, y: 0.40, width: 0.20, height: 0.10, space: .normalizedTarget),
+                source: .actionTrace,
+                status: .executed
+            )
+        ]
+        let stepsJSON = try jsonString(steps)
+
+        let result = await runtime.executeToolCall(
+            taskID: task.id,
+            call: HarnessToolCall(
+                id: "path-call",
+                name: "agent.path.visualize",
+                input: [
+                    "title": "Show path",
+                    "stepsJSON": stepsJSON,
+                    "sourceTraceID": "trace-path"
+                ]
+            )
+        )
+
+        let toolResult = try #require(result?.toolResult)
+        #expect(toolResult.status == .succeeded)
+        #expect(toolResult.metadata["realPointerMoved"] == "false")
+        let planText = try #require(toolResult.metadata["agentVisualization.planJSON"])
+        let plan = try JSONDecoder().decode(AgentVisualizationPlan.self, from: Data(planText.utf8))
+        #expect(plan.metadata["realPointerMoved"] == "false")
+        #expect(plan.steps.map(\.id) == ["open-source", "act-destination"])
+        #expect(plan.cursorOverlayRequest()?.steps.first?.preRotateDuration == 0.12)
+    }
+
+    @Test
+    func agentPathVisualizeToolBlocksUngroundedSteps() async throws {
+        let coordinator = HarnessTaskCoordinator()
+        let runtime = GenericHarnessRuntime(
+            coordinator: coordinator,
+            registry: BuiltInHarnessToolCatalog.registryWithBuiltInExecutors()
+        )
+        let task = await coordinator.createTask(
+            id: "task-agent-path-blocked",
+            threadID: "thread-agent-path-blocked",
+            goal: "show the path"
+        )
+        let stepsJSON = try jsonString([
+            AgentPathStep(
+                id: "missing-geometry",
+                kind: .act,
+                label: "Missing geometry",
+                source: .modelPlan
+            )
+        ])
+
+        let result = await runtime.executeToolCall(
+            taskID: task.id,
+            call: HarnessToolCall(
+                id: "path-call-blocked",
+                name: "agent.path.visualize",
+                input: ["stepsJSON": stepsJSON]
+            )
+        )
+
+        let toolResult = try #require(result?.toolResult)
+        #expect(toolResult.status == .failed)
+        #expect(toolResult.metadata["reason"] == "ungroundedAgentPathStep")
+        #expect(toolResult.metadata["realPointerMoved"] == "false")
     }
 
     @Test
@@ -1626,5 +1726,12 @@ struct GenericHarnessTests {
         #expect(compacted.promptText.contains("Which part of the app should I learn first?"))
         #expect(compacted.metadata["compactor"] == "smart-priority-v1")
         #expect(compacted.compactionRecords.contains { $0.itemKind == .recentEvent && $0.droppedCount > 0 })
+    }
+
+    private func jsonString<T: Encodable>(_ value: T) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(value)
+        return String(decoding: data, as: UTF8.self)
     }
 }
