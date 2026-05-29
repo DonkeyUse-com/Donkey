@@ -11,7 +11,7 @@ struct ResolvedAccessibilityObservation {
 /// Captures a running app's accessibility tree and discovers its controls. Shared by the guidance
 /// overlay and the accessibility action executor so both ground against the same observation.
 @MainActor
-enum AccessibilityObserver {
+public enum AccessibilityObserver {
     static func observe(
         appName: String?,
         bundleIdentifier: String?,
@@ -40,10 +40,10 @@ enum AccessibilityObserver {
         return ResolvedAccessibilityObservation(target: target, controls: index.controls)
     }
 
-    static func resolveTarget(
+    public static func resolveTarget(
         appName: String?,
         bundleIdentifier: String?,
-        resolver: MacWindowResolver
+        resolver: MacWindowResolver = MacWindowResolver()
     ) -> MacWindowTargetCandidate? {
         if appName != nil || bundleIdentifier != nil {
             let candidates = resolver.enumerateCandidates()
